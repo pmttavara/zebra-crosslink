@@ -29,13 +29,15 @@ export RUST_BACKTRACE=1
 export RUST_LOG=info
 export FULL_SYNC_TESTNET_TIMEOUT_MINUTES=
 
-CARGO_ARGS="--locked --release --features \"default-release-binaries lightwalletd-grpc-tests zebra-checkpoints\" --workspace -- --nocapture --include-ignored"
+export PATH=$(pwd)/target/debug:$PATH
+
+CARGO_ARGS="--locked --features \"default-release-binaries lightwalletd-grpc-tests zebra-checkpoints\" --workspace -- --nocapture --include-ignored"
 
 set -e
 set -o pipefail
 
 if [[ "$2" ]]; then
-    exec eval cargo test $2 $CARGO_ARGS
+    eval exec cargo test $2 $CARGO_ARGS
 fi
 
 eval cargo test $CARGO_ARGS \
@@ -47,8 +49,8 @@ eval cargo test $CARGO_ARGS \
 --skip fully_synced_rpc_z_getsubtreesbyindex_snapshot_test \
 --skip scan_start_where_left \
 --skip scan_task_commands \
---skip generate_checkpoints_mainnet \
---skip generate_checkpoints_testnet
+--skip generate_checkpoints_testnet # This test is disabled because we currently do not want to
+                                    # require having the testnet chain stored locally.
 
 eval cargo test config_tests $CARGO_ARGS
 eval cargo test zebrad_update_sync $CARGO_ARGS
@@ -57,11 +59,3 @@ eval cargo test submit_block $CARGO_ARGS
 eval cargo test fully_synced_rpc_z_getsubtreesbyindex_snapshot_test $CARGO_ARGS
 eval cargo test scan_start_where_left $CARGO_ARGS
 eval cargo test scan_task_commands $CARGO_ARGS
-
-#eval cargo test generate_checkpoints_mainnet $CARGO_ARGS
-#eval cargo test generate_checkpoints_testnet $CARGO_ARGS
-
-
-# TODO(Sam): fix and re-enable these tests
-#    generate_checkpoints_mainnet
-#    generate_checkpoints_testnet
