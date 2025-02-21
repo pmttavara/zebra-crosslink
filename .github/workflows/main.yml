@@ -1,0 +1,20 @@
+name: Sync to upstream
+
+# Run once a day or manually
+on:
+  # Run once a day
+  pull_request: # I will remove this once I validate it works
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync_upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh api --method POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          /repos/ShieldedLabs/zebra-crosslink-staging/merge-upstream \
+          -f "branch=master"
