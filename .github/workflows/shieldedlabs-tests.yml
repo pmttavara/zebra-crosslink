@@ -1,0 +1,40 @@
+name: Crosslink Tests
+
+on:
+  merge_group:
+    types: [checks_requested]
+  pull_request:
+    branches: ["main"]
+
+# See: https://github.com/ShieldedLabs/zebra-crosslink/settings/variables/actions
+env:
+  RUST_LOG: ${{ vars.RUST_LOG }} # defaults to 'info'
+  RUST_BACKTRACE: ${{ vars.RUST_BACKTRACE }} # defaults to 1
+  RUST_LIB_BACKTRACE: ${{ vars.RUST_LIB_BACKTRACE }} # defaults to 0
+  COLORBT_SHOW_HIDDEN: ${{ vars.COLORBT_SHOW_HIDDEN }} # disables frame filtering, defaults to 0
+  CARGO_INCREMENTAL: ${{ vars.CARGO_INCREMENTAL }} # defaults to 0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build and Test (Crosslink)
+    steps:
+    - uses: actions/checkout@v4
+    - uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: protobuf-compiler
+        version: 1.0
+    - run: rustup toolchain install stable --profile minimal
+    - uses: Swatinem/rust-cache@v2
+    - name: Static Analysis
+      run: cargo fmt --check
+    - name: Ensure Crosslink docs generate
+      run: cd zebra-crosslink && cargo doc --lib
+    - name: Ensure all docs generate
+      if: github.ref == 'refs/heads/main'
+      run: cargo doc
+    - name: Run Crosslink Tests
+      run: cargo test --test crosslink*
+    - name: Regression tests # mostly
+      if: github.ref == 'refs/heads/main'
+      run: cargo test
