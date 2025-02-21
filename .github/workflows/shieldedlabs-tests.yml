@@ -20,7 +20,10 @@ jobs:
     name: Build and Test (Crosslink)
     steps:
     - uses: actions/checkout@v4
-    - run: rustup toolchain install stable --profile minimal
+    - name: Install dependencies
+      run: |
+        sudo apt-get install protobuf-compiler
+        rustup toolchain install stable --profile minimal
     - uses: Swatinem/rust-cache@v2
     - name: Static Analysis
       run: cargo fmt --check
