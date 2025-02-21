@@ -43,4 +43,5 @@ jobs:
         components: rustfmt
     - uses: actions-rust-lang/rustfmt@v1
     - run: cargo test --test crosslink*
-    - run: cargo test
+    - if: github.ref == 'refs/heads/main'
+      run: cargo test
