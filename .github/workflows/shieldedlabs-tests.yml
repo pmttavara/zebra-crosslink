@@ -44,6 +44,8 @@ jobs:
       run: cargo fmt --check
     - name: Run Crosslink Tests
       run: cargo test --test crosslink*
+    - name: Ensure docs generate
+      run: cargo doc
     - name: Regression tests # mostly
       if: github.ref == 'refs/heads/main'
       run: cargo test
