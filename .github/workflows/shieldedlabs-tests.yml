@@ -27,10 +27,13 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Static Analysis
       run: cargo fmt --check
+    - name: Ensure Crosslink docs generate
+      run: cd zebra-crosslink && cargo doc --lib
+    - name: Ensure all docs generate
+      if: github.ref == 'refs/heads/main'
+      run: cargo doc
     - name: Run Crosslink Tests
       run: cargo test --test crosslink*
-    - name: Ensure docs generate
-      run: cargo doc
     - name: Regression tests # mostly
       if: github.ref == 'refs/heads/main'
       run: cargo test
