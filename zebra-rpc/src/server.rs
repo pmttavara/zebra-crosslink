@@ -19,7 +19,7 @@ use tracing::*;
 use zebra_chain::{
     block, chain_sync_status::ChainSyncStatus, chain_tip::ChainTip, parameters::Network,
 };
-use zebra_crosslink::{TFLServiceRequest, TFLServiceResponse};
+use zebra_crosslink::service::{TFLServiceRequest, TFLServiceResponse};
 use zebra_network::AddressBookPeers;
 use zebra_node_services::mempool;
 
@@ -222,7 +222,7 @@ impl RpcServer {
             .layer_fn(FixRpcResponseMiddleware::new);
 
         let server_instance = Server::builder()
-            // .http_only()
+            .http_only()
             .set_http_middleware(http_middleware)
             .set_rpc_middleware(rpc_middleware)
             .build(listen_addr)

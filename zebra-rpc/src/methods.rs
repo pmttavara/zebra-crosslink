@@ -40,7 +40,7 @@ use zebra_chain::{
     },
 };
 use zebra_consensus::ParameterCheckpoint;
-use zebra_crosslink::{TFLBlockFinality, TFLServiceRequest, TFLServiceResponse};
+use zebra_crosslink::{TFLBlockFinality, service::{ TFLServiceRequest, TFLServiceResponse} };
 use zebra_network::address_book_peers::AddressBookPeers;
 use zebra_node_services::mempool;
 use zebra_state::{
