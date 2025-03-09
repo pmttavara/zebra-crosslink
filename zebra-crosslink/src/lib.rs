@@ -1,4 +1,4 @@
-// Coming soon
+//! Internal Zebra service for managing the Crosslink consensus protocol
 
 use multiaddr::Multiaddr;
 use rand::Rng;
@@ -26,6 +26,7 @@ use zebra_state::{
     HashOrHeight, ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse,
 };
 
+/// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 
 #[derive(Debug)]
@@ -167,8 +168,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut rng = rand::rngs::StdRng::seed_from_u64(5);
     let private_key = PrivateKey::generate(&mut rng);
     let public_key = private_key.public_key();
-    let address = Address::from_public_key(&public_key);
-    let signing_provider = Ed25519Provider::new(private_key.clone());
+    let _address = Address::from_public_key(&public_key);
+    let _signing_provider = Ed25519Provider::new(private_key.clone());
     let ctx = TestContext::new();
 
     let initial_validator_set = ValidatorSet::new(vec![Validator::new(public_key, 1)]);
@@ -209,7 +210,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     info!(?bft_config);
 
-    let (mut channels, engine_handle) = malachitebft_app_channel::start_engine(
+    let (mut channels, _engine_handle) = malachitebft_app_channel::start_engine(
         ctx,
         codec,
         bft_node_handle,
@@ -571,7 +572,7 @@ impl Node for BFTNode {
         Ok(())
     }
 
-    fn make_private_key_file(&self, _private_key: PrivateKey) -> () {
+    fn make_private_key_file(&self, _private_key: PrivateKey) {
         panic!();
     }
 

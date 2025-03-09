@@ -108,13 +108,17 @@ pub struct TFLServiceHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BlockHeight;
     use std::sync::Arc;
+
     use tokio::sync::Mutex;
+    use tower::Service;
+
     use zebra_state::ReadResponse as ReadStateResponse;
 
+    use crate::BlockHeight;
+
     // Helper function to create a test TFLServiceHandle
-    fn crosslink_create_test_service() -> TFLServiceHandle {
+    fn create_test_service() -> TFLServiceHandle {
         let internal = Arc::new(Mutex::new(TFLServiceInternal {
             val: 0,
             latest_final_hash: BlockHash([0_u8; 32]),
@@ -125,7 +129,7 @@ mod tests {
 
         let read_state_service: ReadStateServiceProcedure = Arc::new(|_req| {
             Box::pin(async {
-                Ok(ReadStateResponse::Tip(None)) // Default mock response
+                Ok(ReadStateResponse::Tip(None))
             })
         });
 
