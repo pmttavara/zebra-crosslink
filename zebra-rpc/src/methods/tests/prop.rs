@@ -952,7 +952,7 @@ fn mock_services<Tip>(
     zebra_test::mock_service::MockService<
         zebra_crosslink::service::TFLServiceRequest,
         zebra_crosslink::service::TFLServiceResponse,
-        zebra_test::mock_service::PropTestAssertion
+        zebra_test::mock_service::PropTestAssertion,
     >,
     zebra_test::mock_service::MockService<
         zebra_state::ReadRequest,
@@ -968,7 +968,7 @@ fn mock_services<Tip>(
         zebra_test::mock_service::MockService<
             zebra_crosslink::service::TFLServiceRequest,
             zebra_crosslink::service::TFLServiceResponse,
-            zebra_test::mock_service::PropTestAssertion
+            zebra_test::mock_service::PropTestAssertion,
         >,
         tower::buffer::Buffer<
             zebra_test::mock_service::MockService<
