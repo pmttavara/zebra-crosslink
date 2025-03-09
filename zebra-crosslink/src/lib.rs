@@ -4,19 +4,21 @@ use multiaddr::Multiaddr;
 use rand::Rng;
 use rand::SeedableRng;
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::task::Context;
-use std::task::Poll;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
-use tower::Service;
 use tracing::{error, info, warn};
+
+pub mod service;
+
+use crate::service::{
+    ReadStateServiceProcedure, TFLServiceCalls, TFLServiceError, TFLServiceHandle,
+    TFLServiceRequest, TFLServiceResponse,
+};
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight, HeightDiff as BlockHeightDiff};
@@ -26,67 +28,13 @@ use zebra_state::{
 
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 
-#[derive(Clone, Debug)]
-pub struct TFLServiceHandle {
-    internal: Arc<Mutex<TFLServiceInternal>>,
-    call: TFLServiceCalls,
-}
-
-type ReadStateServiceProcedure = Arc<
-    dyn Fn(
-            ReadStateRequest,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            ReadStateResponse,
-                            Box<dyn std::error::Error + Send + Sync>,
-                        >,
-                    > + Send,
-            >,
-        > + Send
-        + Sync,
->;
-
-#[derive(Clone)]
-pub struct TFLServiceCalls {
-    read_state: ReadStateServiceProcedure,
-}
-impl fmt::Debug for TFLServiceCalls {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TFLServiceCalls")
-    }
-}
-
 #[derive(Debug)]
-struct TFLServiceInternal {
+pub(crate) struct TFLServiceInternal {
     val: u64,
     latest_final_hash: BlockHash,
     latest_final_height: BlockHeight,
     is_tfl_activated: bool,
     final_change_tx: broadcast::Sender<BlockHash>,
-}
-
-#[derive(Debug)]
-pub enum TFLServiceRequest {
-    IncrementVal,
-    FinalBlockHash,
-    FinalBlockRx,
-    BlockFinalityStatus(BlockHash),
-}
-
-#[derive(Debug)]
-pub enum TFLServiceResponse {
-    ValIncremented(u64),
-    FinalBlockHash(Option<BlockHash>),
-    FinalBlockRx(broadcast::Receiver<BlockHash>),
-    BlockFinalityStatus(Option<TFLBlockFinality>),
-}
-
-#[derive(Debug)]
-pub enum TFLServiceError {
-    NotImplemented,
-    Misc(String),
 }
 
 /// The finality status of a block
@@ -540,7 +488,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 } else {
                     let behind = tip_height - internal.latest_final_height;
                     if behind > 512 {
-                        warn!("WARNING! BFT-Finality is falling behind the PoW chain. Current gap to tip is {} blocks.", behind);
+                        warn!("WARNING! BFT-Finality is falling behind the PoW chain. Current gap to tip is {:?} blocks.", behind);
                     }
                 }
             }
@@ -813,21 +761,6 @@ pub fn spawn_new_tfl_service(
         handle1,
         tokio::spawn(async move { tfl_service_main_loop(handle2).await }),
     )
-}
-
-impl Service<TFLServiceRequest> for TFLServiceHandle {
-    type Response = TFLServiceResponse;
-    type Error = TFLServiceError;
-    type Future = Pin<Box<dyn Future<Output = Result<TFLServiceResponse, TFLServiceError>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: TFLServiceRequest) -> Self::Future {
-        let duplicate_handle = self.clone();
-        Box::pin(async move { tfl_service_incoming_request(duplicate_handle, request).await })
-    }
 }
 
 impl fmt::Display for TFLServiceError {

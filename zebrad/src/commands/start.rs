@@ -279,7 +279,7 @@ impl StartCmd {
                 .ready()
                 .await
                 .unwrap()
-                .call(zebra_crosslink::TFLServiceRequest::IncrementVal)
+                .call(zebra_crosslink::service::TFLServiceRequest::IncrementVal)
                 .await;
             println!("exp_val: {:?}", exp_val);
         }
@@ -466,7 +466,7 @@ impl StartCmd {
                 .ready()
                 .await
                 .unwrap()
-                .call(zebra_crosslink::TFLServiceRequest::IncrementVal)
+                .call(zebra_crosslink::service::TFLServiceRequest::IncrementVal)
                 .await;
             println!("exp_val: {:?}", exp_val);
         }
