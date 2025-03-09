@@ -127,11 +127,8 @@ mod tests {
             final_change_tx: broadcast::channel(16).0,
         }));
 
-        let read_state_service: ReadStateServiceProcedure = Arc::new(|_req| {
-            Box::pin(async {
-                Ok(ReadStateResponse::Tip(None))
-            })
-        });
+        let read_state_service: ReadStateServiceProcedure =
+            Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
 
         TFLServiceHandle {
             internal,
@@ -144,7 +141,10 @@ mod tests {
     #[tokio::test]
     async fn crosslink_returns_none_when_no_block_hash() {
         let mut service = create_test_service();
-        let response = service.call(TFLServiceRequest::FinalBlockHash).await.unwrap();
+        let response = service
+            .call(TFLServiceRequest::FinalBlockHash)
+            .await
+            .unwrap();
         assert!(matches!(response, TFLServiceResponse::FinalBlockHash(None)));
     }
 
