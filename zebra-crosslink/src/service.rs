@@ -140,4 +140,34 @@ mod tests {
             },
         }
     }
+
+    #[tokio::test]
+    async fn crosslink_returns_none_when_no_block_hash() {
+        let mut service = create_test_service();
+        let response = service.call(TFLServiceRequest::FinalBlockHash).await.unwrap();
+        assert!(matches!(response, TFLServiceResponse::FinalBlockHash(None)));
+    }
+
+    #[tokio::test]
+    async fn crosslink_final_block_rx() {
+        let mut service = create_test_service();
+
+        // Subscribe to the final block hash updates
+        let response = service.call(TFLServiceRequest::FinalBlockRx).await.unwrap();
+
+        if let TFLServiceResponse::FinalBlockRx(mut receiver) = response {
+            // Simulate a final block change
+            let new_hash = BlockHash([1; 32]);
+            {
+                let internal = service.internal.lock().await;
+                let _ = internal.final_change_tx.send(new_hash);
+            }
+
+            // The receiver should get the new block hash
+            let received_hash = receiver.recv().await.unwrap();
+            assert_eq!(received_hash, new_hash);
+        } else {
+            panic!("Unexpected response: {:?}", response);
+        }
+    }
 }
