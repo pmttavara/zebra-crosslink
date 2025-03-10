@@ -32,9 +32,10 @@ pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
     val: u64,
-    latest_final_hash: BlockHash,
-    latest_final_height: BlockHeight,
-    is_tfl_activated: bool,
+    latest_final_block: Option<(BlockHeight, BlockHash)>,
+    tfl_is_activated: bool,
+
+    // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 }
 
@@ -221,18 +222,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     .await
     .unwrap();
 
-    // TODO mutable state here in order to correctly respond to messages.
-
     let mut last_diagnostic_print = Instant::now();
     let mut run_instant = Instant::now();
+
     let mut current_bft_height = init_bft_height;
     let mut current_bft_round = Round::Nil;
     let mut current_bft_proposer = None;
-    let mut current_bc_tip = None;
-    let mut current_bc_final = None;
     let mut vote_extensions =
         std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
     // let mut bft_values           = Vec::<Option<LocallyProposedValue>>::new();
+
+    let mut current_bc_tip:   Option<(BlockHeight, BlockHash)> = None;
+    let mut current_bc_final: Option<BlockHash>                = None;
+
     loop {
         // sleep if we are running ahead
 
@@ -466,12 +468,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             // TODO: walk difference in height & send all
         }
 
-        if !internal.is_tfl_activated {
+        if !internal.tfl_is_activated {
             if let Some((height, hash)) = new_bc_tip {
                 if height < TFL_ACTIVATION_HEIGHT {
                     continue;
                 } else {
-                    internal.is_tfl_activated = true;
+                    internal.tfl_is_activated = true;
                     info!("activating TFL!");
                 }
             }
@@ -480,14 +482,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         if last_diagnostic_print.elapsed() >= MAIN_LOOP_INFO_DUMP_INTERVAL {
             last_diagnostic_print = Instant::now();
             info!(?internal.val, "TFL val is {}!!!", internal.val);
-            if let Some((tip_height, _hash)) = current_bc_tip {
-                if tip_height < internal.latest_final_height {
+            if let (Some((tip_height, _tip_hash)), Some((final_height, _final_hash))) =
+                (current_bc_tip, internal.latest_final_block) {
+                if tip_height < final_height {
                     info!(
                         "Our PoW tip is {} blocks away from the latest final block.",
-                        internal.latest_final_height - tip_height
+                        final_height - tip_height
                     );
                 } else {
-                    let behind = tip_height - internal.latest_final_height;
+                    let behind = tip_height - final_height;
                     if behind > 512 {
                         warn!("WARNING! BFT-Finality is falling behind the PoW chain. Current gap to tip is {:?} blocks.", behind);
                     }
@@ -495,7 +498,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             }
         }
 
-        current_bc_tip = new_bc_tip;
+        current_bc_tip   = new_bc_tip;
         current_bc_final = new_bc_final;
     }
 }
@@ -747,9 +750,8 @@ pub fn spawn_new_tfl_service(
     let handle1 = TFLServiceHandle {
         internal: Arc::new(Mutex::new(TFLServiceInternal {
             val: 0,
-            latest_final_height: BlockHeight(0),
-            latest_final_hash: BlockHash([0_u8; 32]),
-            is_tfl_activated: false,
+            latest_final_block: None,
+            tfl_is_activated: false,
             final_change_tx: broadcast::channel(16).0,
         })),
         call: TFLServiceCalls {

@@ -115,15 +115,12 @@ mod tests {
 
     use zebra_state::ReadResponse as ReadStateResponse;
 
-    use crate::BlockHeight;
-
     // Helper function to create a test TFLServiceHandle
     fn create_test_service() -> TFLServiceHandle {
         let internal = Arc::new(Mutex::new(TFLServiceInternal {
             val: 0,
-            latest_final_hash: BlockHash([0_u8; 32]),
-            latest_final_height: BlockHeight(0),
-            is_tfl_activated: false,
+            latest_final_block: None,
+            tfl_is_activated: false, // dup of Some/None(latest_final_block)?
             final_change_tx: broadcast::channel(16).0,
         }));
 
