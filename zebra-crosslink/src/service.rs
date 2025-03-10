@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 
 use tokio::sync::{broadcast, Mutex};
 
-use zebra_chain::block::Hash as BlockHash;
+use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::{tfl_service_incoming_request, TFLBlockFinality, TFLServiceInternal};
@@ -40,6 +40,8 @@ pub enum TFLServiceRequest {
     FinalBlockHash,
     /// Get a receiver for the final block hash
     FinalBlockRx,
+    /// Set final block hash
+    SetFinalBlockHash(BlockHash),
     /// Get the finality status of a block
     BlockFinalityStatus(BlockHash),
 }
@@ -53,6 +55,8 @@ pub enum TFLServiceResponse {
     FinalBlockHash(Option<BlockHash>),
     /// Receiver for the final block hash
     FinalBlockRx(broadcast::Receiver<BlockHash>),
+    /// Set final block hash
+    SetFinalBlockHash(Option<BlockHeight>),
     /// Finality status of a block
     BlockFinalityStatus(Option<TFLBlockFinality>),
 }

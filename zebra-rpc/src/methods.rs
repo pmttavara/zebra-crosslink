@@ -227,6 +227,18 @@ pub trait Rpc {
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality>;
 
+    /// Specify finalized block for testing
+    /// TODO: Regtest mode only
+    ///
+    /// zcashd reference: none
+    /// method: post
+    /// tags: tfl
+    #[method(name = "set_tfl_finality_by_hash")]
+    async fn set_tfl_finality_by_hash(
+        &self,
+        hash:GetBlockHash
+    ) -> Option<block::Height>;
+
     /// Placeholder function for polling finality status of a specific transaction.
     ///
     /// zcashd reference: none
@@ -1211,6 +1223,25 @@ where
         }
     }
 
+    async fn set_tfl_finality_by_hash(
+        &self,
+        hash: GetBlockHash,
+    ) -> Option<block::Height> {
+        if let Ok(TFLServiceResponse::SetFinalBlockHash(ret)) = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::SetFinalBlockHash(hash.0))
+            .await
+        {
+            ret
+        } else {
+            None
+        }
+    }
+
     async fn get_tfl_tx_finality(&self) -> Option<TFLBlockFinality> {
         None
     }
@@ -1231,6 +1262,7 @@ where
                 // let stream = futures::stream::iter(["one", "two", "three"]);
                 // sink.pipe_from_stream(stream).await;
                 sink.send(jsonrpsee::SubscriptionMessage::from(format!("RPC: hi")));
+                // TODO: await/poll
                 this.stream_tfl_new_final_block_hash().await;
             }
         });

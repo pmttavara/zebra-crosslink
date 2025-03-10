@@ -665,6 +665,13 @@ async fn tfl_service_incoming_request(
             internal.final_change_tx.subscribe(),
         )),
 
+        TFLServiceRequest::SetFinalBlockHash(hash) => {
+            drop(internal);
+            Ok(TFLServiceResponse::SetFinalBlockHash(
+                    tfl_set_finality_by_hash(internal_handle.clone(), hash).await
+            ))
+        },
+
         TFLServiceRequest::BlockFinalityStatus(hash) => {
             Ok(TFLServiceResponse::BlockFinalityStatus({
                 let hash_h = HashOrHeight::Hash(hash);
@@ -794,6 +801,26 @@ pub fn spawn_new_tfl_service(
 impl fmt::Display for TFLServiceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TFLServiceError: {:?}", self)
+    }
+}
+
+pub async fn tfl_set_finality_by_hash(
+    internal_handle: TFLServiceHandle,
+    hash: BlockHash
+) -> Option<BlockHeight> { // ALT: Result with no success val?
+    let mut internal = internal_handle.internal.lock().await;
+
+    if internal.tfl_is_activated {
+        // TODO: sanity checks
+        let new_height = block_height_from_hash(&internal_handle.call, hash).await;
+
+        if let Some(height) = new_height {
+            internal.latest_final_block = Some((height, hash));
+        }
+
+        new_height
+    } else {
+        None
     }
 }
 
