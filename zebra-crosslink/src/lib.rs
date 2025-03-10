@@ -68,10 +68,11 @@ async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Opti
     }
 }
 
-async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
+async fn tfl_final_block_hash(internal_handle: TFLServiceHandle) -> Option<BlockHash> {
     use std::ops::Sub;
     use zebra_state::HashOrHeight;
 
+    let call    = internal_handle.call;
     let locator = (call.read_state)(ReadStateRequest::BlockLocator).await;
 
     // NOTE: although this is a vector, the docs say it may skip some blocks
@@ -459,7 +460,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             info!("tip changed to {:?}", new_bc_tip);
             // TODO: walk difference in height
 
-            tfl_final_block_hash(&call).await
+            tfl_final_block_hash(internal_handle.clone()).await
         } else {
             current_bc_final
         };
@@ -633,7 +634,7 @@ async fn tfl_service_incoming_request(
         }
 
         TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            tfl_final_block_hash(&internal_handle.call).await,
+            tfl_final_block_hash(internal_handle.clone()).await,
         )),
 
         TFLServiceRequest::FinalBlockRx => Ok(TFLServiceResponse::FinalBlockRx(
@@ -645,7 +646,7 @@ async fn tfl_service_incoming_request(
                 let hash_h = HashOrHeight::Hash(hash);
 
                 let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash_h));
-                let final_block_hash = match tfl_final_block_hash(&internal_handle.call).await {
+                let final_block_hash = match tfl_final_block_hash(internal_handle.clone()).await {
                     Some(v) => v,
                     None => {
                         return Err(TFLServiceError::Misc(
