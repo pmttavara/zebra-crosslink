@@ -56,6 +56,18 @@ pub enum TFLBlockFinality {
     CantBeFinalized,
 }
 
+// TODO: Result?
+async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHeight> {
+    let tip_block_hdr_req = ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash));
+    let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+
+    if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+        Some(height)
+    } else {
+        None
+    }
+}
+
 async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
     use std::ops::Sub;
     use zebra_state::HashOrHeight;
@@ -73,11 +85,9 @@ async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
         let result_2 = match hashes.len() {
             0 => None,
             _ => {
-                let tip_block_hdr_req =
-                    ReadStateRequest::BlockHeader(HashOrHeight::Hash(*hashes.first().unwrap()));
-                let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+                let tip_block_hdr = block_height_from_hash(&call, *hashes.first().unwrap()).await;
 
-                if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+                if let Some(height) = tip_block_hdr {
                     if height < BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
                         // not enough blocks for any to be finalized
                         None // may be different from `locator.last()` in this case
@@ -102,11 +112,9 @@ async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
 
         let mut result_3 = None;
         if hashes.len() > 0 {
-            let tip_block_hdr_req =
-                ReadStateRequest::BlockHeader(HashOrHeight::Hash(*hashes.first().unwrap()));
-            let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+            let tip_block_hdr = block_height_from_hash(&call, *hashes.first().unwrap()).await;
 
-            if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+            if let Some(height) = tip_block_hdr {
                 if height >= BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
                     // not enough blocks for any to be finalized
                     let pre_reorg_height = height
@@ -705,17 +713,9 @@ async fn tfl_service_incoming_request(
                                         // is in best chain
                                         break Some(TFLBlockFinality::Finalized);
                                     } else {
-                                        let check_block_hdr =
-                                            (call.read_state)(ReadStateRequest::BlockHeader(
-                                                HashOrHeight::Hash(check_hash),
-                                            ))
-                                            .await;
+                                        let check_height = block_height_from_hash(&call, check_hash).await;
 
-                                        if let Ok(ReadStateResponse::BlockHeader {
-                                            height: check_height,
-                                            ..
-                                        }) = check_block_hdr
-                                        {
+                                        if let Some(check_height) = check_height {
                                             if check_height >= final_height {
                                                 // is not in best chain
                                                 break Some(TFLBlockFinality::CantBeFinalized);
