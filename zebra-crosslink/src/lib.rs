@@ -68,11 +68,10 @@ async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Opti
     }
 }
 
-async fn tfl_final_block_hash(internal_handle: TFLServiceHandle) -> Option<BlockHash> {
+async fn tfl_reorg_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
     use std::ops::Sub;
     use zebra_state::HashOrHeight;
 
-    let call    = internal_handle.call;
     let locator = (call.read_state)(ReadStateRequest::BlockLocator).await;
 
     // NOTE: although this is a vector, the docs say it may skip some blocks
@@ -138,6 +137,18 @@ async fn tfl_final_block_hash(internal_handle: TFLServiceHandle) -> Option<Block
         result_1
     } else {
         None
+    }
+}
+
+async fn tfl_final_block_hash(internal_handle: TFLServiceHandle) -> Option<BlockHash> {
+    #[allow(unused_mut)]
+    let mut internal = internal_handle.internal.lock().await;
+
+    if let Some((_final_height, final_hash)) = internal.latest_final_block {
+        Some(final_hash)
+    } else {
+        drop(internal);
+        tfl_reorg_final_block_hash(&internal_handle.call).await
     }
 }
 
@@ -456,23 +467,33 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             None
         };
 
-        let new_bc_final = if new_bc_tip != current_bc_tip {
-            info!("tip changed to {:?}", new_bc_tip);
-            // TODO: walk difference in height
+        let new_bc_final = { // partial dup of tfl_final_block_hash
+            let internal = internal_handle.internal.lock().await;
 
-            tfl_final_block_hash(internal_handle.clone()).await
-        } else {
-            current_bc_final
+            if let Some((_final_height, final_hash)) = internal.latest_final_block {
+                Some(final_hash)
+            } else {
+                drop(internal);
+
+                if new_bc_tip != current_bc_tip {
+                    info!("tip changed to {:?}", new_bc_tip);
+                    tfl_reorg_final_block_hash(&call).await
+                } else {
+                    current_bc_final
+                }
+            }
         };
 
+
+        // from this point onwards we must race to completion in order to avoid stalling incoming requests
+        // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
         #[allow(unused_mut)]
         let mut internal = internal_handle.internal.lock().await;
-        // from this point onwards we must race to completion in order to avoid stalling incoming requests
 
         if new_bc_final != current_bc_final {
             info!("final changed to {:?}", new_bc_final);
             if let Some(hash) = new_bc_final {
-                internal.final_change_tx.send(hash);
+                let _ = internal.final_change_tx.send(hash);
             }
             // TODO: walk difference in height & send all
         }
@@ -633,9 +654,12 @@ async fn tfl_service_incoming_request(
             Ok(TFLServiceResponse::ValIncremented(ret))
         }
 
-        TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            tfl_final_block_hash(internal_handle.clone()).await,
-        )),
+        TFLServiceRequest::FinalBlockHash => {
+            drop(internal);
+            Ok(TFLServiceResponse::FinalBlockHash(
+                    tfl_final_block_hash(internal_handle.clone()).await,
+            ))
+        },
 
         TFLServiceRequest::FinalBlockRx => Ok(TFLServiceResponse::FinalBlockRx(
             internal.final_change_tx.subscribe(),
