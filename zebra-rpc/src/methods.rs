@@ -234,10 +234,7 @@ pub trait Rpc {
     /// method: post
     /// tags: tfl
     #[method(name = "set_tfl_finality_by_hash")]
-    async fn set_tfl_finality_by_hash(
-        &self,
-        hash:GetBlockHash
-    ) -> Option<block::Height>;
+    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height>;
 
     /// Placeholder function for polling finality status of a specific transaction.
     ///
@@ -1223,10 +1220,7 @@ where
         }
     }
 
-    async fn set_tfl_finality_by_hash(
-        &self,
-        hash: GetBlockHash,
-    ) -> Option<block::Height> {
+    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height> {
         if let Ok(TFLServiceResponse::SetFinalBlockHash(ret)) = self
             .tfl_service
             .clone()

@@ -252,8 +252,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
     // let mut bft_values           = Vec::<Option<LocallyProposedValue>>::new();
 
-    let mut current_bc_tip:   Option<(BlockHeight, BlockHash)> = None;
-    let mut current_bc_final: Option<BlockHash>                = None;
+    let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
+    let mut current_bc_final: Option<BlockHash> = None;
 
     loop {
         // sleep if we are running ahead
@@ -467,7 +467,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             None
         };
 
-        let new_bc_final = { // partial dup of tfl_final_block_hash
+        let new_bc_final = {
+            // partial dup of tfl_final_block_hash
             let internal = internal_handle.internal.lock().await;
 
             if let Some((_final_height, final_hash)) = internal.latest_final_block {
@@ -483,7 +484,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 }
             }
         };
-
 
         // from this point onwards we must race to completion in order to avoid stalling incoming requests
         // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
@@ -513,7 +513,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             last_diagnostic_print = Instant::now();
             info!(?internal.val, "TFL val is {}!!!", internal.val);
             if let (Some((tip_height, _tip_hash)), Some((final_height, _final_hash))) =
-                (current_bc_tip, internal.latest_final_block) {
+                (current_bc_tip, internal.latest_final_block)
+            {
                 if tip_height < final_height {
                     info!(
                         "Our PoW tip is {} blocks away from the latest final block.",
@@ -528,7 +529,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             }
         }
 
-        current_bc_tip   = new_bc_tip;
+        current_bc_tip = new_bc_tip;
         current_bc_final = new_bc_final;
     }
 }
@@ -657,9 +658,9 @@ async fn tfl_service_incoming_request(
         TFLServiceRequest::FinalBlockHash => {
             drop(internal);
             Ok(TFLServiceResponse::FinalBlockHash(
-                    tfl_final_block_hash(internal_handle.clone()).await,
+                tfl_final_block_hash(internal_handle.clone()).await,
             ))
-        },
+        }
 
         TFLServiceRequest::FinalBlockRx => Ok(TFLServiceResponse::FinalBlockRx(
             internal.final_change_tx.subscribe(),
@@ -668,9 +669,9 @@ async fn tfl_service_incoming_request(
         TFLServiceRequest::SetFinalBlockHash(hash) => {
             drop(internal);
             Ok(TFLServiceResponse::SetFinalBlockHash(
-                    tfl_set_finality_by_hash(internal_handle.clone(), hash).await
+                tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
             ))
-        },
+        }
 
         TFLServiceRequest::BlockFinalityStatus(hash) => {
             Ok(TFLServiceResponse::BlockFinalityStatus({
@@ -745,7 +746,8 @@ async fn tfl_service_incoming_request(
                                         // is in best chain
                                         break Some(TFLBlockFinality::Finalized);
                                     } else {
-                                        let check_height = block_height_from_hash(&call, check_hash).await;
+                                        let check_height =
+                                            block_height_from_hash(&call, check_hash).await;
 
                                         if let Some(check_height) = check_height {
                                             if check_height >= final_height {
@@ -806,8 +808,9 @@ impl fmt::Display for TFLServiceError {
 
 pub async fn tfl_set_finality_by_hash(
     internal_handle: TFLServiceHandle,
-    hash: BlockHash
-) -> Option<BlockHeight> { // ALT: Result with no success val?
+    hash: BlockHash,
+) -> Option<BlockHeight> {
+    // ALT: Result with no success val?
     let mut internal = internal_handle.internal.lock().await;
 
     if internal.tfl_is_activated {
