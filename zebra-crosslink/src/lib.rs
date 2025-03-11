@@ -1,9 +1,10 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 /*
 use rand::{CryptoRng, RngCore};
 use crate::core::Round as BFTRound;
@@ -31,7 +32,9 @@ use crate::service::{
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
-use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight, HeightDiff as BlockHeightDiff};
+use zebra_chain::block::{
+    Hash as BlockHash, Header as BlockHeader, Height as BlockHeight, HeightDiff as BlockHeightDiff,
+};
 use zebra_state::{
     HashOrHeight, ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse,
 };
@@ -69,11 +72,50 @@ pub enum TFLBlockFinality {
 
 // TODO: Result?
 async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHeight> {
-    let tip_block_hdr_req = ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash));
-    let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
-
-    if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+    if let Ok(ReadStateResponse::BlockHeader { height, .. }) =
+        (call.read_state)(ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash))).await
+    {
         Some(height)
+    } else {
+        None
+    }
+}
+
+async fn block_height_hash_from_hash(
+    call: &TFLServiceCalls,
+    hash: BlockHash,
+) -> Option<(BlockHeight, BlockHash)> {
+    if let Ok(ReadStateResponse::BlockHeader {
+        height,
+        hash: check_hash,
+        ..
+    }) = (call.read_state)(ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash))).await
+    {
+        assert_eq!(hash, check_hash);
+        Some((height, hash))
+    } else {
+        None
+    }
+}
+
+async fn block_header_from_hash(
+    call: &TFLServiceCalls,
+    hash: BlockHash,
+) -> Option<Arc<BlockHeader>> {
+    if let Ok(ReadStateResponse::BlockHeader { header, .. }) =
+        (call.read_state)(ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash))).await
+    {
+        Some(header)
+    } else {
+        None
+    }
+}
+
+async fn block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHash> {
+    if let Ok(ReadStateResponse::BlockHeader { header, .. }) =
+        (call.read_state)(ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash))).await
+    {
+        Some(header.previous_block_hash)
     } else {
         None
     }
@@ -506,6 +548,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         if new_bc_final != current_bc_final {
             info!("final changed to {:?}", new_bc_final);
             if let Some(hash) = new_bc_final {
+                let start = if let Some(prev_hash) = current_bc_final {
+                    prev_hash
+                } else {
+                    hash
+                };
+                tfl_dump_block_sequence(&call, start, new_bc_final, true).await;
+                // tfl_dump_block_sequence(&call, start, None).await;
                 let _ = internal.final_change_tx.send(hash);
             }
             // TODO: walk difference in height & send all
@@ -790,5 +839,124 @@ async fn tfl_set_finality_by_hash(
         new_height
     } else {
         None
+    }
+}
+
+// TODO: handle headers as well?
+// NOTE: this is currently best-chain-only due to request/response limitations
+// TODO: add more request/response pairs directly in zebra-state's ReadStateService
+async fn tfl_block_sequence(
+    call: &TFLServiceCalls,
+    start_hash: BlockHash,
+    final_hash: Option<BlockHash>,
+    include_start_hash: bool,
+) -> Vec<BlockHash> {
+    // get "real" initial values //////////////////////////////
+    let (start_height, init_hash) = {
+        if let Ok(ReadStateResponse::BlockHeader { height, header, .. }) = (call.read_state)(
+            ReadStateRequest::BlockHeader(HashOrHeight::Hash(start_hash)),
+        )
+        .await
+        {
+            if include_start_hash {
+                // NOTE: BlockHashes does not return the first hash provided, so we move back 1.
+                //       We would probably also be fine to just push it directly.
+                (Some(height), Some(header.previous_block_hash))
+            } else {
+                (Some(height), Some(start_hash))
+            }
+        } else {
+            (None, None)
+        }
+    };
+    let final_height_hash = if let Some(hash) = final_hash {
+        block_height_hash_from_hash(call, hash).await
+    } else {
+        if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
+            val
+        } else {
+            None
+        }
+    };
+
+    // check validity //////////////////////////////
+    if start_height.is_none() {
+        error!(?start_hash, "start_hash has invalid height");
+        return Vec::new();
+    }
+    let start_height = start_height.unwrap();
+    let init_hash = init_hash.unwrap();
+
+    if final_height_hash.is_none() {
+        error!(?final_height_hash, "final_hash has invalid height");
+        return Vec::new();
+    }
+    let final_height = final_height_hash.unwrap().0;
+
+    if final_height < start_height {
+        error!(?final_height, ?start_height, "final_height < start_height");
+        return Vec::new();
+    }
+
+    // build vector //////////////////////////////
+    let mut hashes = Vec::with_capacity((final_height - start_height + 1) as usize);
+    let mut chunk_i = 0;
+    let mut chunk =
+        Vec::with_capacity(zebra_state::constants::MAX_FIND_BLOCK_HASHES_RESULTS as usize);
+    // NOTE: written as if for iterator
+    let mut c = 0;
+    loop {
+        if chunk_i >= chunk.len() {
+            let chunk_start_hash = if chunk.len() == 0 {
+                &init_hash
+            } else {
+                // NOTE: as the new first element, this won't be repeated
+                chunk.last().expect("should have chunk elements by now")
+            };
+
+            let res = (call.read_state)(ReadStateRequest::FindBlockHashes {
+                known_blocks: vec![*chunk_start_hash],
+                stop: final_hash,
+            })
+            .await;
+
+            if let Ok(ReadStateResponse::BlockHashes(chunk_hashes)) = res {
+                if c == 0 && include_start_hash && chunk_hashes.len() > 0 {
+                    assert_eq!(
+                        chunk_hashes[0], start_hash,
+                        "first hash is not the one requested"
+                    );
+                }
+
+                chunk = chunk_hashes;
+            } else {
+                break; // unexpected
+            }
+
+            chunk_i = 0;
+        }
+
+        if let Some(val) = chunk.get(chunk_i) {
+            hashes.push(*val);
+        } else {
+            break; // expected
+        };
+        chunk_i += 1;
+        c += 1;
+    }
+
+    hashes
+}
+
+async fn tfl_dump_block_sequence(
+    call: &TFLServiceCalls,
+    start_hash: BlockHash,
+    final_hash: Option<BlockHash>,
+    include_start_hash: bool,
+) {
+    let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
+    println!("{} block hashes:", blocks.len());
+    for block in blocks {
+        println!("  {}", block);
     }
 }
