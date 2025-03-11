@@ -187,15 +187,6 @@ pub trait Rpc {
     #[method(name = "getblock")]
     async fn get_block(&self, hash_or_height: String, verbosity: Option<u8>) -> Result<GetBlock>;
 
-    /// Test RPC function. Increments an internal counter and returns the new value.
-    /// The counter value is printed every 2 seconds.
-    ///
-    /// zcashd reference: none
-    /// method: post
-    /// tags: tfl
-    #[method(name = "increment_tfl_int")]
-    async fn increment_tfl_int(&self) -> Option<u64>;
-
     /// Placeholder function for getting actual final block.
     /// For the sake of testing, this currently treats pre-reorg block as final.
     ///
@@ -1119,23 +1110,6 @@ where
         }
     }
 
-    async fn increment_tfl_int(&self) -> Option<u64> {
-        let ret = self
-            .tfl_service
-            .clone()
-            .ready()
-            .await
-            .unwrap()
-            .call(TFLServiceRequest::IncrementVal)
-            .await;
-        if let Ok(TFLServiceResponse::ValIncremented(prev_val)) = ret {
-            Some(prev_val)
-        } else {
-            tracing::error!(?ret, "Bad tfl service return.");
-            None
-        }
-    }
-
     async fn get_tfl_final_block_hash(&self) -> Option<GetBlockHash> {
         let ret = self
             .tfl_service
@@ -1230,7 +1204,7 @@ where
             if let Ok(sink) = sink.accept().await {
                 // let stream = futures::stream::iter(["one", "two", "three"]);
                 // sink.pipe_from_stream(stream).await;
-                sink.send(jsonrpsee::SubscriptionMessage::from(format!("RPC: hi")));
+                let _ = sink.send(jsonrpsee::SubscriptionMessage::from(format!("RPC: hi")));
                 this.stream_tfl_new_final_block_hash().await;
             }
         });

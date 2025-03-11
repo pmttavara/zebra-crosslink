@@ -10,8 +10,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::sync::{broadcast, Mutex};
+use tokio::task::JoinHandle;
 
 use zebra_chain::block::Hash as BlockHash;
+use zebra_chain::block::Height as BlockHeight;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::{tfl_service_incoming_request, TFLBlockFinality, TFLServiceInternal};
@@ -32,10 +34,10 @@ impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
 }
 
 /// Types of requests that can be made to the TFLService.
+///
+/// These map one to one to the variants of the same name in [`TFLServiceResponse`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TFLServiceRequest {
-    /// Increment the test value
-    IncrementVal,
     /// Get the final block hash
     FinalBlockHash,
     /// Get a receiver for the final block hash
@@ -45,10 +47,10 @@ pub enum TFLServiceRequest {
 }
 
 /// Types of responses that can be returned by the TFLService.
+///
+/// These map one to one to the variants of the same name in [`TFLServiceRequest`].
 #[derive(Debug)]
 pub enum TFLServiceResponse {
-    /// Incremented value
-    ValIncremented(u64),
     /// Final block hash
     FinalBlockHash(Option<BlockHash>),
     /// Receiver for the final block hash
@@ -65,6 +67,14 @@ pub enum TFLServiceError {
     /// Arbitrary error
     Misc(String),
 }
+
+impl fmt::Display for TFLServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TFLServiceError: {:?}", self)
+    }
+}
+
+impl std::error::Error for TFLServiceError {}
 
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
@@ -86,7 +96,38 @@ pub(crate) type ReadStateServiceProcedure = Arc<
         + Sync,
 >;
 
-/// `TFLServiceCalls` encapsulates the service calls that can be made to the TFLService.
+/// Spawn a Trailing Finality Service that uses the provided
+/// closures to call out to other services.
+///
+/// - `read_state_service_call` takes a [`ReadStateRequest`] as input and returns a [`ReadStateResponse`] as output.
+///
+/// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
+
+pub fn spawn_new_tfl_service(
+    read_state_service_call: ReadStateServiceProcedure,
+) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
+    let handle1 = TFLServiceHandle {
+        internal: Arc::new(Mutex::new(TFLServiceInternal {
+            val: 0,
+            latest_final_height: BlockHeight(0),
+            latest_final_hash: BlockHash([0_u8; 32]),
+            is_tfl_activated: false,
+            final_change_tx: broadcast::channel(16).0,
+        })),
+        call: TFLServiceCalls {
+            read_state: read_state_service_call,
+        },
+    };
+    let handle2 = handle1.clone();
+
+    (
+        handle1,
+        tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
+    )
+}
+
+/// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
+/// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
 #[derive(Clone)]
 pub struct TFLServiceCalls {
     pub(crate) read_state: ReadStateServiceProcedure,

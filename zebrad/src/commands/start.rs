@@ -257,7 +257,7 @@ impl StartCmd {
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
             let read_only_state_service = read_only_state_service.clone();
-            zebra_crosslink::spawn_new_tfl_service(Arc::new(move |req| {
+            zebra_crosslink::service::spawn_new_tfl_service(Arc::new(move |req| {
                 let read_only_state_service = read_only_state_service.clone();
                 Box::pin(async move {
                     read_only_state_service
@@ -271,18 +271,7 @@ impl StartCmd {
             }))
         };
         let tfl_service = BoxService::new(tfl);
-        let mut tfl_service = ServiceBuilder::new().buffer(1).service(tfl_service);
-        {
-            // TODO: remove!
-            use tower::Service;
-            let exp_val = tfl_service
-                .ready()
-                .await
-                .unwrap()
-                .call(zebra_crosslink::service::TFLServiceRequest::IncrementVal)
-                .await;
-            println!("exp_val: {:?}", exp_val);
-        }
+        let tfl_service = ServiceBuilder::new().buffer(1).service(tfl_service);
 
         // Launch RPC server
         let (rpc_task_handle, mut rpc_tx_queue_task_handle) =
@@ -458,18 +447,6 @@ impl StartCmd {
             tokio::spawn(std::future::pending().in_current_span());
 
         info!("spawned initial Zebra tasks");
-
-        {
-            // TODO: remove!
-            use tower::Service;
-            let exp_val = tfl_service
-                .ready()
-                .await
-                .unwrap()
-                .call(zebra_crosslink::service::TFLServiceRequest::IncrementVal)
-                .await;
-            println!("exp_val: {:?}", exp_val);
-        }
 
         // TODO: put tasks into an ongoing FuturesUnordered and a startup FuturesUnordered?
 
