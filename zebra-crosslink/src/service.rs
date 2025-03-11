@@ -12,8 +12,7 @@ use std::task::{Context, Poll};
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
-use zebra_chain::block::Hash as BlockHash;
-use zebra_chain::block::Height as BlockHeight;
+use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::{tfl_service_incoming_request, TFLBlockFinality, TFLServiceInternal};
@@ -42,6 +41,8 @@ pub enum TFLServiceRequest {
     FinalBlockHash,
     /// Get a receiver for the final block hash
     FinalBlockRx,
+    /// Set final block hash
+    SetFinalBlockHash(BlockHash),
     /// Get the finality status of a block
     BlockFinalityStatus(BlockHash),
 }
@@ -55,6 +56,8 @@ pub enum TFLServiceResponse {
     FinalBlockHash(Option<BlockHash>),
     /// Receiver for the final block hash
     FinalBlockRx(broadcast::Receiver<BlockHash>),
+    /// Set final block hash
+    SetFinalBlockHash(Option<BlockHeight>),
     /// Finality status of a block
     BlockFinalityStatus(Option<TFLBlockFinality>),
 }
@@ -109,9 +112,8 @@ pub fn spawn_new_tfl_service(
     let handle1 = TFLServiceHandle {
         internal: Arc::new(Mutex::new(TFLServiceInternal {
             val: 0,
-            latest_final_height: BlockHeight(0),
-            latest_final_hash: BlockHash([0_u8; 32]),
-            is_tfl_activated: false,
+            latest_final_block: None,
+            tfl_is_activated: false,
             final_change_tx: broadcast::channel(16).0,
         })),
         call: TFLServiceCalls {
@@ -156,15 +158,12 @@ mod tests {
 
     use zebra_state::ReadResponse as ReadStateResponse;
 
-    use crate::BlockHeight;
-
     // Helper function to create a test TFLServiceHandle
     fn create_test_service() -> TFLServiceHandle {
         let internal = Arc::new(Mutex::new(TFLServiceInternal {
             val: 0,
-            latest_final_hash: BlockHash([0_u8; 32]),
-            latest_final_height: BlockHeight(0),
-            is_tfl_activated: false,
+            latest_final_block: None,
+            tfl_is_activated: false, // dup of Some/None(latest_final_block)?
             final_change_tx: broadcast::channel(16).0,
         }));
 

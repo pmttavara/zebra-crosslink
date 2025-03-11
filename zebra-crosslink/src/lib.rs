@@ -43,9 +43,10 @@ pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
     val: u64,
-    latest_final_hash: BlockHash,
-    latest_final_height: BlockHeight,
-    is_tfl_activated: bool,
+    latest_final_block: Option<(BlockHeight, BlockHash)>,
+    tfl_is_activated: bool,
+
+    // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 }
 
@@ -66,7 +67,19 @@ pub enum TFLBlockFinality {
     CantBeFinalized,
 }
 
-async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
+// TODO: Result?
+async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHeight> {
+    let tip_block_hdr_req = ReadStateRequest::BlockHeader(HashOrHeight::Hash(hash));
+    let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+
+    if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+        Some(height)
+    } else {
+        None
+    }
+}
+
+async fn tfl_reorg_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
     use std::ops::Sub;
     use zebra_state::HashOrHeight;
 
@@ -83,11 +96,9 @@ async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
         let result_2 = match hashes.len() {
             0 => None,
             _ => {
-                let tip_block_hdr_req =
-                    ReadStateRequest::BlockHeader(HashOrHeight::Hash(*hashes.first().unwrap()));
-                let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+                let tip_block_hdr = block_height_from_hash(&call, *hashes.first().unwrap()).await;
 
-                if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+                if let Some(height) = tip_block_hdr {
                     if height < BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
                         // not enough blocks for any to be finalized
                         None // may be different from `locator.last()` in this case
@@ -112,11 +123,9 @@ async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
 
         let mut result_3 = None;
         if hashes.len() > 0 {
-            let tip_block_hdr_req =
-                ReadStateRequest::BlockHeader(HashOrHeight::Hash(*hashes.first().unwrap()));
-            let tip_block_hdr = (call.read_state)(tip_block_hdr_req).await;
+            let tip_block_hdr = block_height_from_hash(&call, *hashes.first().unwrap()).await;
 
-            if let Ok(ReadStateResponse::BlockHeader { height, .. }) = tip_block_hdr {
+            if let Some(height) = tip_block_hdr {
                 if height >= BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
                     // not enough blocks for any to be finalized
                     let pre_reorg_height = height
@@ -139,6 +148,18 @@ async fn tfl_final_block_hash(call: &TFLServiceCalls) -> Option<BlockHash> {
         result_1
     } else {
         None
+    }
+}
+
+async fn tfl_final_block_hash(internal_handle: TFLServiceHandle) -> Option<BlockHash> {
+    #[allow(unused_mut)]
+    let mut internal = internal_handle.internal.lock().await;
+
+    if let Some((_final_height, final_hash)) = internal.latest_final_block {
+        Some(final_hash)
+    } else {
+        drop(internal);
+        tfl_reorg_final_block_hash(&internal_handle.call).await
     }
 }
 
@@ -238,8 +259,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();
-    let mut current_bc_tip = None;
-    let mut current_bc_final = None;
+    let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
+    let mut current_bc_final: Option<BlockHash> = None;
 
     /*
         // TODO mutable state here in order to correctly respond to messages.
@@ -459,17 +480,28 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             None
         };
 
-        let new_bc_final = if new_bc_tip != current_bc_tip {
-            info!("tip changed to {:?}", new_bc_tip);
-            // TODO: walk difference in height
+        let new_bc_final = {
+            // partial dup of tfl_final_block_hash
+            let internal = internal_handle.internal.lock().await;
 
-            tfl_final_block_hash(&call).await
-        } else {
-            current_bc_final
+            if let Some((_final_height, final_hash)) = internal.latest_final_block {
+                Some(final_hash)
+            } else {
+                drop(internal);
+
+                if new_bc_tip != current_bc_tip {
+                    info!("tip changed to {:?}", new_bc_tip);
+                    tfl_reorg_final_block_hash(&call).await
+                } else {
+                    current_bc_final
+                }
+            }
         };
 
-        let mut internal = internal_handle.internal.lock().await;
         // from this point onwards we must race to completion in order to avoid stalling incoming requests
+        // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
+        #[allow(unused_mut)]
+        let mut internal = internal_handle.internal.lock().await;
 
         if new_bc_final != current_bc_final {
             info!("final changed to {:?}", new_bc_final);
@@ -479,12 +511,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             // TODO: walk difference in height & send all
         }
 
-        if !internal.is_tfl_activated {
+        if !internal.tfl_is_activated {
             if let Some((height, _hash)) = new_bc_tip {
                 if height < TFL_ACTIVATION_HEIGHT {
                     continue;
                 } else {
-                    internal.is_tfl_activated = true;
+                    internal.tfl_is_activated = true;
                     info!("activating TFL!");
                 }
             }
@@ -493,14 +525,16 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         if last_diagnostic_print.elapsed() >= MAIN_LOOP_INFO_DUMP_INTERVAL {
             last_diagnostic_print = Instant::now();
             info!(?internal.val, "TFL val is {}!!!", internal.val);
-            if let Some((tip_height, _hash)) = current_bc_tip {
-                if tip_height < internal.latest_final_height {
+            if let (Some((tip_height, _tip_hash)), Some((final_height, _final_hash))) =
+                (current_bc_tip, internal.latest_final_block)
+            {
+                if tip_height < final_height {
                     info!(
                         "Our PoW tip is {} blocks away from the latest final block.",
-                        internal.latest_final_height - tip_height
+                        final_height - tip_height
                     );
                 } else {
-                    let behind = tip_height - internal.latest_final_height;
+                    let behind = tip_height - final_height;
                     if behind > 512 {
                         warn!("WARNING! BFT-Finality is falling behind the PoW chain. Current gap to tip is {:?} blocks.", behind);
                     }
@@ -615,20 +649,30 @@ async fn tfl_service_incoming_request(
 
     #[allow(unreachable_patterns)]
     match request {
-        TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            tfl_final_block_hash(&internal_handle.call).await,
-        )),
+        TFLServiceRequest::FinalBlockHash => {
+            drop(internal);
+            Ok(TFLServiceResponse::FinalBlockHash(
+                tfl_final_block_hash(internal_handle.clone()).await,
+            ))
+        }
 
         TFLServiceRequest::FinalBlockRx => Ok(TFLServiceResponse::FinalBlockRx(
             internal.final_change_tx.subscribe(),
         )),
+
+        TFLServiceRequest::SetFinalBlockHash(hash) => {
+            drop(internal);
+            Ok(TFLServiceResponse::SetFinalBlockHash(
+                tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
+            ))
+        }
 
         TFLServiceRequest::BlockFinalityStatus(hash) => {
             Ok(TFLServiceResponse::BlockFinalityStatus({
                 let hash_h = HashOrHeight::Hash(hash);
 
                 let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash_h));
-                let final_block_hash = match tfl_final_block_hash(&internal_handle.call).await {
+                let final_block_hash = match tfl_final_block_hash(internal_handle.clone()).await {
                     Some(v) => v,
                     None => {
                         return Err(TFLServiceError::Misc(
@@ -696,17 +740,10 @@ async fn tfl_service_incoming_request(
                                         // is in best chain
                                         break Some(TFLBlockFinality::Finalized);
                                     } else {
-                                        let check_block_hdr =
-                                            (call.read_state)(ReadStateRequest::BlockHeader(
-                                                HashOrHeight::Hash(check_hash),
-                                            ))
-                                            .await;
+                                        let check_height =
+                                            block_height_from_hash(&call, check_hash).await;
 
-                                        if let Ok(ReadStateResponse::BlockHeader {
-                                            height: check_height,
-                                            ..
-                                        }) = check_block_hdr
-                                        {
+                                        if let Some(check_height) = check_height {
                                             if check_height >= final_height {
                                                 // is not in best chain
                                                 break Some(TFLBlockFinality::CantBeFinalized);
@@ -732,5 +769,26 @@ async fn tfl_service_incoming_request(
         }
 
         _ => Err(TFLServiceError::NotImplemented),
+    }
+}
+
+async fn tfl_set_finality_by_hash(
+    internal_handle: TFLServiceHandle,
+    hash: BlockHash,
+) -> Option<BlockHeight> {
+    // ALT: Result with no success val?
+    let mut internal = internal_handle.internal.lock().await;
+
+    if internal.tfl_is_activated {
+        // TODO: sanity checks
+        let new_height = block_height_from_hash(&internal_handle.call, hash).await;
+
+        if let Some(height) = new_height {
+            internal.latest_final_block = Some((height, hash));
+        }
+
+        new_height
+    } else {
+        None
     }
 }
