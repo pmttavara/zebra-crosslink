@@ -256,6 +256,14 @@ pub trait Rpc {
     #[method(name = "stream_tfl_new_final_block_hash")]
     async fn stream_tfl_new_final_block_hash(&self);
 
+    /// Placeholder function for streaming new final transaction changes (for testing).
+    ///
+    /// zcashd reference: none
+    /// method: ?
+    /// tags: tfl
+    #[method(name = "stream_tfl_new_final_txs")]
+    async fn stream_tfl_new_final_txs(&self);
+
     /// Placeholder function for blocking until a particular block becomes final.
     ///
     /// zcashd reference: none
@@ -1330,6 +1338,44 @@ where
             }
         }
     }
+
+    async fn stream_tfl_new_final_txs(&self) {
+        use rand::RngCore;
+        // TODO: subscribe to TFL notifs
+        // ALT: transfer ownership of channel to TFL
+
+        let id = rand::thread_rng().next_u32();
+        let rx = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::FinalBlockRx)
+            .await;
+
+        if let Ok(TFLServiceResponse::FinalBlockRx(mut rx)) = rx {
+            loop {
+                let rx_res = rx.recv().await;
+                if let Ok(block_hash) = rx_res {
+                    let txs_res = self.state.clone()
+                        .oneshot(zebra_state::ReadRequest::TransactionIdsForBlock(block_hash.into()))
+                        .await;
+                    if let Ok (txs) = txs_res {
+                        tracing::info!("{:x}: RX new block {}, with transactions: {:?}", id, block_hash, txs);
+
+                    } else {
+                        tracing::error!(?txs_res, "Couldn't read transactions for new final block {}", block_hash);
+                    }
+                } else {
+                    tracing::error!(?rx_res, "Bad channel TX");
+                }
+            }
+        } else {
+            tracing::error!(?rx, "Bad tfl service return.");
+        };
+    }
+
 
     async fn get_block_header(
         &self,
