@@ -275,6 +275,18 @@ pub trait Rpc {
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality>;
 
+    /// Placeholder function for blocking until a particular transaction becomes final.
+    ///
+    /// zcashd reference: none
+    /// method: ?
+    /// tags: tfl
+    // TODO: "by_id"?
+    #[method(name = "notify_tfl_tx_becomes_final_by_hash")]
+    async fn notify_tfl_tx_becomes_final_by_hash(
+        &self,
+        hash: GetTxHash,
+    ) -> Option<TFLBlockFinality>;
+
     /// Returns the requested block header by hash or height, as a [`GetBlockHeader`] JSON string.
     /// If the block is not in Zebra's state,
     /// returns [error code `-8`.](https://github.com/zcash/zcash/issues/5758)
@@ -1376,6 +1388,55 @@ where
         };
     }
 
+    async fn notify_tfl_tx_becomes_final_by_hash(
+        &self,
+        hash: GetTxHash,
+    ) -> Option<TFLBlockFinality> {
+        let mut rx = {
+            if let Ok(TFLServiceResponse::FinalBlockRx(rx)) = self
+                .tfl_service
+                .clone()
+                .ready()
+                .await
+                .unwrap()
+                .call(TFLServiceRequest::FinalBlockRx)
+                .await
+            {
+                rx
+            } else {
+                return None;
+            }
+        };
+
+        // TODO (perf): calculate height once, then early out for most iterations
+        loop {
+            match if let Ok(TFLServiceResponse::TxFinalityStatus(ret)) = self
+                .tfl_service
+                .clone()
+                .ready()
+                .await
+                .unwrap()
+                .call(TFLServiceRequest::TxFinalityStatus(hash.0))
+                .await
+            {
+                ret
+            } else {
+                None
+            } {
+                None => {
+                    return None;
+                }
+                Some(status) => {
+                    if status == TFLBlockFinality::NotYetFinalized {
+                        drop(rx.recv().await);
+                        // now we can retry and might get a different finality status
+                    } else {
+                        return Some(status);
+                    }
+                }
+            }
+        }
+    }
 
     async fn get_block_header(
         &self,
