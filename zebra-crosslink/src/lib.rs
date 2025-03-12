@@ -734,83 +734,79 @@ async fn tfl_service_incoming_request(
                     HashOrHeight::Hash(final_block_hash),
                 ));
 
-                let block_hdr = block_hdr.await;
-                let final_block_hdr = final_block_hdr.await;
-
-                if let Ok(ReadStateResponse::BlockHeader {
-                    height: final_height,
-                    hash: final_hash,
-                    ..
-                }) = final_block_hdr
-                {
-                    if let Ok(ReadStateResponse::BlockHeader {
+                if let (
+                    Ok(ReadStateResponse::BlockHeader {
+                        height: final_height,
+                        hash: final_hash,
+                        ..
+                    }),
+                    Ok(ReadStateResponse::BlockHeader {
                         header: block_hdr,
                         height,
                         hash: mut check_hash,
                         ..
-                    }) = block_hdr
-                    {
-                        assert_eq!(check_hash, block_hdr.hash());
+                    }),
+                ) = (final_block_hdr.await, block_hdr.await)
+                {
+                    assert_eq!(check_hash, block_hdr.hash());
 
-                        if height > final_height {
-                            Some(TFLBlockFinality::NotYetFinalized)
-                        } else if check_hash == final_hash {
-                            Some(TFLBlockFinality::Finalized)
-                        } else {
-                            // NOTE: option not available because KnownBlock is Request::, not ReadRequest::
-                            // (despite all the current values being read from ReadStateService...)
-                            // let known_block = (call.read_state)(ReadStateRequest::KnownBlock(hash_h));
-                            // let known_block = known_block.await.map_misc_error();
-                            //
-                            // if let Ok(ReadStateResponse::KnownBlock(Some(known_block))) = known_block {
-                            //     match known_block {
-                            //         BestChain => Some(TFLBlockFinality::Finalized),
-                            //         SideChain => Some(TFLBlockFinality::CantBeFinalized),
-                            //         Queue     => { debug!("Block in queue below final height"); None },
-                            //     }
-                            // } else {
-                            //     None
-                            // }
+                    if height > final_height {
+                        Some(TFLBlockFinality::NotYetFinalized)
+                    } else if check_hash == final_hash {
+                        assert_eq!(height, final_height);
+                        Some(TFLBlockFinality::Finalized)
+                    } else {
+                        // NOTE: option not available because KnownBlock is Request::, not ReadRequest::
+                        // (despite all the current values being read from ReadStateService...)
+                        // let known_block = (call.read_state)(ReadStateRequest::KnownBlock(hash_h));
+                        // let known_block = known_block.await.map_misc_error();
+                        //
+                        // if let Ok(ReadStateResponse::KnownBlock(Some(known_block))) = known_block {
+                        //     match known_block {
+                        //         BestChain => Some(TFLBlockFinality::Finalized),
+                        //         SideChain => Some(TFLBlockFinality::CantBeFinalized),
+                        //         Queue     => { debug!("Block in queue below final height"); None },
+                        //     }
+                        // } else {
+                        //     None
+                        // }
 
-                            loop {
-                                let hdrs = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                                    known_blocks: vec![check_hash],
-                                    stop: Some(final_hash),
-                                })
-                                .await;
+                        loop {
+                            let hdrs = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                known_blocks: vec![check_hash],
+                                stop: Some(final_hash),
+                            })
+                            .await;
 
-                                if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = hdrs {
-                                    let hdr = &hdrs
-                                        .last()
-                                        .expect("This case should be handled above")
-                                        .header;
-                                    check_hash = hdr.hash();
+                            if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = hdrs {
+                                let hdr = &hdrs
+                                    .last()
+                                    .expect("This case should be handled above")
+                                    .header;
+                                check_hash = hdr.hash();
 
-                                    if check_hash == final_hash {
-                                        // is in best chain
-                                        break Some(TFLBlockFinality::Finalized);
-                                    } else {
-                                        let check_height =
-                                            block_height_from_hash(&call, check_hash).await;
+                                if check_hash == final_hash {
+                                    // is in best chain
+                                    break Some(TFLBlockFinality::Finalized);
+                                } else {
+                                    let check_height =
+                                        block_height_from_hash(&call, check_hash).await;
 
-                                        if let Some(check_height) = check_height {
-                                            if check_height >= final_height {
-                                                // is not in best chain
-                                                break Some(TFLBlockFinality::CantBeFinalized);
-                                            } else {
-                                                // need to look at next batch of block headers
-                                                assert!(hdrs.len() == (zebra_state::constants::MAX_FIND_BLOCK_HEADERS_RESULTS as usize));
-                                                continue;
-                                            }
+                                    if let Some(check_height) = check_height {
+                                        if check_height >= final_height {
+                                            // is not in best chain
+                                            break Some(TFLBlockFinality::CantBeFinalized);
+                                        } else {
+                                            // need to look at next batch of block headers
+                                            assert!(hdrs.len() == (zebra_state::constants::MAX_FIND_BLOCK_HEADERS_RESULTS as usize));
+                                            continue;
                                         }
                                     }
                                 }
-
-                                break None;
                             }
+
+                            break None;
                         }
-                    } else {
-                        None
                     }
                 } else {
                     None
