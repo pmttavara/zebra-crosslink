@@ -548,17 +548,31 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
         if new_bc_final != current_bc_final {
             info!("final changed to {:?}", new_bc_final);
-            if let Some(hash) = new_bc_final {
-                let start = if let Some(prev_hash) = current_bc_final {
+            if let Some(new_final_hash) = new_bc_final {
+                let start_hash = if let Some(prev_hash) = current_bc_final {
                     prev_hash
                 } else {
-                    hash
+                    new_final_hash
                 };
-                tfl_dump_block_sequence(&call, start, new_bc_final, true).await;
-                // tfl_dump_block_sequence(&call, start, None).await;
-                let _ = internal.final_change_tx.send(hash);
+
+                let new_final_blocks = tfl_block_sequence(&call, start_hash, new_bc_final, /*include_start_hash*/true).await;
+                tfl_dump_blocks(&new_final_blocks[..]);
+
+                // walk all blocks in newly-finalized sequence & broadcast them
+                for new_final_block in new_final_blocks {
+                    // skip repeated boundary blocks
+                    if let Some(prev_hash) = current_bc_final {
+                        if prev_hash == new_final_block {
+                            continue;
+                        }
+                    }
+
+                    match internal.final_change_tx.send(new_final_block) {
+                        Ok(_) => {},
+                        Err(err) => error!(?err),
+                    }
+                }
             }
-            // TODO: walk difference in height & send all
         }
 
         if !internal.tfl_is_activated {
