@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
+use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::{tfl_service_incoming_request, TFLBlockFinality, TFLServiceInternal};
@@ -45,6 +46,8 @@ pub enum TFLServiceRequest {
     SetFinalBlockHash(BlockHash),
     /// Get the finality status of a block
     BlockFinalityStatus(BlockHash),
+    /// Get the finality status of a transaction
+    TxFinalityStatus(TxHash),
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -60,6 +63,8 @@ pub enum TFLServiceResponse {
     SetFinalBlockHash(Option<BlockHeight>),
     /// Finality status of a block
     BlockFinalityStatus(Option<TFLBlockFinality>),
+    /// Finality status of a transaction
+    TxFinalityStatus(Option<TFLBlockFinality>),
 }
 
 /// Errors that can occur when interacting with the TFLService.

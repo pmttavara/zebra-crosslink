@@ -718,37 +718,35 @@ async fn tfl_service_incoming_request(
     internal_handle: TFLServiceHandle,
     request: TFLServiceRequest,
 ) -> Result<TFLServiceResponse, TFLServiceError> {
-    #[allow(unused_mut)]
-    let mut internal = internal_handle.internal.lock().await;
+    let call = internal_handle.call.clone();
+
     // from this point onwards we must race to completion in order to avoid stalling the main thread
 
     #[allow(unreachable_patterns)]
     match request {
         TFLServiceRequest::FinalBlockHash => {
-            drop(internal);
             Ok(TFLServiceResponse::FinalBlockHash(
-                if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await
-                {
-                    Some(hash)
-                } else {
-                    None
-                },
+                    if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await
+                    {
+                        Some(hash)
+                    } else {
+                        None
+                    },
             ))
         }
 
-        TFLServiceRequest::FinalBlockRx => Ok(TFLServiceResponse::FinalBlockRx(
-            internal.final_change_tx.subscribe(),
-        )),
+        TFLServiceRequest::FinalBlockRx => {
+            let internal = internal_handle.internal.lock().await;
+            Ok(TFLServiceResponse::FinalBlockRx(internal.final_change_tx.subscribe()))
+        }
 
         TFLServiceRequest::SetFinalBlockHash(hash) => {
-            drop(internal);
             Ok(TFLServiceResponse::SetFinalBlockHash(
-                tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
+                    tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
             ))
         }
 
         TFLServiceRequest::BlockFinalityStatus(hash) => Ok(TFLServiceResponse::BlockFinalityStatus({
-            let call = internal_handle.call.clone();
             let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
             let (final_height, final_hash) = match tfl_final_block_height_hash(internal_handle.clone()).await {
                 Some(v) => v,
@@ -828,6 +826,30 @@ async fn tfl_service_incoming_request(
 
                         break None;
                     }
+                }
+            } else {
+                None
+            }
+        })),
+
+        TFLServiceRequest::TxFinalityStatus(hash) => Ok(TFLServiceResponse::TxFinalityStatus({
+            if let Ok(ReadStateResponse::Transaction(Some(tx))) =
+                (call.read_state)(ReadStateRequest::Transaction(hash)).await
+            {
+                let (final_height, _final_hash) = match tfl_final_block_height_hash(internal_handle.clone()).await {
+                    Some(v) => v,
+                    None => {
+                        return Err(TFLServiceError::Misc(
+                                "There is no final block.".to_string(),
+                        ));
+                    }
+                };
+
+                if tx.height <= final_height {
+                    // TODO: CantBeFinalized
+                    Some(TFLBlockFinality::Finalized)
+                } else {
+                    Some(TFLBlockFinality::NotYetFinalized)
                 }
             } else {
                 None

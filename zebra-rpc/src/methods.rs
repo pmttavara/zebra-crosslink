@@ -218,6 +218,19 @@ pub trait Rpc {
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality>;
 
+    /// Placeholder function for polling finality status of a specific transaction.
+    /// (Uses [`GetTxHash`] as a wrapper around [`transaction::Hash`] so that hashes can be passed as
+    /// a string rather than an array in the json `params`.)
+    ///
+    /// zcashd reference: none
+    /// method: post
+    /// tags: tfl
+    #[method(name = "get_tfl_tx_finality_from_hash")]
+    async fn get_tfl_tx_finality_from_hash(
+        &self,
+        hash: GetTxHash,
+    ) -> Option<TFLBlockFinality>;
+
     /// Specify finalized block for testing
     /// TODO: Regtest mode only
     ///
@@ -226,15 +239,6 @@ pub trait Rpc {
     /// tags: tfl
     #[method(name = "set_tfl_finality_by_hash")]
     async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height>;
-
-    /// Placeholder function for polling finality status of a specific transaction.
-    ///
-    /// zcashd reference: none
-    /// method: post
-    /// tags: tfl
-    // TODO: how do we want to specify transactions?
-    #[method(name = "get_tfl_tx_finality")]
-    async fn get_tfl_tx_finality(&self) -> Option<TFLBlockFinality>;
 
     /// Placeholder function for subscribing to new final block changes.
     ///
@@ -1194,6 +1198,25 @@ where
         }
     }
 
+    async fn get_tfl_tx_finality_from_hash(
+        &self,
+        hash: GetTxHash,
+    ) -> Option<TFLBlockFinality> {
+        if let Ok(TFLServiceResponse::TxFinalityStatus(ret)) = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::TxFinalityStatus(hash.0))
+            .await
+        {
+            ret
+        } else {
+            None
+        }
+    }
+
     async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height> {
         if let Ok(TFLServiceResponse::SetFinalBlockHash(ret)) = self
             .tfl_service
@@ -1208,10 +1231,6 @@ where
         } else {
             None
         }
-    }
-
-    async fn get_tfl_tx_finality(&self) -> Option<TFLBlockFinality> {
-        None
     }
 
     fn subscribe_tfl_new_final_block_hash(&self, sink: jsonrpsee::PendingSubscriptionSink) {
@@ -2678,6 +2697,11 @@ impl Default for GetBlockHeaderObject {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct GetBlockHash(#[serde(with = "hex")] pub block::Hash);
+
+/// Hex-encoded hash of a specific transaction.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(transparent)]
+pub struct GetTxHash(#[serde(with = "hex")] pub transaction::Hash);
 
 /// Response to a `getbestblockheightandhash` RPC request.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
