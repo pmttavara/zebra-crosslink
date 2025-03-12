@@ -1,5 +1,6 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -950,23 +951,23 @@ async fn tfl_block_sequence(
 
 fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
     let hash_string = hash.to_string();
-    let hash_str    = hash_string.as_bytes();
+    let hash_str = hash_string.as_bytes();
     let bgn_col_str = "\x1b[90m".as_bytes(); // "bright black" == grey
     let end_col_str = "\x1b[0m".as_bytes(); // "reset"
-    let grey_len    = hash_str.len() - highlight_chars_n;
+    let grey_len = hash_str.len() - highlight_chars_n;
 
     let mut buf: [u8; 64 + 9] = [0; 73];
     let mut at = 0;
-    buf[at..at+bgn_col_str.len()].copy_from_slice(bgn_col_str);
+    buf[at..at + bgn_col_str.len()].copy_from_slice(bgn_col_str);
     at += bgn_col_str.len();
 
-    buf[at..at+grey_len].copy_from_slice(&hash_str[..grey_len]);
+    buf[at..at + grey_len].copy_from_slice(&hash_str[..grey_len]);
     at += grey_len;
 
-    buf[at..at+end_col_str.len()].copy_from_slice(end_col_str);
+    buf[at..at + end_col_str.len()].copy_from_slice(end_col_str);
     at += end_col_str.len();
 
-    buf[at..at+highlight_chars_n].copy_from_slice(&hash_str[grey_len..]);
+    buf[at..at + highlight_chars_n].copy_from_slice(&hash_str[grey_len..]);
     at += highlight_chars_n;
 
     let s = std::str::from_utf8(&buf[..at]).expect("invalid utf-8 sequence");
@@ -980,13 +981,42 @@ async fn tfl_dump_block_sequence(
     include_start_hash: bool,
 ) {
     let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
+
+    let is_unique = |prefix_len: usize, hashes: &Vec<BlockHash>| -> bool {
+        let mut prefixes = HashSet::with_capacity(hashes.len());
+
+        // NOTE: characters correspond to nibbles
+        let bytes_n = prefix_len / 2;
+        let is_nib = (prefix_len % 2) != 0;
+
+        for hash in hashes {
+            let nib = if is_nib {
+                Some(hash.0[bytes_n] & 0xf)
+            } else {
+                None
+            };
+
+            if !prefixes.insert((&hash.0[..bytes_n], nib)) {
+                return false;
+            }
+        }
+
+        true
+    };
+
+    let mut highlight_chars_n: usize = 1;
+    while !is_unique(highlight_chars_n, &blocks) {
+        highlight_chars_n += 1;
+        assert!(highlight_chars_n <= 64);
+    }
+
     let print_color = true;
 
     println!("{} block hashes:", blocks.len());
     for block in blocks {
         print!("  ");
         if print_color {
-            dump_hash_highlight_lo(&block, 8);
+            dump_hash_highlight_lo(&block, highlight_chars_n);
         } else {
             print!("{}", block);
         }
