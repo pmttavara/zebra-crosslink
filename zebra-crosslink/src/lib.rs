@@ -970,15 +970,8 @@ fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
     print!("{}", s);
 }
 
-async fn tfl_dump_block_sequence(
-    call: &TFLServiceCalls,
-    start_hash: BlockHash,
-    final_hash: Option<BlockHash>,
-    include_start_hash: bool,
-) {
-    let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
-
-    let is_unique = |prefix_len: usize, hashes: &Vec<BlockHash>| -> bool {
+fn tfl_dump_blocks(blocks: &[BlockHash]) {
+    let is_unique = |prefix_len: usize, hashes: &[BlockHash]| -> bool {
         let mut prefixes = HashSet::with_capacity(hashes.len());
 
         // NOTE: characters correspond to nibbles
@@ -1001,7 +994,7 @@ async fn tfl_dump_block_sequence(
     };
 
     let mut highlight_chars_n: usize = 1;
-    while !is_unique(highlight_chars_n, &blocks) {
+    while !is_unique(highlight_chars_n, blocks) {
         highlight_chars_n += 1;
         assert!(highlight_chars_n <= 64);
     }
@@ -1018,4 +1011,14 @@ async fn tfl_dump_block_sequence(
         }
         println!("");
     }
+}
+
+async fn tfl_dump_block_sequence(
+    call: &TFLServiceCalls,
+    start_hash: BlockHash,
+    final_hash: Option<BlockHash>,
+    include_start_hash: bool,
+) {
+    let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
+    tfl_dump_blocks(&blocks[..]);
 }
