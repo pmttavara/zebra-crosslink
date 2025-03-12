@@ -948,6 +948,31 @@ async fn tfl_block_sequence(
     hashes
 }
 
+fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
+    let hash_string = hash.to_string();
+    let hash_str    = hash_string.as_bytes();
+    let bgn_col_str = "\x1b[90m".as_bytes(); // "bright black" == grey
+    let end_col_str = "\x1b[0m".as_bytes(); // "reset"
+    let grey_len    = hash_str.len() - highlight_chars_n;
+
+    let mut buf: [u8; 64 + 9] = [0; 73];
+    let mut at = 0;
+    buf[at..at+bgn_col_str.len()].copy_from_slice(bgn_col_str);
+    at += bgn_col_str.len();
+
+    buf[at..at+grey_len].copy_from_slice(&hash_str[..grey_len]);
+    at += grey_len;
+
+    buf[at..at+end_col_str.len()].copy_from_slice(end_col_str);
+    at += end_col_str.len();
+
+    buf[at..at+highlight_chars_n].copy_from_slice(&hash_str[grey_len..]);
+    at += highlight_chars_n;
+
+    let s = std::str::from_utf8(&buf[..at]).expect("invalid utf-8 sequence");
+    print!("{}", s);
+}
+
 async fn tfl_dump_block_sequence(
     call: &TFLServiceCalls,
     start_hash: BlockHash,
@@ -955,8 +980,16 @@ async fn tfl_dump_block_sequence(
     include_start_hash: bool,
 ) {
     let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
+    let print_color = true;
+
     println!("{} block hashes:", blocks.len());
     for block in blocks {
-        println!("  {}", block);
+        print!("  ");
+        if print_color {
+            dump_hash_highlight_lo(&block, 8);
+        } else {
+            print!("{}", block);
+        }
+        println!("");
     }
 }
