@@ -191,8 +191,9 @@ async fn tfl_reorg_final_block_height_hash(
         };
         let result_3 = result_3;
 
-        assert_eq!(result_1, result_2); // NOTE: possible race condition: only for testing
-        assert_eq!(result_1, result_3); // NOTE: possible race condition: only for testing
+        //assert_eq!(result_1, result_2); // NOTE: possible race condition: only for testing
+        //assert_eq!(result_1, result_3); // NOTE: possible race condition: only for testing
+        // Sam: YES! Indeed there were race conditions.
         result_1
     } else {
         None
@@ -580,10 +581,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         }
                     }
 
-                    match internal.final_change_tx.send(new_final_block) {
-                        Ok(_) => {}
-                        Err(err) => error!(?err),
-                    }
+                    // We ignore the error because there will be one in the ordinary case
+                    // where there are no receivers yet.
+                    let _ = internal.final_change_tx.send(new_final_block);
                 }
             }
         }
