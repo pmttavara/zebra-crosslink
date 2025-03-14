@@ -42,7 +42,7 @@ use zebra_chain::{
 use zebra_consensus::ParameterCheckpoint;
 use zebra_crosslink::{
     service::{TFLServiceRequest, TFLServiceResponse},
-    TFLBlockFinality,
+    TFLBlockFinality, TFLRoster, TFLStaker,
 };
 use zebra_network::address_book_peers::AddressBookPeers;
 use zebra_node_services::mempool;
@@ -187,6 +187,22 @@ pub trait Rpc {
     #[method(name = "getblock")]
     async fn get_block(&self, hash_or_height: String, verbosity: Option<u8>) -> Result<GetBlock>;
 
+    /// Placeholder function for getting finalizer roster.
+    ///
+    /// zcashd reference: none
+    /// method: post
+    /// tags: tfl
+    #[method(name = "get_tfl_roster")]
+    async fn get_tfl_roster(&self) -> Option<TFLRoster>;
+
+    /// Placeholder function for modifying stakers.
+    ///
+    /// zcashd reference: none
+    /// method: post
+    /// tags: tfl
+    #[method(name = "update_tfl_staker")]
+    async fn update_tfl_staker(&self, staker: TFLStaker);
+
     /// Placeholder function for getting actual final block.
     /// For the sake of testing, this currently treats pre-reorg block as final.
     ///
@@ -226,10 +242,7 @@ pub trait Rpc {
     /// method: post
     /// tags: tfl
     #[method(name = "get_tfl_tx_finality_from_hash")]
-    async fn get_tfl_tx_finality_from_hash(
-        &self,
-        hash: GetTxHash,
-    ) -> Option<TFLBlockFinality>;
+    async fn get_tfl_tx_finality_from_hash(&self, hash: GetTxHash) -> Option<TFLBlockFinality>;
 
     /// Specify finalized block for testing
     /// TODO: Regtest mode only
@@ -1143,6 +1156,37 @@ where
         }
     }
 
+    async fn get_tfl_roster(&self) -> Option<TFLRoster> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::Roster)
+            .await;
+        if let Ok(TFLServiceResponse::Roster(roster)) = ret {
+            Some(roster)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
+        }
+    }
+
+    async fn update_tfl_staker(&self, staker: TFLStaker) {
+        if let Ok(TFLServiceResponse::UpdateStaker) = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::UpdateStaker(staker))
+            .await
+        {
+            // TODO: return something? success/new roster/...
+        }
+    }
+
     async fn get_tfl_final_block_hash(&self) -> Option<GetBlockHash> {
         let ret = self
             .tfl_service
@@ -1218,10 +1262,7 @@ where
         }
     }
 
-    async fn get_tfl_tx_finality_from_hash(
-        &self,
-        hash: GetTxHash,
-    ) -> Option<TFLBlockFinality> {
+    async fn get_tfl_tx_finality_from_hash(&self, hash: GetTxHash) -> Option<TFLBlockFinality> {
         if let Ok(TFLServiceResponse::TxFinalityStatus(ret)) = self
             .tfl_service
             .clone()
@@ -1370,14 +1411,26 @@ where
             loop {
                 let rx_res = rx.recv().await;
                 if let Ok(block_hash) = rx_res {
-                    let txs_res = self.state.clone()
-                        .oneshot(zebra_state::ReadRequest::TransactionIdsForBlock(block_hash.into()))
+                    let txs_res = self
+                        .state
+                        .clone()
+                        .oneshot(zebra_state::ReadRequest::TransactionIdsForBlock(
+                            block_hash.into(),
+                        ))
                         .await;
-                    if let Ok (txs) = txs_res {
-                        tracing::info!("{:x}: RX new block {}, with transactions: {:?}", id, block_hash, txs);
-
+                    if let Ok(txs) = txs_res {
+                        tracing::info!(
+                            "{:x}: RX new block {}, with transactions: {:?}",
+                            id,
+                            block_hash,
+                            txs
+                        );
                     } else {
-                        tracing::error!(?txs_res, "Couldn't read transactions for new final block {}", block_hash);
+                        tracing::error!(
+                            ?txs_res,
+                            "Couldn't read transactions for new final block {}",
+                            block_hash
+                        );
                     }
                 } else {
                     tracing::error!(?rx_res, "Bad channel TX");

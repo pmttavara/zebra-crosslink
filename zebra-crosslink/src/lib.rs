@@ -48,6 +48,8 @@ pub(crate) struct TFLServiceInternal {
     latest_final_block: Option<(BlockHeight, BlockHash)>,
     tfl_is_activated: bool,
 
+    stakers: Vec<TFLStaker>,
+
     // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 }
@@ -67,6 +69,23 @@ pub enum TFLBlockFinality {
     /// The block cannot be finalized: it's height is below the finalized height and
     /// it is not in the best chain.
     CantBeFinalized,
+}
+
+/// Placeholder representation for entity staking on PoS chain.
+// TODO: do we want to unify or separate staker/finalizer/delegator
+#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TFLStaker {
+    id: u64, // TODO: IP/malachite identifier/...
+    stake: u64, // TODO: do we want to store flat/tree delegators
+             // ALT: delegate_stake_to_id
+             // ...
+}
+
+/// Placeholder representation for group of stakers that are to be treated as finalizers.
+#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TFLRoster {
+    /// The list of stakers whose votes(?) will count. Sorted by weight(?)
+    pub finalizers: Vec<TFLStaker>,
 }
 
 // TODO: Result?
@@ -724,126 +743,128 @@ async fn tfl_service_incoming_request(
 
     #[allow(unreachable_patterns)]
     match request {
-        TFLServiceRequest::FinalBlockHash => {
-            Ok(TFLServiceResponse::FinalBlockHash(
-                    if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await
-                    {
-                        Some(hash)
-                    } else {
-                        None
-                    },
-            ))
-        }
+        TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
+            if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await {
+                Some(hash)
+            } else {
+                None
+            },
+        )),
 
         TFLServiceRequest::FinalBlockRx => {
             let internal = internal_handle.internal.lock().await;
-            Ok(TFLServiceResponse::FinalBlockRx(internal.final_change_tx.subscribe()))
-        }
-
-        TFLServiceRequest::SetFinalBlockHash(hash) => {
-            Ok(TFLServiceResponse::SetFinalBlockHash(
-                    tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
+            Ok(TFLServiceResponse::FinalBlockRx(
+                internal.final_change_tx.subscribe(),
             ))
         }
 
-        TFLServiceRequest::BlockFinalityStatus(hash) => Ok(TFLServiceResponse::BlockFinalityStatus({
-            let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
-            let (final_height, final_hash) = match tfl_final_block_height_hash(internal_handle.clone()).await {
-                Some(v) => v,
-                None => {
-                    return Err(TFLServiceError::Misc(
-                            "There is no final block.".to_string(),
-                    ));
-                }
-            };
+        TFLServiceRequest::SetFinalBlockHash(hash) => Ok(TFLServiceResponse::SetFinalBlockHash(
+            tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
+        )),
 
-            if let Ok(ReadStateResponse::BlockHeader {
-                header: block_hdr,
-                height,
-                hash: mut check_hash,
-                ..
-            }) = block_hdr.await
-            {
-                assert_eq!(check_hash, block_hdr.hash());
+        TFLServiceRequest::BlockFinalityStatus(hash) => {
+            Ok(TFLServiceResponse::BlockFinalityStatus({
+                let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
+                let (final_height, final_hash) =
+                    match tfl_final_block_height_hash(internal_handle.clone()).await {
+                        Some(v) => v,
+                        None => {
+                            return Err(TFLServiceError::Misc(
+                                "There is no final block.".to_string(),
+                            ));
+                        }
+                    };
 
-                if height > final_height {
-                    Some(TFLBlockFinality::NotYetFinalized)
-                } else if check_hash == final_hash {
-                    assert_eq!(height, final_height);
-                    Some(TFLBlockFinality::Finalized)
-                } else {
-                    // NOTE: option not available because KnownBlock is Request::, not ReadRequest::
-                    // (despite all the current values being read from ReadStateService...)
-                    // let known_block = (call.read_state)(ReadStateRequest::KnownBlock(hash.into()));
-                    // let known_block = known_block.await.map_misc_error();
-                    //
-                    // if let Ok(ReadStateResponse::KnownBlock(Some(known_block))) = known_block {
-                    //     match known_block {
-                    //         BestChain => Some(TFLBlockFinality::Finalized),
-                    //         SideChain => Some(TFLBlockFinality::CantBeFinalized),
-                    //         Queue     => { debug!("Block in queue below final height"); None },
-                    //     }
-                    // } else {
-                    //     None
-                    // }
+                if let Ok(ReadStateResponse::BlockHeader {
+                    header: block_hdr,
+                    height,
+                    hash: mut check_hash,
+                    ..
+                }) = block_hdr.await
+                {
+                    assert_eq!(check_hash, block_hdr.hash());
 
-                    loop {
-                        let hdrs = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                            known_blocks: vec![check_hash],
-                            stop: Some(final_hash),
-                        })
-                        .await;
+                    if height > final_height {
+                        Some(TFLBlockFinality::NotYetFinalized)
+                    } else if check_hash == final_hash {
+                        assert_eq!(height, final_height);
+                        Some(TFLBlockFinality::Finalized)
+                    } else {
+                        // NOTE: option not available because KnownBlock is Request::, not ReadRequest::
+                        // (despite all the current values being read from ReadStateService...)
+                        // let known_block = (call.read_state)(ReadStateRequest::KnownBlock(hash.into()));
+                        // let known_block = known_block.await.map_misc_error();
+                        //
+                        // if let Ok(ReadStateResponse::KnownBlock(Some(known_block))) = known_block {
+                        //     match known_block {
+                        //         BestChain => Some(TFLBlockFinality::Finalized),
+                        //         SideChain => Some(TFLBlockFinality::CantBeFinalized),
+                        //         Queue     => { debug!("Block in queue below final height"); None },
+                        //     }
+                        // } else {
+                        //     None
+                        // }
 
-                        if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = hdrs {
-                            let hdr = &hdrs
-                                .last()
-                                .expect("This case should be handled above")
-                                .header;
-                            check_hash = hdr.hash();
+                        loop {
+                            let hdrs = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                known_blocks: vec![check_hash],
+                                stop: Some(final_hash),
+                            })
+                            .await;
 
-                            if check_hash == final_hash {
-                                // is in best chain
-                                break Some(TFLBlockFinality::Finalized);
-                            } else {
-                                let check_height = block_height_from_hash(&call, check_hash).await;
+                            if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = hdrs {
+                                let hdr = &hdrs
+                                    .last()
+                                    .expect("This case should be handled above")
+                                    .header;
+                                check_hash = hdr.hash();
 
-                                if let Some(check_height) = check_height {
-                                    if check_height >= final_height {
-                                        // TODO: may not actually be possible to hit this without
-                                        // caching non-final blocks ourselves, given that most
-                                        // things get thrown away if not in the final chain.
+                                if check_hash == final_hash {
+                                    // is in best chain
+                                    break Some(TFLBlockFinality::Finalized);
+                                } else {
+                                    let check_height =
+                                        block_height_from_hash(&call, check_hash).await;
 
-                                        // is not in best chain
-                                        break Some(TFLBlockFinality::CantBeFinalized);
-                                    } else {
-                                        // need to look at next batch of block headers
-                                        assert!(hdrs.len() == (zebra_state::constants::MAX_FIND_BLOCK_HEADERS_RESULTS as usize));
-                                        continue;
+                                    if let Some(check_height) = check_height {
+                                        if check_height >= final_height {
+                                            // TODO: may not actually be possible to hit this without
+                                            // caching non-final blocks ourselves, given that most
+                                            // things get thrown away if not in the final chain.
+
+                                            // is not in best chain
+                                            break Some(TFLBlockFinality::CantBeFinalized);
+                                        } else {
+                                            // need to look at next batch of block headers
+                                            assert!(hdrs.len() == (zebra_state::constants::MAX_FIND_BLOCK_HEADERS_RESULTS as usize));
+                                            continue;
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        break None;
+                            break None;
+                        }
                     }
+                } else {
+                    None
                 }
-            } else {
-                None
-            }
-        })),
+            }))
+        }
 
         TFLServiceRequest::TxFinalityStatus(hash) => Ok(TFLServiceResponse::TxFinalityStatus({
             if let Ok(ReadStateResponse::Transaction(Some(tx))) =
                 (call.read_state)(ReadStateRequest::Transaction(hash)).await
             {
-                let (final_height, _final_hash) = match tfl_final_block_height_hash(internal_handle.clone()).await {
-                    Some(v) => v,
-                    None => {
-                        return Err(TFLServiceError::Misc(
+                let (final_height, _final_hash) =
+                    match tfl_final_block_height_hash(internal_handle.clone()).await {
+                        Some(v) => v,
+                        None => {
+                            return Err(TFLServiceError::Misc(
                                 "There is no final block.".to_string(),
-                        ));
-                    }
-                };
+                            ));
+                        }
+                    };
 
                 if tx.height <= final_height {
                     // TODO: CantBeFinalized
@@ -854,6 +875,33 @@ async fn tfl_service_incoming_request(
             } else {
                 None
             }
+        })),
+
+        TFLServiceRequest::UpdateStaker(staker) => {
+            let mut internal = internal_handle.internal.lock().await;
+            if let Some(staker_i) = internal.stakers.iter().position(|x| x.id == staker.id) {
+                // existing staker: modify or remove
+                if staker.stake == 0 {
+                    internal.stakers.remove(staker_i);
+                } else {
+                    internal.stakers[staker_i] = staker;
+                }
+            } else if staker.stake != 0 {
+                // new staker: insert
+                internal.stakers.push(staker);
+            }
+
+            internal.stakers.sort_by(|a, b| b.stake.cmp(&a.stake)); // sort descending order
+            Ok(TFLServiceResponse::UpdateStaker)
+        }
+
+        TFLServiceRequest::Roster => Ok(TFLServiceResponse::Roster({
+            let internal = internal_handle.internal.lock().await;
+            let mut roster = TFLRoster {
+                finalizers: internal.stakers.clone(),
+            };
+            roster.finalizers.truncate(3);
+            roster
         })),
 
         _ => Err(TFLServiceError::NotImplemented),

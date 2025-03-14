@@ -16,7 +16,9 @@ use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
-use crate::{tfl_service_incoming_request, TFLBlockFinality, TFLServiceInternal};
+use crate::{
+    tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
+};
 
 impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
     type Response = TFLServiceResponse;
@@ -48,6 +50,10 @@ pub enum TFLServiceRequest {
     BlockFinalityStatus(BlockHash),
     /// Get the finality status of a transaction
     TxFinalityStatus(TxHash),
+    /// Get the finalizer roster
+    Roster,
+    /// Update the list of stakers
+    UpdateStaker(TFLStaker),
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -65,6 +71,10 @@ pub enum TFLServiceResponse {
     BlockFinalityStatus(Option<TFLBlockFinality>),
     /// Finality status of a transaction
     TxFinalityStatus(Option<TFLBlockFinality>),
+    /// Finalizer roster
+    Roster(TFLRoster),
+    /// Update the list of stakers
+    UpdateStaker, // TODO: batch?
 }
 
 /// Errors that can occur when interacting with the TFLService.
@@ -119,6 +129,7 @@ pub fn spawn_new_tfl_service(
             val: 0,
             latest_final_block: None,
             tfl_is_activated: false,
+            stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
         })),
         call: TFLServiceCalls {
