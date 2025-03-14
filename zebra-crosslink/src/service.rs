@@ -180,6 +180,7 @@ mod tests {
             val: 0,
             latest_final_block: None,
             tfl_is_activated: false, // dup of Some/None(latest_final_block)?
+            stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
         }));
 
