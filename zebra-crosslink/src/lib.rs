@@ -45,7 +45,6 @@ pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
-    val: u64,
     latest_final_block: Option<(BlockHeight, BlockHash)>,
     tfl_is_activated: bool,
 
@@ -632,7 +631,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
         if last_diagnostic_print.elapsed() >= MAIN_LOOP_INFO_DUMP_INTERVAL {
             last_diagnostic_print = Instant::now();
-            info!(?internal.val, "TFL val is {}!!!", internal.val);
             if let (Some((tip_height, _tip_hash)), Some((final_height, _final_hash))) =
                 (current_bc_tip, internal.latest_final_block)
             {

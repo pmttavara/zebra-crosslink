@@ -126,7 +126,6 @@ pub fn spawn_new_tfl_service(
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let handle1 = TFLServiceHandle {
         internal: Arc::new(Mutex::new(TFLServiceInternal {
-            val: 0,
             latest_final_block: None,
             tfl_is_activated: false,
             stakers: Vec::new(),
@@ -177,7 +176,6 @@ mod tests {
     // Helper function to create a test TFLServiceHandle
     fn create_test_service() -> TFLServiceHandle {
         let internal = Arc::new(Mutex::new(TFLServiceInternal {
-            val: 0,
             latest_final_block: None,
             tfl_is_activated: false, // dup of Some/None(latest_final_block)?
             stakers: Vec::new(),
