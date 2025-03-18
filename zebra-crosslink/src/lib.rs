@@ -34,7 +34,8 @@ use crate::service::{
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
 use zebra_chain::block::{
-    Hash as BlockHash, Header as BlockHeader, Height as BlockHeight, HeightDiff as BlockHeightDiff,
+    Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
+    HeightDiff as BlockHeightDiff,
 };
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
@@ -582,14 +583,25 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     new_final_hash
                 };
 
-                let new_final_blocks = tfl_block_sequence(
+                let (new_final_blocks, infos) = tfl_block_sequence(
                     &call,
                     start_hash,
                     Some(new_final_hash),
                     /*include_start_hash*/ true,
+                    true,
                 )
                 .await;
-                tfl_dump_blocks(&new_final_blocks[..]);
+
+                if let (Some(Some(first_block)), Some(Some(last_block))) =
+                    (infos.first(), infos.last())
+                {
+                    println!(
+                        "Height change: {} => {}:",
+                        first_block.coinbase_height().unwrap_or(BlockHeight(0)).0,
+                        last_block.coinbase_height().unwrap_or(BlockHeight(0)).0
+                    );
+                }
+                tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
 
                 // walk all blocks in newly-finalized sequence & broadcast them
                 for new_final_block in new_final_blocks {
@@ -932,12 +944,14 @@ async fn tfl_set_finality_by_hash(
 // TODO: handle headers as well?
 // NOTE: this is currently best-chain-only due to request/response limitations
 // TODO: add more request/response pairs directly in zebra-state's ReadStateService
+/// always returns block hashes. If read_extra_info is set, also returns Blocks, otherwise returns an empty vector.
 async fn tfl_block_sequence(
     call: &TFLServiceCalls,
     start_hash: BlockHash,
     final_hash: Option<BlockHash>,
     include_start_hash: bool,
-) -> Vec<BlockHash> {
+    read_extra_info: bool, // NOTE: done here rather than on print to isolate async from sync code
+) -> (Vec<BlockHash>, Vec<Option<Arc<Block>>>) {
     // get "real" initial values //////////////////////////////
     let (start_height, init_hash) = {
         if let Ok(ReadStateResponse::BlockHeader { height, header, .. }) =
@@ -967,20 +981,20 @@ async fn tfl_block_sequence(
     // check validity //////////////////////////////
     if start_height.is_none() {
         error!(?start_hash, "start_hash has invalid height");
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let start_height = start_height.unwrap();
     let init_hash = init_hash.unwrap();
 
     if final_height_hash.is_none() {
         error!(?final_height_hash, "final_hash has invalid height");
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let final_height = final_height_hash.unwrap().0;
 
     if final_height < start_height {
         error!(?final_height, ?start_height, "final_height < start_height");
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     // build vector //////////////////////////////
@@ -1030,7 +1044,22 @@ async fn tfl_block_sequence(
         c += 1;
     }
 
-    hashes
+    let mut infos = Vec::with_capacity(if read_extra_info { hashes.len() } else { 0 });
+    if read_extra_info {
+        for hash in &hashes {
+            infos.push(
+                if let Ok(ReadStateResponse::Block(block)) =
+                    (call.read_state)(ReadStateRequest::Block((*hash).into())).await
+                {
+                    block
+                } else {
+                    None
+                },
+            )
+        }
+    }
+
+    (hashes, infos)
 }
 
 fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
@@ -1058,7 +1087,7 @@ fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
     print!("{}", s);
 }
 
-fn tfl_dump_blocks(blocks: &[BlockHash]) {
+fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
     let is_unique = |prefix_len: usize, hashes: &[BlockHash]| -> bool {
         let mut prefixes = HashSet::with_capacity(hashes.len());
 
@@ -1089,14 +1118,30 @@ fn tfl_dump_blocks(blocks: &[BlockHash]) {
 
     let print_color = true;
 
-    println!("{} block hashes:", blocks.len());
-    for block in blocks {
+    for (block_i, hash) in blocks.iter().enumerate() {
         print!("  ");
         if print_color {
-            dump_hash_highlight_lo(&block, highlight_chars_n);
+            dump_hash_highlight_lo(&hash, highlight_chars_n);
         } else {
-            print!("{}", block);
+            print!("{}", hash);
         }
+
+        if let Some(Some(block)) = infos.get(block_i) {
+            let shielded_c = block
+                .transactions
+                .iter()
+                .filter(|tx| tx.has_shielded_data())
+                .count();
+            print!(
+                " - {}, height: {}, difficulty: {}, {:3} transactions ({} shielded)",
+                block.header.time,
+                block.coinbase_height().unwrap_or(BlockHeight(0)).0,
+                block.header.difficulty_threshold,
+                block.transactions.len(),
+                shielded_c
+            );
+        }
+
         println!("");
     }
 }
@@ -1107,6 +1152,7 @@ async fn tfl_dump_block_sequence(
     final_hash: Option<BlockHash>,
     include_start_hash: bool,
 ) {
-    let blocks = tfl_block_sequence(call, start_hash, final_hash, include_start_hash).await;
-    tfl_dump_blocks(&blocks[..]);
+    let (blocks, infos) =
+        tfl_block_sequence(call, start_hash, final_hash, include_start_hash, true).await;
+    tfl_dump_blocks(&blocks[..], &infos[..]);
 }
