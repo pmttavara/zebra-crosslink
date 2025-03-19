@@ -192,14 +192,32 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```shell
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "get_tfl_roster", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_roster")]
     async fn get_tfl_roster(&self) -> Option<TFLRoster>;
 
-    /// Placeholder function for modifying stakers.
+    /// Placeholder function for updating stakers.
+    /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
+    /// something already. If the new `stake` is 0, the staker is removed.
     ///
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "update_tfl_staker", "params": [{ "id": 1234, "stake": 5678 }], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "update_tfl_staker")]
     async fn update_tfl_staker(&self, staker: TFLStaker);
 
@@ -209,6 +227,14 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "get_tfl_final_block_hash", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_final_block_hash")]
     async fn get_tfl_final_block_hash(&self) -> Option<GetBlockHash>;
 
@@ -218,6 +244,14 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "get_tfl_final_block_height_and_hash", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_final_block_height_and_hash")]
     async fn get_tfl_final_block_height_and_hash(&self) -> Option<GetBlockHeightAndHash>;
 
@@ -228,6 +262,14 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "get_tfl_block_finality_from_hash", "params": ["000000000ec8908cff52ae51841273e79f08d140b41ae4a4827575ed28b7b34a"], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_block_finality_from_hash")]
     async fn get_tfl_block_finality_from_hash(
         &self,
@@ -241,6 +283,17 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "get_tfl_tx_finality_from_hash", "params":
+    /// ["8217e0aac8f864947eb120634cf4e6225609d4c9590ae79b72b5d3ab4c1035e0"], "id": 1 }' \
+    /// http://127.0.0.1:823
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
+    ///
+    /// For experimenting, the [`getblock`](RpcServer::get_block) method's result includes transactions.
     #[method(name = "get_tfl_tx_finality_from_hash")]
     async fn get_tfl_tx_finality_from_hash(&self, hash: GetTxHash) -> Option<TFLBlockFinality>;
 
@@ -250,30 +303,67 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: post
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "set_tfl_finality_by_hash", "params": ["000000000ec8908cff52ae51841273e79f08d140b41ae4a4827575ed28b7b34a"], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
+    ///
+    /// For experimenting, the [`getbestblockhash`](RpcServer::get_best_block_hash) method provides the tip, which won't yet be final.
     #[method(name = "set_tfl_finality_by_hash")]
     async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height>;
 
     /// Placeholder function for subscribing to new final block changes.
+    /// (JSON-RPC pub-sub not implemented, as that will be obviated my move to gRPC).
     ///
     /// zcashd reference: none
     /// method: ?
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "subscribe_tfl_new_final_block_hash", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[subscription(name = "subscribe_tfl_new_final_block_hash", item = String)]
     fn subscribe_tfl_new_final_block_hash(&self);
 
     /// Placeholder function for streaming new final block changes (for testing).
+    /// (JSON-RPC pub-sub not implemented, as that will be obviated my move to gRPC).
     ///
     /// zcashd reference: none
     /// method: ?
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "stream_tfl_new_final_block_hash", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "stream_tfl_new_final_block_hash")]
     async fn stream_tfl_new_final_block_hash(&self);
 
     /// Placeholder function for streaming new final transaction changes (for testing).
+    /// (JSON-RPC pub-sub not implemented, as that will be obviated my move to gRPC).
     ///
     /// zcashd reference: none
     /// method: ?
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "stream_tfl_new_final_txs", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "stream_tfl_new_final_txs")]
     async fn stream_tfl_new_final_txs(&self);
 
@@ -282,6 +372,18 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: ?
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "notify_tfl_block_becomes_final_by_hash", "params": ["000000000ec8908cff52ae51841273e79f08d140b41ae4a4827575ed28b7b34a"], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
+    ///
+    /// For experimenting, this is easiest to trigger by manually calling the
+    /// [`set_tfl_finality_by_hash`](RpcServer::set_tfl_finality_by_hash) method from another terminal
+    /// for the block hash passed here (e.g. the tip).
     #[method(name = "notify_tfl_block_becomes_final_by_hash")]
     async fn notify_tfl_block_becomes_final_by_hash(
         &self,
@@ -293,6 +395,20 @@ pub trait Rpc {
     /// zcashd reference: none
     /// method: ?
     /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```bash
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "notify_tfl_block_becomes_final_by_hash", "params": ["000000000ec8908cff52ae51841273e79f08d140b41ae4a4827575ed28b7b34a"], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
+    ///
+    /// For experimenting, the [`getblock`](RpcServer::get_block) method's result includes transactions.
+    ///
+    /// This is easiest to trigger by manually calling the [`set_tfl_finality_by_hash`](RpcServer::set_tfl_finality_by_hash)
+    /// method from another terminal for the block that contains the transaction hash
+    /// passed here (e.g. the tip).
     // TODO: "by_id"?
     #[method(name = "notify_tfl_tx_becomes_final_by_hash")]
     async fn notify_tfl_tx_becomes_final_by_hash(
