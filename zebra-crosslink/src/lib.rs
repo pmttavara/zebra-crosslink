@@ -750,6 +750,10 @@ async fn tfl_service_incoming_request(
 
     #[allow(unreachable_patterns)]
     match request {
+        TFLServiceRequest::IsTFLActivated => Ok(TFLServiceResponse::IsTFLActivated(
+                internal_handle.internal.lock().await.tfl_is_activated
+        )),
+
         TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
             if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await {
                 Some(hash)

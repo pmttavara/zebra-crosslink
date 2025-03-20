@@ -40,6 +40,8 @@ impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
 /// These map one to one to the variants of the same name in [`TFLServiceResponse`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TFLServiceRequest {
+    /// Is the TFL service activated yet?
+    IsTFLActivated,
     /// Get the final block hash
     FinalBlockHash,
     /// Get a receiver for the final block hash
@@ -61,6 +63,8 @@ pub enum TFLServiceRequest {
 /// These map one to one to the variants of the same name in [`TFLServiceRequest`].
 #[derive(Debug)]
 pub enum TFLServiceResponse {
+    /// Is the TFL service activated yet?
+    IsTFLActivated(bool),
     /// Final block hash
     FinalBlockHash(Option<BlockHash>),
     /// Receiver for the final block hash
