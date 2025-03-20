@@ -1423,12 +1423,11 @@ dependencies = [
 
 [[package]]
 name = "equihash"
-version = "0.2.2"
+version = "0.2.1"
 dependencies = [
  "blake2b_simd",
  "cc",
  "core2",
- "document-features",
  "hex",
 ]
 
@@ -2911,11 +2910,10 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pczt"
-version = "0.2.1"
+version = "0.2.0"
 dependencies = [
  "blake2b_simd",
  "bls12_381",
- "document-features",
  "ff",
  "getset",
  "incrementalmerkletree",
@@ -3389,16 +3387,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
-]
-
-[[package]]
-name = "rand_distr"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
-dependencies = [
- "num-traits",
- "rand",
 ]
 
 [[package]]
@@ -6251,10 +6239,8 @@ dependencies = [
  "pasta_curves",
  "proptest",
  "prost",
- "rand",
  "rand_chacha",
  "rand_core",
- "rand_distr",
  "regex",
  "rusqlite",
  "sapling-crypto",
