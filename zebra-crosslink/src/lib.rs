@@ -33,10 +33,7 @@ use crate::service::{
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
-use zebra_chain::block::{
-    Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
-    HeightDiff as BlockHeightDiff,
-};
+use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight};
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 /// Placeholder activation height for Crosslink functionality
@@ -142,28 +139,26 @@ async fn block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> O
 async fn tfl_reorg_final_block_height_hash(
     call: &TFLServiceCalls,
 ) -> Option<(BlockHeight, BlockHash)> {
-    use std::ops::Sub;
-
     let locator = (call.read_state)(ReadStateRequest::BlockLocator).await;
 
     // NOTE: although this is a vector, the docs say it may skip some blocks
     // so we can't just `.get(MAX_BLOCK_REORG_HEIGHT)`
     if let Ok(ReadStateResponse::BlockLocator(hashes)) = locator {
         let result_1 = match hashes.last() {
-            Some(hash) => {
-                if let Some(height) = block_height_from_hash(&call, *hash).await {
-                    Some((height, *hash))
-                } else {
-                    None
-                }
-            }
+            Some(hash) => block_height_from_hash(call, *hash)
+                .await
+                .map(|height| (height, *hash)),
             None => None,
         };
+
+        /* Alternative implementations:
+        use std::ops::Sub;
+        use zebra_chain::block::HeightDiff as BlockHeightDiff;
 
         let result_2 = if hashes.len() == 0 {
             None
         } else {
-            let tip_block_height = block_height_from_hash(&call, *hashes.first().unwrap()).await;
+            let tip_block_height = block_height_from_hash(call, *hashes.first().unwrap()).await;
 
             if let Some(height) = tip_block_height {
                 if height < BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
@@ -190,7 +185,7 @@ async fn tfl_reorg_final_block_height_hash(
 
         let mut result_3 = None;
         if hashes.len() > 0 {
-            let tip_block_hdr = block_height_from_hash(&call, *hashes.first().unwrap()).await;
+            let tip_block_hdr = block_height_from_hash(call, *hashes.first().unwrap()).await;
 
             if let Some(height) = tip_block_hdr {
                 if height >= BlockHeight(zebra_state::MAX_BLOCK_REORG_HEIGHT) {
@@ -213,6 +208,8 @@ async fn tfl_reorg_final_block_height_hash(
         //assert_eq!(result_1, result_2); // NOTE: possible race condition: only for testing
         //assert_eq!(result_1, result_3); // NOTE: possible race condition: only for testing
         // Sam: YES! Indeed there were race conditions.
+        */
+
         result_1
     } else {
         None
@@ -968,12 +965,10 @@ async fn tfl_block_sequence(
     };
     let final_height_hash = if let Some(hash) = final_hash {
         block_height_hash_from_hash(call, hash).await
+    } else if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
+        val
     } else {
-        if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
-            val
-        } else {
-            None
-        }
+        None
     };
 
     // check validity //////////////////////////////
@@ -1119,7 +1114,7 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
     for (block_i, hash) in blocks.iter().enumerate() {
         print!("  ");
         if print_color {
-            dump_hash_highlight_lo(&hash, highlight_chars_n);
+            dump_hash_highlight_lo(hash, highlight_chars_n);
         } else {
             print!("{}", hash);
         }
@@ -1140,7 +1135,7 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
             );
         }
 
-        println!("");
+        println!();
     }
 }
 

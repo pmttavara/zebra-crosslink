@@ -791,7 +791,7 @@ where
             debug_force_finished_sync,
             debug_like_zcashd,
             mempool: mempool.clone(),
-            tfl_service: tfl_service,
+            tfl_service,
             state: state.clone(),
             latest_chain_tip: latest_chain_tip.clone(),
             queue_sender,
@@ -1313,10 +1313,7 @@ where
             .call(TFLServiceRequest::FinalBlockHash)
             .await;
         if let Ok(TFLServiceResponse::FinalBlockHash(val)) = ret {
-            match val {
-                Some(hash) => Some(GetBlockHash(hash)),
-                None => None,
-            }
+            val.map(GetBlockHash)
         } else {
             tracing::error!(?ret, "Bad tfl service return.");
             None
@@ -1346,7 +1343,7 @@ where
                     .map_misc_error();
 
                 if let Ok(ReadResponse::BlockHeader { height, .. }) = final_block_hdr {
-                    Some(GetBlockHeightAndHash { height, hash: hash })
+                    Some(GetBlockHeightAndHash { height, hash })
                 } else {
                     None
                 }
@@ -1425,7 +1422,7 @@ where
             if let Ok(sink) = sink.accept().await {
                 // let stream = futures::stream::iter(["one", "two", "three"]);
                 // sink.pipe_from_stream(stream).await;
-                let _ = sink.send(jsonrpsee::SubscriptionMessage::from(format!("RPC: hi")));
+                let _ = sink.send(jsonrpsee::SubscriptionMessage::from("RPC: hi".to_string()));
                 // TODO: await/poll
                 this.stream_tfl_new_final_block_hash().await;
             }
