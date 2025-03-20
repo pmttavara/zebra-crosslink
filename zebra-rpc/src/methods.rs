@@ -314,7 +314,7 @@ pub trait Rpc {
     ///
     /// For experimenting, the [`getbestblockhash`](RpcServer::get_best_block_hash) method provides the tip, which won't yet be final.
     #[method(name = "set_tfl_finality_by_hash")]
-    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height>;
+    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Result<block::Height>;
 
     /// Placeholder function for subscribing to new final block changes.
     /// (JSON-RPC pub-sub not implemented, as that will be obviated my move to gRPC).
@@ -1391,19 +1391,39 @@ where
         }
     }
 
-    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Option<block::Height> {
-        if let Ok(TFLServiceResponse::SetFinalBlockHash(ret)) = self
-            .tfl_service
-            .clone()
-            .ready()
-            .await
-            .unwrap()
-            .call(TFLServiceRequest::SetFinalBlockHash(hash.0))
-            .await
-        {
-            ret
+    async fn set_tfl_finality_by_hash(&self, hash: GetBlockHash) -> Result<block::Height> {
+        let regtest_override = true;
+        if regtest_override || self.network.is_regtest() {
+            let val = self
+                .tfl_service
+                .clone()
+                .ready()
+                .await
+                .unwrap()
+                .call(TFLServiceRequest::SetFinalBlockHash(hash.0))
+                .await;
+
+            if let Ok(TFLServiceResponse::SetFinalBlockHash(ret)) = val {
+                ret.ok_or_else(|| {
+                    ErrorObject::borrowed(
+                        ErrorCode::MethodNotFound.code(),
+                        "Cannot set finality: TFL is not yet activated",
+                        None,
+                    )
+                })
+            } else {
+                Err(ErrorObject::owned(
+                    ErrorCode::InternalError.code(),
+                    format!("Failed read from: {:?}", val).as_str(),
+                    None::<()>,
+                ))
+            }
         } else {
-            None
+            Err(ErrorObject::borrowed(
+                ErrorCode::MethodNotFound.code(),
+                "Setting finality by fiat is only available on regtest networks",
+                None,
+            ))
         }
     }
 
