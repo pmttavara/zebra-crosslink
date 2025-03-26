@@ -16,6 +16,13 @@
 # - ./result/bin/zebra-scanner
 # - ./result/bin/zebrad-for-scanner
 # - ./result/bin/zebrad
+# - ./result/book/
+#
+# The book directory is the root of the book source, so to view the rendered book:
+#
+# ```
+# $ xdg-open ./result/book/book/index.html
+# ```
 #
 # # Development
 #
@@ -126,6 +133,45 @@
         # otherwise, omitting a crate (like we do below) will result in errors since
         # cargo won't be able to find the sources for all members.
         zebrad = craneLib.buildPackage (individualCrateArgs ./zebrad);
+
+        zebra-book = pkgs.stdenv.mkDerivation rec {
+          name = "zebra-book";
+          src = ./.; # Note: The book refers to parent directories, so we need full source
+          buildInputs = with pkgs; [
+            mdbook
+            mdbook-mermaid
+          ];
+          builder = pkgs.writeShellScript "${name}-builder.sh" ''
+            source "$stdenv/setup"
+
+            set -x
+
+            cp -r "$src/" ./build
+            cd ./build/book
+
+            # Create the rendering output dir:
+            chmod u+w .
+            mkdir ./book
+            chmod u-w .
+
+            # Render:
+            mdbook build
+
+            # Copy to output:
+            mkdir -p "$out/book"
+            cp -r . "$out/book/"
+
+            set +x
+          '';
+        };
+
+        zebra-all-pkgs = pkgs.symlinkJoin {
+          name = "zebra-all-pkgs";
+          paths = [
+            zebrad
+            zebra-book
+          ];
+        };
       in
       {
         checks = {
@@ -181,7 +227,7 @@
         packages = {
           inherit zebrad;
 
-          default = zebrad;
+          default = zebra-all-pkgs;
         };
 
         apps = {
@@ -198,6 +244,8 @@
 
             devShellInputs = with pkgs; [
               rustup
+              mdbook
+              mdbook-mermaid
             ];
 
           in mkClangShell (commonArgs // {
