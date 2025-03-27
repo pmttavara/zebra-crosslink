@@ -271,7 +271,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let call = internal_handle.call.clone();
 
     let rt = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || { rt.block_on(viz::service_viz_requests()) });
+    let viz_tfl_handle = internal_handle.clone();
+    tokio::task::spawn_blocking(move || { rt.block_on(viz::service_viz_requests(viz_tfl_handle)) });
 
     /*
         let mut rng = rand::rngs::StdRng::seed_from_u64(5);

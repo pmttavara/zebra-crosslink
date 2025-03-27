@@ -15,7 +15,7 @@ use std::thread::JoinHandle;
 
 struct VizState {
     hash_start_height: BlockHeight,
-    // hashes: Vec<BlockHash>,
+    hashes: Vec<BlockHash>,
 }
 #[derive(Clone)]
 struct VizGlobals {
@@ -26,11 +26,15 @@ struct VizGlobals {
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 /// Bridge between tokio & viz code
-pub async fn service_viz_requests() {
+pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
+    let call = tfl_handle.call;
+
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
         state: std::sync::Arc::new(VizState {
+            hashes: Vec::new(),
             hash_start_height: BlockHeight(0),
         }),
+        // wanted_height_rng: (0, 0),
         consumed: true,
     });
 
@@ -43,8 +47,34 @@ pub async fn service_viz_requests() {
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
+        let (hash_start_height, hashes) = {
+            use std::ops::Sub;
+            use zebra_chain::block::HeightDiff as BlockHeightDiff;
+
+            if let Ok(ReadStateResponse::Tip(Some((tip_height, _)))) =
+                (call.read_state)(ReadStateRequest::Tip).await
+            {
+                let start_height = tip_height
+                    .sub(BlockHeightDiff::from(zebra_state::MAX_BLOCK_REORG_HEIGHT))
+                    .unwrap_or(BlockHeight(0));
+                if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
+                    (call.read_state)(ReadStateRequest::BlockHeader(start_height.into())).await
+                {
+                    let (hashes, _) = tfl_block_sequence(&call, hash, None, true, false).await;
+                    (start_height, hashes)
+                } else {
+                    error!("Failed to read start hash");
+                    (BlockHeight(0), Vec::new())
+                }
+            } else {
+                error!("Failed to read tip");
+                (BlockHeight(0), Vec::new())
+            }
+        };
+
         let new_state = VizState {
-            hash_start_height: BlockHeight(old_g.state.hash_start_height.0 + 1),
+            hash_start_height,
+            hashes,
         };
 
         new_g.state = Arc::new(new_state);
@@ -195,7 +225,7 @@ async fn viz_main(
             "{:2.3} ms\n\
             target: {}, offset: {}, zoom: {}\n\
             screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
-            g val: {}",
+            {} hashes",
             time::get_frame_time() * 1000.,
             world_camera.target,
             world_camera.offset,
@@ -203,7 +233,7 @@ async fn viz_main(
             ctx.screen_o,
             ctx.mouse_drag_d,
             ctx.screen_vel,
-            g.state.hash_start_height.0
+            g.state.hashes.len()
         );
         draw_multiline_text(&dbg_str, Vec2 { x: 10.0, y: 20.0 }, 20.0, None, WHITE);
 
