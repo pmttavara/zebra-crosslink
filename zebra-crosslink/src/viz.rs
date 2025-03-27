@@ -7,6 +7,7 @@ use macroquad::{
     math::{vec2, Circle, Rect, Vec2},
     shapes,
     text::{self, TextDimensions},
+    time,
     window,
 };
 
@@ -61,7 +62,7 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         mouse_drag_d: Vec2::ZERO,
         old_mouse_pt: {
             let (x, y) = mouse_position();
-            Vec2{ x, y }
+            Vec2 { x, y }
         },
     };
 
@@ -131,9 +132,23 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
         // VIZ DEBUG INFO ////////////////////
+        let dbg_str = format!(
+            "{:2.3} ms\n\
+            target: {}, offset: {}, zoom: {}\n\
+            screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}",
+            time::get_frame_time() * 1000.0,
+            world_camera.target,
+            world_camera.offset,
+            world_camera.zoom,
+            ctx.screen_o,
+            ctx.mouse_drag_d,
+            ctx.screen_vel
+        );
+        draw_multiline_text(&dbg_str, Vec2 { x: 10.0, y: 20.0 }, 20.0, None, WHITE);
+
         if true {
             // draw mouse point's world location
-            let pt     = world_camera.screen_to_world(mouse_pt);
+            let pt = world_camera.screen_to_world(mouse_pt);
             let old_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
             draw_multiline_text(
                 &format!("{}\n{}\n{}", mouse_pt, pt, old_pt),
