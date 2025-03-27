@@ -15,6 +15,7 @@ use macroquad::{
 struct VizCtx {
     // h: BlockHeight,
     screen_o: Vec2,
+    fix_screen_o: Vec2,
     mouse_press: Vec2, // for determining drag
     mouse_drag_d: Vec2,
 }
@@ -51,6 +52,7 @@ fn draw_multiline_text(
 #[macroquad::main("Zcash blocks")]
 pub async fn main() -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
+        fix_screen_o: Vec2::ZERO,
         screen_o: Vec2::ZERO,
         mouse_press: Vec2::ZERO,
         mouse_drag_d: Vec2::ZERO,
@@ -66,7 +68,7 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
             ctx.mouse_press = mouse_pt;
         } else {
             if is_mouse_button_released(MouseButton::Left) {
-                ctx.screen_o -= ctx.mouse_drag_d; // follow drag preview
+                ctx.fix_screen_o -= ctx.mouse_drag_d; // follow drag preview
             }
             ctx.mouse_drag_d = Vec2::ZERO;
         }
@@ -78,9 +80,16 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
             window::clear_background(RED);
         }
 
+        if is_key_down(KeyCode::Escape) {
+            ctx.mouse_drag_d = Vec2::ZERO;
+            ctx.mouse_press = mouse_pt;
+        }
+
+        ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
+
         // WORLD SPACE DRAWING ////////////////////////////////////////
         let world_camera = Camera2D {
-            target: ctx.screen_o - ctx.mouse_drag_d,
+            target: ctx.screen_o,
             zoom: vec2(
                 1. / window::screen_width() * 2.,
                 1. / window::screen_height() * 2.,
@@ -105,13 +114,14 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
+        // VIZ DEBUG INFO ////////////////////
         if true {
             // draw mouse point's world location
             let pt = world_camera.screen_to_world(mouse_pt);
             draw_multiline_text(
                 &format!("{}\n{}", mouse_pt, pt),
-                mouse_pt + vec2(5.0, -5.0),
-                20.0,
+                mouse_pt + vec2(5.0, -5.),
+                20.,
                 None,
                 WHITE,
             );
