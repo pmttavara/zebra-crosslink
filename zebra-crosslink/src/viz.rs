@@ -15,9 +15,11 @@ use macroquad::{
 struct VizCtx {
     // h: BlockHeight,
     screen_o: Vec2,
+    screen_vel: Vec2,
     fix_screen_o: Vec2,
     mouse_press: Vec2, // for determining drag
     mouse_drag_d: Vec2,
+    old_mouse_pt: Vec2,
 }
 
 fn draw_line(pt0: Vec2, pt1: Vec2, stroke_thickness: f32, col: color::Color) {
@@ -54,8 +56,13 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
         fix_screen_o: Vec2::ZERO,
         screen_o: Vec2::ZERO,
+        screen_vel: Vec2::ZERO,
         mouse_press: Vec2::ZERO,
         mouse_drag_d: Vec2::ZERO,
+        old_mouse_pt: {
+            let (x, y) = mouse_position();
+            Vec2{ x, y }
+        },
     };
 
     loop {
@@ -69,15 +76,24 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         } else {
             if is_mouse_button_released(MouseButton::Left) {
                 ctx.fix_screen_o -= ctx.mouse_drag_d; // follow drag preview
+
+                // used for momentum after letting go
+                ctx.screen_vel = mouse_pt - ctx.old_mouse_pt; // ALT: average of last few frames?
             }
             ctx.mouse_drag_d = Vec2::ZERO;
         }
 
         if is_mouse_button_down(MouseButton::Left) {
             ctx.mouse_drag_d = mouse_pt - ctx.mouse_press;
+            ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
             window::clear_background(BLUE);
         } else {
+            let (scroll_x, scroll_y) = mouse_wheel();
+            ctx.screen_vel += vec2(0.3 * scroll_x, 0.3 * scroll_y);
+
             window::clear_background(RED);
+            ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
+            ctx.screen_vel = ctx.screen_vel.lerp(Vec2::ZERO, 0.12); // apply friction
         }
 
         if is_key_down(KeyCode::Escape) {
@@ -117,16 +133,18 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         // VIZ DEBUG INFO ////////////////////
         if true {
             // draw mouse point's world location
-            let pt = world_camera.screen_to_world(mouse_pt);
+            let pt     = world_camera.screen_to_world(mouse_pt);
+            let old_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
             draw_multiline_text(
-                &format!("{}\n{}", mouse_pt, pt),
-                mouse_pt + vec2(5.0, -5.),
+                &format!("{}\n{}\n{}", mouse_pt, pt, old_pt),
+                mouse_pt + vec2(5., -5.),
                 20.,
                 None,
                 WHITE,
             );
         }
 
+        ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
 }
