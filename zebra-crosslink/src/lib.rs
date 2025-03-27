@@ -28,6 +28,10 @@ use malachitebft_test::{
 
 pub mod service;
 
+// TODO: feature = "viz"
+// #[cfg(feature = "macroquad")]
+pub mod viz;
+
 use crate::service::{
     TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,
 };

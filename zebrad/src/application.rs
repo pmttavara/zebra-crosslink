@@ -553,6 +553,18 @@ pub fn boot(app_cell: &'static AppCell<ZebradApp>) -> ! {
     let args =
         EntryPoint::process_cli_args(env::args_os().collect()).unwrap_or_else(|err| err.exit());
 
-    ZebradApp::run(app_cell, args);
+    if false {
+        ZebradApp::run(app_cell, args);
+    } else {
+        // TODO: gate behind feature-flag
+        // TODO: only open the visualization window for the `start` command.
+        // i.e.: can we move it to that code without major refactor to make compiler happy?
+        let _ = std::thread::spawn(move ||{
+            ZebradApp::run(app_cell, args);
+        });
+
+        zebra_crosslink::viz::main();
+    }
+
     process::exit(0);
 }
