@@ -139,6 +139,10 @@ fn draw_rect(rect: Rect, col: color::Color) {
 fn draw_circle(circle: Circle, col: color::Color) {
     shapes::draw_circle(circle.x, circle.y, circle.r, col)
 }
+fn draw_circle_lines(circle: Circle, thickness: f32, col: color::Color) {
+    let sides_n = 30; // TODO: base on radius
+    shapes::draw_arc(circle.x, circle.y, sides_n, circle.r, 0., thickness, 360.0, col)
+}
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
     text::draw_text(text, pt.x, pt.y, font_size, col)
 }
@@ -214,6 +218,11 @@ fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
     } else {
         vec2(c.x, c.y + c.r)
     }
+}
+
+// This exists because the existing [`Circle::scale`] mutates in place
+fn circle_scale(circle: Circle, scale: f32) -> Circle {
+    Circle { x: circle.x, y: circle.y, r: circle.r * scale }
 }
 
 /// Viz implementation root
@@ -296,7 +305,8 @@ async fn viz_main(
             ctx.mouse_drag_d = Vec2::ZERO;
         }
 
-        if is_mouse_button_down(MouseButton::Left) {
+        let mouse_left_is_down = is_mouse_button_down(MouseButton::Left);
+        if mouse_left_is_down {
             ctx.mouse_drag_d = mouse_pt - ctx.mouse_press;
             ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
             window::clear_background(BLUE);
@@ -326,10 +336,9 @@ async fn viz_main(
             ..Default::default()
         };
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
+        let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
 
         for (i, node) in nodes.iter().enumerate() {
-            let col = WHITE; // TODO: depend on finality
-
             // NOTE: grows *upwards*
             let new_circle = node.circle();
             if i > 0 {
@@ -349,6 +358,18 @@ async fn viz_main(
                     arrow_col,
                 );
             }
+
+
+            let circle_hover = new_circle.contains(&world_mouse_pt);
+            let col = if circle_hover {
+                if mouse_left_is_down {
+                    YELLOW
+                } else {
+                    SKYBLUE
+                }
+            } else {
+                WHITE
+            }; // TODO: depend on finality
             draw_circle(new_circle, col);
 
             // TODO: handle properly with new node structure
@@ -390,6 +411,11 @@ async fn viz_main(
                     );
                 }
              }
+
+            if new_circle.contains(&world_mouse_pt) {
+                // TODO: animate ring
+                draw_circle_lines(circle_scale(new_circle, std::f32::consts::SQRT_2), 2., col);
+            }
         }
 
         // SCREEN SPACE UI ////////////////////////////////////////
@@ -417,10 +443,9 @@ async fn viz_main(
 
         if true {
             // draw mouse point's world location
-            let pt = world_camera.screen_to_world(mouse_pt);
             let old_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
             draw_multiline_text(
-                &format!("{}\n{}\n{}", mouse_pt, pt, old_pt),
+                &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_pt),
                 mouse_pt + vec2(5., -5.),
                 20.,
                 None,
