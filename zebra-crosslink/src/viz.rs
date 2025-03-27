@@ -329,6 +329,8 @@ async fn viz_main(
         // WORLD SPACE DRAWING ////////////////////////////////////////
         let world_camera = Camera2D {
             target: ctx.screen_o,
+            // this makes it so that when resizing the window, the centre of the screen stays there.
+            offset: vec2(1. / window::screen_width(), 1. / window::screen_height()),
             zoom: vec2(
                 1. / window::screen_width() * 2.,
                 1. / window::screen_height() * 2.,
