@@ -270,6 +270,9 @@ const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
 
+    let rt = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || { rt.block_on(viz::service_viz_requests()) });
+
     /*
         let mut rng = rand::rngs::StdRng::seed_from_u64(5);
         let private_key = PrivateKey::generate(&mut rng);

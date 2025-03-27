@@ -1,7 +1,6 @@
 //! Internal vizualization
 
-use std::thread::JoinHandle;
-
+use crate::*;
 use macroquad::{
     camera::*,
     color::{self, colors::*},
@@ -11,6 +10,47 @@ use macroquad::{
     text::{self, TextDimensions},
     time, window,
 };
+use std::sync::Arc;
+use std::thread::JoinHandle;
+
+struct VizState {
+    hash_start_height: BlockHeight,
+    // hashes: Vec<BlockHash>,
+}
+#[derive(Clone)]
+struct VizGlobals {
+    state: std::sync::Arc<VizState>,
+    // wanted_height_rng: (u32, u32),
+    consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
+}
+static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+
+/// Bridge between tokio & viz code
+pub async fn service_viz_requests() {
+    *VIZ_G.lock().unwrap() = Some(VizGlobals {
+        state: std::sync::Arc::new(VizState {
+            hash_start_height: BlockHeight(0),
+        }),
+        consumed: true,
+    });
+
+    loop {
+        let old_g = VIZ_G.lock().unwrap().as_ref().unwrap().clone();
+        if !old_g.consumed {
+            std::thread::sleep(std::time::Duration::from_micros(500));
+            continue;
+        }
+        let mut new_g = old_g.clone();
+        new_g.consumed = false;
+
+        let new_state = VizState {
+            hash_start_height: BlockHeight(old_g.state.hash_start_height.0 + 1),
+        };
+
+        new_g.state = Arc::new(new_state);
+        *VIZ_G.lock().unwrap() = Some(new_g);
+    }
+}
 
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
@@ -68,10 +108,23 @@ async fn viz_main(
         },
     };
 
+    // wait for servicing thread to init
+    while VIZ_G.lock().unwrap().is_none() {
+        // TODO: more efficient spin
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
     loop {
+        // TFL DATA BASICS ////////////////////////////////////////
         if tokio_root_thread_handle.is_finished() {
             break Ok(());
         }
+
+        let g = {
+            let mut lock = VIZ_G.lock().unwrap();
+            lock.as_mut().unwrap().consumed = true;
+            lock.as_ref().unwrap().clone()
+        };
 
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
@@ -141,14 +194,16 @@ async fn viz_main(
         let dbg_str = format!(
             "{:2.3} ms\n\
             target: {}, offset: {}, zoom: {}\n\
-            screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}",
-            time::get_frame_time() * 1000.0,
+            screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
+            g val: {}",
+            time::get_frame_time() * 1000.,
             world_camera.target,
             world_camera.offset,
             world_camera.zoom,
             ctx.screen_o,
             ctx.mouse_drag_d,
-            ctx.screen_vel
+            ctx.screen_vel,
+            g.state.hash_start_height.0
         );
         draw_multiline_text(&dbg_str, Vec2 { x: 10.0, y: 20.0 }, 20.0, None, WHITE);
 
