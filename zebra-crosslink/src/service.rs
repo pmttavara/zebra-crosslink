@@ -123,6 +123,7 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 
 pub fn spawn_new_tfl_service(
     read_state_service_call: ReadStateServiceProcedure,
+    config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let handle1 = TFLServiceHandle {
         internal: Arc::new(Mutex::new(TFLServiceInternal {
@@ -134,6 +135,7 @@ pub fn spawn_new_tfl_service(
         call: TFLServiceCalls {
             read_state: read_state_service_call,
         },
+        config: config,
     };
     let handle2 = handle1.clone();
 
@@ -161,6 +163,7 @@ impl fmt::Debug for TFLServiceCalls {
 pub struct TFLServiceHandle {
     pub(crate) internal: Arc<Mutex<TFLServiceInternal>>,
     pub(crate) call: TFLServiceCalls,
+    pub config: crate::config::Config,
 }
 
 #[cfg(test)]

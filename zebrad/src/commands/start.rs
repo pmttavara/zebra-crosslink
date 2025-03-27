@@ -268,7 +268,7 @@ impl StartCmd {
                         .call(req)
                         .await
                 })
-            }))
+            }), config.crosslink.clone())
         };
         let tfl_service = BoxService::new(tfl);
         let tfl_service = ServiceBuilder::new().buffer(1).service(tfl_service);

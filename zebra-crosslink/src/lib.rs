@@ -6,7 +6,6 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
-/*
 use rand::{CryptoRng, RngCore};
 use crate::core::Round as BFTRound;
 use std::str::FromStr;
@@ -19,14 +18,37 @@ use async_trait::async_trait;
 use malachitebft_app_channel::app::events::*;
 use malachitebft_app_channel::app::types::core::*;
 use malachitebft_app_channel::app::types::*;
+use malachitebft_app_channel::app::types::config as mconfig;
 use malachitebft_app_channel::app::*;
 use malachitebft_test::{
     Address, Ed25519Provider, Genesis, Height as BFTHeight, PrivateKey, PublicKey, TestContext,
     Validator, ValidatorSet,
 };
-*/
 
 pub mod service;
+pub mod config {
+    use serde::{Serialize, Deserialize};
+
+    /// Configuration for the state service.
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[serde(deny_unknown_fields, default)]
+    pub struct Config {
+        pub node_id: Option<u64>,
+        pub node_0_ip_endpoint: Option<String>,
+        pub node_1_ip_endpoint: Option<String>,
+        pub node_2_ip_endpoint: Option<String>,
+    }
+    impl Default for Config {
+        fn default() -> Self {
+            Self {
+                node_id: None,
+                node_0_ip_endpoint: None,
+                node_1_ip_endpoint: None,
+                node_2_ip_endpoint: None,
+            }
+        }
+    }
+}
 
 use crate::service::{
     TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,
@@ -230,7 +252,6 @@ async fn tfl_final_block_height_hash(
     }
 }
 
-/*
 /// Make up a new value to propose
 /// A real application would have a more complex logic here,
 /// typically reaping transactions from a mempool and executing them against its state,
@@ -242,7 +263,7 @@ fn bft_make_value(
     _round: BFTRound,
 ) -> malachitebft_test::Value {
     let value = rng.gen_range(100..=100000);
-
+tracing::error!("bft_make_value");
     // TODO: Where should we verify signatures?
     let extensions = vote_extensions
         .remove(&height)
@@ -258,285 +279,311 @@ fn bft_make_value(
 
     malachitebft_test::Value { value, extensions }
 }
-*/
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
+    let config = internal_handle.config.clone();
 
-    /*
-        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
-        let private_key = PrivateKey::generate(&mut rng);
-        let public_key = private_key.public_key();
-        let _address = Address::from_public_key(&public_key);
-        let _signing_provider = Ed25519Provider::new(private_key.clone());
-        let ctx = TestContext::new();
+    let initial_validator_set = {
+        let mut array = Vec::new();
 
-        let initial_validator_set = ValidatorSet::new(vec![Validator::new(public_key, 1)]);
-        let genesis = Genesis {
-            validator_set: initial_validator_set.clone(),
-        };
+        if config.node_0_ip_endpoint.is_some() {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+            let private_key = PrivateKey::generate(&mut rng);
+            let public_key = private_key.public_key();
+            array.push(Validator::new(public_key, 1));
+        }
+        if config.node_1_ip_endpoint.is_some() {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+            let private_key = PrivateKey::generate(&mut rng);
+            let public_key = private_key.public_key();
+            array.push(Validator::new(public_key, 1));
+        }
+        if config.node_2_ip_endpoint.is_some() {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(2);
+            let private_key = PrivateKey::generate(&mut rng);
+            let public_key = private_key.public_key();
+            array.push(Validator::new(public_key, 1));
+        }
+        ValidatorSet::new(array)
+    };
 
-        let codec = ProtobufCodec;
+    let temp_peer_id : u64 = if let Some(id) = config.node_id {
+        id
+    } else { rand::random::<u64>() % 100 + 100 };
+    *tpeer_id_for_wal.lock().unwrap() = temp_peer_id;
 
-        let init_bft_height = BFTHeight::new(1);
-        let bft_node_handle = BFTNode {
-            private_key: private_key.clone(),
-        };
+    let mut rng = rand::rngs::StdRng::seed_from_u64(temp_peer_id);
+    let private_key = PrivateKey::generate(&mut rng);
+    let public_key = private_key.public_key();
+    let _address = Address::from_public_key(&public_key);
+    let _signing_provider = Ed25519Provider::new(private_key.clone());
+    let ctx = TestContext::new();
 
-        // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
-        //     .expect("Failed to load configuration file");
-        let mut bft_config: malachitebft_test_cli::config::Config = Default::default(); // TODO: read from file?
-                                                                                        //
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str("/ip4/127.0.0.1/tcp/12345").unwrap();
-        bft_config.consensus.p2p.discovery = config::DiscoveryConfig {
-            selector: config::Selector::from_str("random").unwrap(), // TODO: Kademlia?
-            bootstrap_protocol: config::BootstrapProtocol::from_str("full").unwrap(), // TODO: Kademlia?
-            num_outbound_peers: 1,                                   // TODO: 20
-            num_inbound_peers: 1,                                    // TODO: 20
-            ephemeral_connection_timeout: Duration::from_secs(5),    // TODO: ?
-            enabled: false,
-        };
+    let genesis = Genesis {
+        validator_set: initial_validator_set.clone(),
+    };
 
-        bft_config.mempool.p2p.listen_addr = Multiaddr::from_str("/ip4/127.0.0.1/tcp/22345").unwrap();
-        bft_config.mempool.p2p.discovery = config::DiscoveryConfig {
-            selector: config::Selector::from_str("random").unwrap(), // TODO: Kademlia?
-            bootstrap_protocol: config::BootstrapProtocol::from_str("full").unwrap(), // TODO: Kademlia?
-            num_outbound_peers: 1,                                   // TODO: 20
-            num_inbound_peers: 1,                                    // TODO: 20
-            ephemeral_connection_timeout: Duration::from_secs(5),    // TODO: ?
-            enabled: true,
-        };
+    let codec = ProtobufCodec;
 
-        info!(?bft_config);
+    let init_bft_height = BFTHeight::new(1);
+    let bft_node_handle = BFTNode {
+        private_key: private_key.clone(),
+    };
 
-        let (mut channels, _engine_handle) = malachitebft_app_channel::start_engine(
-            ctx,
-            codec,
-            bft_node_handle,
-            bft_config,
-            Some(init_bft_height),
-            initial_validator_set,
-        )
-        .await
-        .unwrap();
-    */
+    // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
+    //     .expect("Failed to load configuration file");
+    let mut bft_config: malachitebft_test_cli::config::Config = Default::default(); // TODO: read from file?
+
+    if let Some(addr_str) = config.node_0_ip_endpoint.as_ref() {
+        bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
+    }
+    if let Some(addr_str) = config.node_1_ip_endpoint.as_ref() {
+        bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
+    }
+    if let Some(addr_str) = config.node_2_ip_endpoint.as_ref() {
+        bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
+    }
+    bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
+    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!("/ip4/127.0.0.1/udp/{}/quic-v1", 24834 + temp_peer_id)).unwrap();
+    bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
+        selector: mconfig::Selector::Kademlia,
+        bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
+        num_outbound_peers: 10,
+        num_inbound_peers: 30,
+        ephemeral_connection_timeout: Duration::from_secs(5),
+        enabled: true,
+    };
+
+    info!(?bft_config);
+
+    let (mut channels, _engine_handle) = malachitebft_app_channel::start_engine(
+        ctx,
+        codec,
+        bft_node_handle,
+        bft_config,
+        Some(init_bft_height),
+        initial_validator_set,
+    )
+    .await
+    .unwrap();
 
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();
     let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
     let mut current_bc_final: Option<(BlockHeight, BlockHash)> = None;
 
-    /*
-        // TODO mutable state here in order to correctly respond to messages.
-        let mut current_bft_height = init_bft_height;
-        let mut current_bft_round = Round::Nil;
-        let mut current_bft_proposer = None;
-        let mut vote_extensions =
-            std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
-        // let mut bft_values           = Vec::<Option<LocallyProposedValue>>::new();
-    */
+    // TODO mutable state here in order to correctly respond to messages.
+    let mut current_bft_height = init_bft_height;
+    let mut current_bft_round = Round::Nil;
+    let mut current_bft_proposer = None;
+    let mut vote_extensions =
+        std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
+    // let mut bft_values           = Vec::<Option<LocallyProposedValue>>::new();
+
     loop {
         tokio::select! {
             // sleep if we are running ahead
             _ = tokio::time::sleep_until(run_instant) => {
                 run_instant += MAIN_LOOP_SLEEP_INTERVAL;
             }
-        /* ret = channels.consensus.recv() => {
-            let msg = ret.expect("Channel to Malachite has been closed.");
-            match msg {
-                // The first message to handle is the `ConsensusReady` message, signaling to the app
-                // that Malachite is ready to start consensus
-                BFTAppMsg::ConsensusReady { reply } => {
-                    info!("BFT Consensus is ready");
+            ret = channels.consensus.recv() => {
+                let msg = ret.expect("Channel to Malachite has been closed.");
+                match msg {
+                    // The first message to handle is the `ConsensusReady` message, signaling to the app
+                    // that Malachite is ready to start consensus
+                    BFTAppMsg::ConsensusReady { reply } => {
+                        info!("BFT Consensus is ready");
 
-                    if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                            current_bft_height,
-                            genesis.validator_set.clone(),
-                    )).is_err() {
-                        tracing::error!("Failed to send ConsensusReady reply");
-                    }
-                },
+                        if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                                current_bft_height,
+                                genesis.validator_set.clone(),
+                        )).is_err() {
+                            tracing::error!("Failed to send ConsensusReady reply");
+                        }
+                    },
 
-                // The next message to handle is the `StartRound` message, signaling to the app
-                // that consensus has entered a new round (including the initial round 0)
-                BFTAppMsg::StartedRound {
-                    height,
-                    round,
-                    proposer,
-                } => {
-                    info!(%height, %round, %proposer, "Started round");
-
-                    current_bft_height   = height;
-                    current_bft_round    = round;
-                    current_bft_proposer = Some(proposer);
-                },
-
-                // At some point, we may end up being the proposer for that round, and the engine
-                // will then ask us for a value to propose to the other validators.
-                BFTAppMsg::GetValue {
-                    height,
-                    round,
-                    timeout: _,
-                    reply,
-                } => {
-                    info!(%height, %round, "Consensus is requesting a value to propose");
-
-                    // TODO: read from existing
-
-                    // // Check if we have a previously built value for that height and round
-                    // if let Some(proposal) = state.get_previously_built_value(height, round) {
-                    //     info!(value = %proposal.value.id(), "Re-using previously built value");
-
-                    //     if reply.send(proposal).is_err() {
-                    //         tracing::error!("Failed to send GetValue reply");
-                    //     }
-
-                    //     return Ok(());
-                    // }
-
-                    // // Otherwise, propose a new value
-                    // let proposal = state.propose_value(height, round);
-                    //
-
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-
-                    let proposal = LocallyProposedValue::<TestContext> {
-                        value: bft_make_value(&mut rng, &mut vote_extensions, height, round),
+                    // The next message to handle is the `StartRound` message, signaling to the app
+                    // that consensus has entered a new round (including the initial round 0)
+                    BFTAppMsg::StartedRound {
                         height,
                         round,
-                    };
-
-                    // Send it to consensus
-                    if reply.send(proposal.clone()).is_err() {
-                        tracing::error!("Failed to send GetValue reply");
-                    }
-
-                    // // Decompose the proposal into proposal parts and stream them over the network
-                    // for stream_message in state.stream_proposal(proposal) {
-                    //     info!(%height, %round, "Streaming proposal part: {stream_message:?}");
-                    //     channels
-                    //         .network
-                    //         .send(malachitebft_app_channel::NetworkMsg::PublishProposalPart(stream_message))
-                    //         .await?;
-                    // }
-                },
-
-                BFTAppMsg::ProcessSyncedValue {
-                    height,
-                    round,
-                    proposer,
-                    value_bytes,
-                    reply,
-                } => {
-                    info!(%height, %round, "Processing synced value");
-
-                    let value = codec.decode(value_bytes).unwrap();
-
-                    if reply.send(ProposedValue {
-                        height,
-                        round,
-                        valid_round: Round::Nil,
                         proposer,
-                        value,
-                        validity: Validity::Valid,
-                        // extension: None, TODO? "does not have this field"
-                    }).is_err() {
-                        tracing::error!("Failed to send ProcessSyncedValue reply");
-                    }
-                },
+                    } => {
+                        info!(%height, %round, %proposer, "Started round");
 
-                // In some cases, e.g. to verify the signature of a vote received at a higher height
-                // than the one we are at (e.g. because we are lagging behind a little bit),
-                // the engine may ask us for the validator set at that height.
-                //
-                // In our case, our validator set stays constant between heights so we can
-                // send back the validator set found in our genesis state.
-                BFTAppMsg::GetValidatorSet { height: _, reply } => {
-                    // TODO: parameterize by height
-                    if reply.send(genesis.validator_set.clone()).is_err() {
-                        tracing::error!("Failed to send GetValidatorSet reply");
-                    }
-                },
+                        current_bft_height   = height;
+                        current_bft_round    = round;
+                        current_bft_proposer = Some(proposer);
+                    },
 
-                // After some time, consensus will finally reach a decision on the value
-                // to commit for the current height, and will notify the application,
-                // providing it with a commit certificate which contains the ID of the value
-                // that was decided on as well as the set of commits for that value,
-                // ie. the precommits together with their (aggregated) signatures.
-                BFTAppMsg::Decided {
-                    certificate,
-                    extensions,
-                    reply,
-                } => {
-                    info!(
-                        height = %certificate.height,
-                        round = %certificate.round,
-                        value = %certificate.value_id,
-                        "Consensus has decided on value"
-                    );
+                    // At some point, we may end up being the proposer for that round, and the engine
+                    // will then ask us for a value to propose to the other validators.
+                    BFTAppMsg::GetValue {
+                        height,
+                        round,
+                        timeout: _,
+                        reply,
+                    } => {
+                        info!(%height, %round, "Consensus is requesting a value to propose");
 
-                    // When that happens, we store the decided value in our store
-                    // TODO: state.commit(certificate, extensions).await?;
-                    current_bft_height = certificate.height.increment();
-                    current_bft_round  = Round::new(0);
+                        // TODO: read from existing
 
-                    // And then we instruct consensus to start the next height
-                    if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                            current_bft_height,
-                            genesis.validator_set.clone(),
-                    )).is_err() {
-                        tracing::error!("Failed to send Decided reply");
-                    }
-                },
+                        // // Check if we have a previously built value for that height and round
+                        // if let Some(proposal) = state.get_previously_built_value(height, round) {
+                        //     info!(value = %proposal.value.id(), "Re-using previously built value");
 
-                BFTAppMsg::GetHistoryMinHeight { reply } => {
-                    // TODO: min height from DB
-                    let min_height = init_bft_height;
-                    info!("Reply min_height: {}", min_height);
-                    if reply.send(min_height).is_err() {
-                        tracing::error!("Failed to send GetHistoryMinHeight reply");
-                    }
-                },
+                        //     if reply.send(proposal).is_err() {
+                        //         tracing::error!("Failed to send GetValue reply");
+                        //     }
 
-                BFTAppMsg::GetDecidedValue { height, reply } => {
-                    let decided_value = None; // state.get_decided_value(&height).cloned();
+                        //     return Ok(());
+                        // }
 
-                    if reply.send(decided_value).is_err() {
-                        tracing::error!("Failed to send GetDecidedValue reply");
-                    }
-                },
+                        // // Otherwise, propose a new value
+                        // let proposal = state.propose_value(height, round);
+                        //
 
-                BFTAppMsg::ExtendVote {
-                    height: _,
-                    round: _,
-                    value_id: _,
-                    reply,
-                } => {
-                    // TODO
-                    if reply.send(None).is_err() {
-                        tracing::error!("Failed to send ExtendVote reply");
-                    }
-                },
+                        tokio::time::sleep(Duration::from_millis(500)).await;
 
-                BFTAppMsg::VerifyVoteExtension {
-                    height: _,
-                    round: _,
-                    value_id: _,
-                    extension: _,
-                    reply,
-                } => {
-                    // TODO
-                    if reply.send(Ok(())).is_err() {
-                        tracing::error!("Failed to send VerifyVoteExtension reply");
-                    }
-                },
+                        let proposal = LocallyProposedValue::<TestContext> {
+                            value: bft_make_value(&mut rng, &mut vote_extensions, height, round),
+                            height,
+                            round,
+                        };
 
-                _ => tracing::error!(?msg, "Unhandled message from Malachite"),
+                        // Send it to consensus
+                        if reply.send(proposal.clone()).is_err() {
+                            tracing::error!("Failed to send GetValue reply");
+                        }
+
+                        // // Decompose the proposal into proposal parts and stream them over the network
+                        // for stream_message in state.stream_proposal(proposal) {
+                        //     info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                        //     channels
+                        //         .network
+                        //         .send(malachitebft_app_channel::NetworkMsg::PublishProposalPart(stream_message))
+                        //         .await?;
+                        // }
+                    },
+
+                    BFTAppMsg::ProcessSyncedValue {
+                        height,
+                        round,
+                        proposer,
+                        value_bytes,
+                        reply,
+                    } => {
+                        info!(%height, %round, "Processing synced value");
+
+                        let value = codec.decode(value_bytes).unwrap();
+
+                        if reply.send(ProposedValue {
+                            height,
+                            round,
+                            valid_round: Round::Nil,
+                            proposer,
+                            value,
+                            validity: Validity::Valid,
+                            // extension: None, TODO? "does not have this field"
+                        }).is_err() {
+                            tracing::error!("Failed to send ProcessSyncedValue reply");
+                        }
+                    },
+
+                    // In some cases, e.g. to verify the signature of a vote received at a higher height
+                    // than the one we are at (e.g. because we are lagging behind a little bit),
+                    // the engine may ask us for the validator set at that height.
+                    //
+                    // In our case, our validator set stays constant between heights so we can
+                    // send back the validator set found in our genesis state.
+                    BFTAppMsg::GetValidatorSet { height: _, reply } => {
+                        // TODO: parameterize by height
+                        if reply.send(genesis.validator_set.clone()).is_err() {
+                            tracing::error!("Failed to send GetValidatorSet reply");
+                        }
+                    },
+
+                    // After some time, consensus will finally reach a decision on the value
+                    // to commit for the current height, and will notify the application,
+                    // providing it with a commit certificate which contains the ID of the value
+                    // that was decided on as well as the set of commits for that value,
+                    // ie. the precommits together with their (aggregated) signatures.
+                    BFTAppMsg::Decided {
+                        certificate,
+                        extensions,
+                        reply,
+                    } => {
+                        info!(
+                            height = %certificate.height,
+                            round = %certificate.round,
+                            value = %certificate.value_id,
+                            "Consensus has decided on value"
+                        );
+
+                        // When that happens, we store the decided value in our store
+                        // TODO: state.commit(certificate, extensions).await?;
+                        current_bft_height = certificate.height.increment();
+                        current_bft_round  = Round::new(0);
+
+                        // And then we instruct consensus to start the next height
+                        if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                                current_bft_height,
+                                genesis.validator_set.clone(),
+                        )).is_err() {
+                            tracing::error!("Failed to send Decided reply");
+                        }
+                    },
+
+                    BFTAppMsg::GetHistoryMinHeight { reply } => {
+                        // TODO: min height from DB
+                        let min_height = init_bft_height;
+                        if reply.send(min_height).is_err() {
+                            tracing::error!("Failed to send GetHistoryMinHeight reply");
+                        }
+                    },
+
+                    BFTAppMsg::GetDecidedValue { height, reply } => {
+tracing::error!("get decided value");
+                        let decided_value = None; // state.get_decided_value(&height).cloned();
+
+                        if reply.send(decided_value).is_err() {
+                            tracing::error!("Failed to send GetDecidedValue reply");
+                        }
+                    },
+
+                    BFTAppMsg::ExtendVote {
+                        height: _,
+                        round: _,
+                        value_id: _,
+                        reply,
+                    } => {
+tracing::error!("extend vote");
+                        // TODO
+                        if reply.send(None).is_err() {
+                            tracing::error!("Failed to send ExtendVote reply");
+                        }
+                    },
+
+                    BFTAppMsg::VerifyVoteExtension {
+                        height: _,
+                        round: _,
+                        value_id: _,
+                        extension: _,
+                        reply,
+                    } => {
+tracing::error!("verify vote extension");
+                        if reply.send(Ok(())).is_err() {
+                            tracing::error!("Failed to send VerifyVoteExtension reply");
+                        }
+                    },
+
+                    _ => tracing::error!(?msg, "Unhandled message from Malachite"),
+                }
             }
-        }*/
         }
 
         let new_bc_tip = if let Ok(ReadStateResponse::Tip(val)) =
@@ -557,7 +604,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 drop(internal);
 
                 if new_bc_tip != current_bc_tip {
-                    info!("tip changed to {:?}", new_bc_tip);
+                    //info!("tip changed to {:?}", new_bc_tip);
                     tfl_reorg_final_block_height_hash(&call).await
                 } else {
                     current_bc_final
@@ -571,7 +618,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         let mut internal = internal_handle.internal.lock().await;
 
         if new_bc_final != current_bc_final {
-            info!("final changed to {:?}", new_bc_final);
+            //info!("final changed to {:?}", new_bc_final);
             if let Some((_, new_final_hash)) = new_bc_final {
                 let start_hash = if let Some((_, prev_hash)) = current_bc_final {
                     prev_hash
@@ -588,16 +635,24 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 )
                 .await;
 
+                let mut quiet = true;
                 if let (Some(Some(first_block)), Some(Some(last_block))) =
                     (infos.first(), infos.last())
                 {
+                    let a = first_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
+                    let b = last_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
+                    if a != b {
                     println!(
                         "Height change: {} => {}:",
-                        first_block.coinbase_height().unwrap_or(BlockHeight(0)).0,
-                        last_block.coinbase_height().unwrap_or(BlockHeight(0)).0
+                        a,
+                        b
                     );
+                    quiet = false;
+                    }
                 }
-                tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
+                if quiet == false {
+                    tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
+                }
 
                 // walk all blocks in newly-finalized sequence & broadcast them
                 for new_final_block in new_final_blocks {
@@ -650,7 +705,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     }
 }
 
-/*
 struct BFTNode {
     private_key: PrivateKey,
 }
@@ -669,6 +723,8 @@ impl NodeHandle<TestContext> for DummyHandle {
     }
 }
 
+static tpeer_id_for_wal: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+
 #[async_trait]
 impl Node for BFTNode {
     type Context = TestContext;
@@ -678,7 +734,7 @@ impl Node for BFTNode {
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from("aah_very_annoying_that_the_wal_is_required")
+        std::path::PathBuf::from(format!("aah_very_annoying_that_the_wal_is_required_id_is_{}", *tpeer_id_for_wal.lock().unwrap()))
     }
 
     fn generate_private_key<R>(&self, rng: R) -> PrivateKey
@@ -738,7 +794,6 @@ impl Node for BFTNode {
         Ok(())
     }
 }
-*/
 
 async fn tfl_service_incoming_request(
     internal_handle: TFLServiceHandle,
