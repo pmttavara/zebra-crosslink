@@ -1092,7 +1092,9 @@ fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
     print!("{}", s);
 }
 
-fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
+/// "How many little-endian chars are needed to uniquely identify any of the blocks in the given
+/// slice"
+fn block_hash_unique_chars_n(hashes: &[BlockHash]) -> usize {
     let is_unique = |prefix_len: usize, hashes: &[BlockHash]| -> bool {
         let mut prefixes = HashSet::with_capacity(hashes.len());
 
@@ -1115,11 +1117,17 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
         true
     };
 
-    let mut highlight_chars_n: usize = 1;
-    while !is_unique(highlight_chars_n, blocks) {
-        highlight_chars_n += 1;
-        assert!(highlight_chars_n <= 64);
+    let mut unique_chars_n: usize = 1;
+    while !is_unique(unique_chars_n, hashes) {
+        unique_chars_n += 1;
+        assert!(unique_chars_n <= 64);
     }
+
+    unique_chars_n
+}
+
+fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
+    let highlight_chars_n = block_hash_unique_chars_n(blocks);
 
     let print_color = true;
 

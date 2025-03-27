@@ -129,11 +129,27 @@ fn draw_multiline_text(
 ///
 /// N.B. this is the based on the dimensions provided by the font, which don't always match up
 /// with a minimal bounding box nor a visual proportional weighting.
-fn draw_text_align_ex(text: &str, pt: Vec2, params: TextParams, align: Vec2) -> TextDimensions {
+fn get_text_align_pt_ex(text: &str, pt: Vec2, params: &TextParams, align: Vec2) -> Vec2 {
     let align = align.clamp(Vec2::ZERO, Vec2::ONE);
     let dims = text::measure_text(text, params.font, params.font_size, params.font_scale);
+    pt + vec2(-align.x * dims.width, align.y * dims.height)
+}
 
-    let new_pt = pt + vec2(-align.x * dims.width, align.y * dims.height);
+fn get_text_align_pt(text: &str, pt: Vec2, font_size: f32, align: Vec2) -> Vec2 {
+    get_text_align_pt_ex(
+        text,
+        pt,
+        &TextParams {
+            font_size: font_size as u16,
+            font_scale: 1.,
+            ..Default::default()
+        },
+        align,
+    )
+}
+
+fn draw_text_align_ex(text: &str, pt: Vec2, params: TextParams, align: Vec2) -> TextDimensions {
+    let new_pt = get_text_align_pt_ex(text, pt, &params, align);
     // bounding boxes:
     // shapes::draw_rectangle_lines(pt.x,     pt.y-dims.height,     dims.width, dims.height, 2., BLACK);
     // shapes::draw_rectangle_lines(new_pt.x, new_pt.y-dims.height, dims.width, dims.height, 2., YELLOW);
@@ -278,14 +294,39 @@ async fn viz_main(
             }
             draw_circle(new_circle, col);
 
+            let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
 
-            // TODO: offset by max string length
-            draw_text_align(
-                &format!("{} - {}", hash, g.state.hash_start_height.0 as usize + i),
-                vec2(new_circle.x - (new_circle.r + 10.), new_circle.y),
-                20.,
+            let hash_str = &hash.to_string()[..];
+            let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
+            let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
+            let font_size = 20.;
+
+            // NOTE: we use the full hash string for determining y-alignment
+            // need a single alignment point for baseline, otherwise the difference in heights
+            // between strings will make the baselines mismatch.
+            // TODO: use TextDimensions.offset_y to ensure matching baselines...
+            let text_align_y =
+                get_text_align_pt(hash_str, vec2(0., new_circle.y), font_size, vec2(1., 0.4)).y;
+
+            let pt = vec2(new_circle.x - (new_circle.r + 10.), text_align_y);
+
+            let text_dims = draw_text_align(
+                &format!(
+                    "{} - {}",
+                    unique_hash_str,
+                    g.state.hash_start_height.0 as usize + i
+                ),
+                pt,
+                font_size,
                 WHITE,
-                vec2(1., 0.40),
+                vec2(1., 0.),
+            );
+            draw_text_align(
+                remain_hash_str,
+                pt - vec2(text_dims.width, 0.),
+                font_size,
+                LIGHTGRAY,
+                vec2(1., 0.),
             );
 
             old_circle = new_circle;
