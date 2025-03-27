@@ -5,7 +5,7 @@ use macroquad::{
     camera::*,
     color::{self, colors::*},
     input::*,
-    math::{vec2, Circle, Rect, Vec2},
+    math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
     text::{self, TextDimensions, TextParams},
     time, window,
@@ -137,11 +137,17 @@ fn draw_rect(rect: Rect, col: color::Color) {
     shapes::draw_rectangle(rect.x, rect.y, rect.w, rect.h, col)
 }
 fn draw_circle(circle: Circle, col: color::Color) {
-    shapes::draw_circle(circle.x, circle.y, circle.r, col)
-}
-fn draw_circle_lines(circle: Circle, thickness: f32, col: color::Color) {
     let sides_n = 30; // TODO: base on radius
-    shapes::draw_arc(circle.x, circle.y, sides_n, circle.r, 0., thickness, 360.0, col)
+    shapes::draw_poly(circle.x, circle.y, sides_n, circle.r, 0., col)
+}
+fn draw_circle_lines(circle: Circle, thick: f32, col: color::Color) {
+    let sides_n = 30; // TODO: base on radius
+    shapes::draw_arc(circle.x, circle.y, sides_n, circle.r, 0., thick, 360.0, col)
+}
+fn draw_ring(circle: Circle, thick: f32, thick_ratio: f32, col: color::Color) {
+    let sides_n = 30; // TODO: base on radius
+    let r = circle.r - thick_ratio * thick;
+    shapes::draw_arc(circle.x, circle.y, sides_n, r, 0., thick, 360.0, col)
 }
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
     text::draw_text(text, pt.x, pt.y, font_size, col)
@@ -250,6 +256,10 @@ async fn viz_main(
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
+    let mut hover_circle_start = Circle::new(0., 0., 0.);
+    let mut hover_circle = Circle::new(0., 0., 0.);
+    let mut old_hover_node_i: NodeRef = None;
+
     loop {
         // TFL DATA ////////////////////////////////////////
         if tokio_root_thread_handle.is_finished() {
@@ -314,7 +324,7 @@ async fn viz_main(
             let (scroll_x, scroll_y) = mouse_wheel();
             ctx.screen_vel += vec2(0.3 * scroll_x, 0.3 * scroll_y);
 
-            window::clear_background(RED);
+            window::clear_background(DARKBLUE);
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
             ctx.screen_vel = ctx.screen_vel.lerp(Vec2::ZERO, 0.12); // apply friction
         }
@@ -340,6 +350,41 @@ async fn viz_main(
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
         let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
 
+        let hover_node_i = { // Selection ring (behind node circle)
+            let mut hover_node_i: NodeRef = None;
+            for (i, node) in nodes.iter().enumerate() {
+                let circle = node.circle();
+                if circle.contains(&world_mouse_pt) {
+                    hover_node_i = Some(i);
+                    break;
+                }
+            }
+
+            let rad_mul = if let Some(node_i) = hover_node_i {
+                let hover_node = &nodes[node_i];
+                if hover_node_i != old_hover_node_i {
+                    hover_circle = hover_node.circle();
+                    hover_circle_start = hover_circle;
+                }
+                old_hover_node_i = hover_node_i;
+
+                std::f32::consts::SQRT_2
+            } else {
+                0.9
+            };
+
+            let target_rad = hover_circle_start.r * rad_mul;
+            hover_circle.r = hover_circle.r.lerp(target_rad, 0.1);
+            if hover_circle.r > hover_circle_start.r {
+                let col = if mouse_left_is_down { YELLOW } else { SKYBLUE };
+                draw_ring(hover_circle, 2., 1., col);
+            }
+
+            hover_node_i
+        };
+
+
+
         for (i, node) in nodes.iter().enumerate() {
             // NOTE: grows *upwards*
             let new_circle = node.circle();
@@ -362,8 +407,7 @@ async fn viz_main(
             }
 
 
-            let circle_hover = new_circle.contains(&world_mouse_pt);
-            let col = if circle_hover {
+            let col = if hover_node_i.is_some() && i == hover_node_i.unwrap() {
                 if mouse_left_is_down {
                     YELLOW
                 } else {
@@ -413,12 +457,8 @@ async fn viz_main(
                     );
                 }
              }
-
-            if new_circle.contains(&world_mouse_pt) {
-                // TODO: animate ring
-                draw_circle_lines(circle_scale(new_circle, std::f32::consts::SQRT_2), 2., col);
-            }
         }
+
 
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
