@@ -1,5 +1,7 @@
 //! Internal vizualization
 
+use std::thread::JoinHandle;
+
 use macroquad::{
     camera::*,
     color::{self, colors::*},
@@ -7,8 +9,7 @@ use macroquad::{
     math::{vec2, Circle, Rect, Vec2},
     shapes,
     text::{self, TextDimensions},
-    time,
-    window,
+    time, window,
 };
 
 /// Common GUI state that may need to be passed around
@@ -51,9 +52,10 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
-/// Vizualization entry point (has to take place on main thread as an OS requirement)
-#[macroquad::main("Zcash blocks")]
-pub async fn main() -> Result<(), crate::service::TFLServiceError> {
+/// Viz implementation root
+async fn viz_main(
+    tokio_root_thread_handle: JoinHandle<()>,
+) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
         fix_screen_o: Vec2::ZERO,
         screen_o: Vec2::ZERO,
@@ -67,6 +69,10 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
     };
 
     loop {
+        if tokio_root_thread_handle.is_finished() {
+            break Ok(());
+        }
+
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
             let (x, y) = mouse_position();
@@ -162,4 +168,18 @@ pub async fn main() -> Result<(), crate::service::TFLServiceError> {
         ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
+}
+
+/// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)
+pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
+    let config = window::Conf {
+        window_title: "Zcash blocks".to_owned(),
+        fullscreen: false,
+        ..Default::default()
+    };
+    macroquad::Window::from_config(config, async {
+        if let Err(err) = viz_main(tokio_root_thread_handle).await {
+            macroquad::logging::error!("Error: {:?}", err);
+        }
+    });
 }
