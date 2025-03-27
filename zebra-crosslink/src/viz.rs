@@ -13,6 +13,41 @@ use macroquad::{
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+// consistent zero-initializers
+// TODO: create a derive macro
+trait _0 {
+    const _0: Self;
+}
+impl _0 for Vec2 {
+    const _0: Vec2 = vec2(0., 0.);
+}
+impl _0 for Rect {
+    const _0: Rect = Rect::new(0., 0., 0., 0.);
+}
+impl _0 for Circle {
+    const _0: Circle = Circle::new(0., 0., 0.);
+}
+
+trait _1 {
+    const _1: Self;
+}
+impl _1 for Vec2 {
+    const _1: Vec2 = Vec2::ONE;
+}
+
+trait Unit {
+    const UNIT: Self;
+}
+impl Unit for Vec2 {
+    const UNIT: Vec2 = Vec2::_1;
+}
+impl Unit for Rect {
+    const UNIT: Rect = Rect::new(0., 0., 1., 1.);
+}
+impl Unit for Circle {
+    const UNIT: Circle = Circle::new(0., 0., 1.);
+}
+
 struct VizState {
     hash_start_height: BlockHeight,
     hashes: Vec<BlockHash>,
@@ -170,7 +205,7 @@ fn draw_multiline_text(
 /// N.B. this is the based on the dimensions provided by the font, which don't always match up
 /// with a minimal bounding box nor a visual proportional weighting.
 fn get_text_align_pt_ex(text: &str, pt: Vec2, params: &TextParams, align: Vec2) -> Vec2 {
-    let align = align.clamp(Vec2::ZERO, Vec2::ONE);
+    let align = align.clamp(Vec2::_0, Vec2::_1);
     let dims = text::measure_text(text, params.font, params.font_size, params.font_scale);
     pt + vec2(-align.x * dims.width, align.y * dims.height)
 }
@@ -228,7 +263,11 @@ fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
 
 // This exists because the existing [`Circle::scale`] mutates in place
 fn circle_scale(circle: Circle, scale: f32) -> Circle {
-    Circle { x: circle.x, y: circle.y, r: circle.r * scale }
+    Circle {
+        x: circle.x,
+        y: circle.y,
+        r: circle.r * scale,
+    }
 }
 
 /// Viz implementation root
@@ -236,11 +275,11 @@ async fn viz_main(
     tokio_root_thread_handle: JoinHandle<()>,
 ) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
-        fix_screen_o: Vec2::ZERO,
-        screen_o: Vec2::ZERO,
-        screen_vel: Vec2::ZERO,
-        mouse_press: Vec2::ZERO,
-        mouse_drag_d: Vec2::ZERO,
+        fix_screen_o: Vec2::_0,
+        screen_o: Vec2::_0,
+        screen_vel: Vec2::_0,
+        mouse_press: Vec2::_0,
+        mouse_drag_d: Vec2::_0,
         old_mouse_pt: {
             let (x, y) = mouse_position();
             Vec2 { x, y }
@@ -256,8 +295,8 @@ async fn viz_main(
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    let mut hover_circle_start = Circle::new(0., 0., 0.);
-    let mut hover_circle = Circle::new(0., 0., 0.);
+    let mut hover_circle_start = Circle::_0;
+    let mut hover_circle = Circle::_0;
     let mut old_hover_node_i: NodeRef = None;
 
     loop {
@@ -274,27 +313,35 @@ async fn viz_main(
 
         // Cache nodes
         // TODO: handle non-contiguous chunks
-        let mut parent = if nodes.len() > 0 { Some(nodes.len()-1) } else { None };
+        let mut parent = if nodes.len() > 0 {
+            Some(nodes.len() - 1)
+        } else {
+            None
+        };
         for (i, hash) in g.state.hashes.iter().enumerate() {
             let new_node = BCNode {
-                height: BlockHeight(g.state.hash_start_height.0 + i as u32), hash:*hash
+                height: BlockHeight(g.state.hash_start_height.0 + i as u32),
+                hash: *hash,
             };
 
             // TODO: extract impl Eq for Node
-            if nodes.iter().find(|node| match node.data {
-                NodeKind::BCNode(node) => { node == new_node }
-            }).is_none() {
-                nodes.push(Node{
+            if nodes
+                .iter()
+                .find(|node| match node.data {
+                    NodeKind::BCNode(node) => node == new_node,
+                })
+                .is_none()
+            {
+                nodes.push(Node {
                     // TODO: distance should be proportional to difficulty of newer block
                     parent,
-                    pt : parent.map_or(Vec2::ZERO, |i| nodes[i].pt - vec2(0., 100.)),
+                    pt: parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., 100.)),
                     // TODO: base rad on num transactions?
                     // could overlay internal circle/rings for shielded/transparent
                     rad: 10.,
                     data: NodeKind::BCNode(new_node),
-
                 });
-                parent = Some(nodes.len()-1);
+                parent = Some(nodes.len() - 1);
             }
         }
 
@@ -312,7 +359,7 @@ async fn viz_main(
                 // used for momentum after letting go
                 ctx.screen_vel = mouse_pt - ctx.old_mouse_pt; // ALT: average of last few frames?
             }
-            ctx.mouse_drag_d = Vec2::ZERO;
+            ctx.mouse_drag_d = Vec2::_0;
         }
 
         let mouse_left_is_down = is_mouse_button_down(MouseButton::Left);
@@ -326,11 +373,11 @@ async fn viz_main(
 
             window::clear_background(DARKBLUE);
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
-            ctx.screen_vel = ctx.screen_vel.lerp(Vec2::ZERO, 0.12); // apply friction
+            ctx.screen_vel = ctx.screen_vel.lerp(Vec2::_0, 0.12); // apply friction
         }
 
         if is_key_down(KeyCode::Escape) {
-            ctx.mouse_drag_d = Vec2::ZERO;
+            ctx.mouse_drag_d = Vec2::_0;
             ctx.mouse_press = mouse_pt;
         }
 
@@ -350,7 +397,8 @@ async fn viz_main(
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
         let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
 
-        let hover_node_i = { // Selection ring (behind node circle)
+        let hover_node_i = {
+            // Selection ring (behind node circle)
             let mut hover_node_i: NodeRef = None;
             for (i, node) in nodes.iter().enumerate() {
                 let circle = node.circle();
@@ -383,13 +431,11 @@ async fn viz_main(
             hover_node_i
         };
 
-
-
         for (i, node) in nodes.iter().enumerate() {
             // NOTE: grows *upwards*
             let new_circle = node.circle();
             if i > 0 {
-                let old_circle = nodes[i-1].circle();
+                let old_circle = nodes[i - 1].circle();
                 // draw arrow
                 let arrow_bgn_pt = pt_on_circle_edge(old_circle, new_circle.point());
                 let arrow_end_pt = pt_on_circle_edge(new_circle, old_circle.point());
@@ -405,7 +451,6 @@ async fn viz_main(
                     arrow_col,
                 );
             }
-
 
             let col = if hover_node_i.is_some() && i == hover_node_i.unwrap() {
                 if mouse_left_is_down {
@@ -426,14 +471,18 @@ async fn viz_main(
                     let hash_str = &bc_node.hash.to_string()[..];
                     let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
                     let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
-                    let font_size = 20.;
 
                     // NOTE: we use the full hash string for determining y-alignment
                     // need a single alignment point for baseline, otherwise the difference in heights
                     // between strings will make the baselines mismatch.
                     // TODO: use TextDimensions.offset_y to ensure matching baselines...
-                    let text_align_y =
-                        get_text_align_pt(hash_str, vec2(0., new_circle.y), font_size, vec2(1., 0.4)).y;
+                    let text_align_y = get_text_align_pt(
+                        hash_str,
+                        vec2(0., new_circle.y),
+                        font_size,
+                        vec2(1., 0.4),
+                    )
+                    .y;
 
                     let pt = vec2(new_circle.x - (new_circle.r + 10.), text_align_y);
 
@@ -456,9 +505,8 @@ async fn viz_main(
                         vec2(1., 0.),
                     );
                 }
-             }
+            }
         }
-
 
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
@@ -481,7 +529,7 @@ async fn viz_main(
             ctx.screen_vel,
             g.state.hashes.len()
         );
-        draw_multiline_text(&dbg_str, Vec2 { x: 10.0, y: 20.0 }, 20.0, None, WHITE);
+        draw_multiline_text(&dbg_str, vec2(10.0, font_size), font_size, None, WHITE);
 
         if true {
             // draw mouse point's world location
