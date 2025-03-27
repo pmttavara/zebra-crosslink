@@ -82,6 +82,35 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct BCNode {
+    height: BlockHeight,
+    hash: BlockHash,
+    // ...
+}
+
+#[derive(Copy, Clone, Debug)]
+enum NodeKind {
+    BCNode(BCNode),
+}
+
+type NodeRef = Option<usize>;
+#[derive(Copy, Clone, Debug)]
+struct Node {
+    parent: NodeRef,
+
+    pt: Vec2,
+    rad: f32,
+
+    data: NodeKind,
+}
+
+impl Node {
+    fn circle(&self) -> Circle {
+        Circle::new(self.pt.x, self.pt.y, self.rad)
+    }
+}
+
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
 struct VizCtx {
@@ -92,6 +121,7 @@ struct VizCtx {
     mouse_press: Vec2, // for determining drag
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
+    nodes: Vec<Node>,
 }
 
 fn draw_line(pt0: Vec2, pt1: Vec2, stroke_thickness: f32, col: color::Color) {
@@ -200,7 +230,10 @@ async fn viz_main(
             let (x, y) = mouse_position();
             Vec2 { x, y }
         },
+        nodes: Vec::with_capacity(512),
     };
+
+    let nodes = &mut ctx.nodes;
 
     // wait for servicing thread to init
     while VIZ_G.lock().unwrap().is_none() {
@@ -209,7 +242,7 @@ async fn viz_main(
     }
 
     loop {
-        // TFL DATA BASICS ////////////////////////////////////////
+        // TFL DATA ////////////////////////////////////////
         if tokio_root_thread_handle.is_finished() {
             break Ok(());
         }
@@ -219,6 +252,32 @@ async fn viz_main(
             lock.as_mut().unwrap().consumed = true;
             lock.as_ref().unwrap().clone()
         };
+
+        // Cache nodes
+        // TODO: handle non-contiguous chunks
+        let mut parent = if nodes.len() > 0 { Some(nodes.len()-1) } else { None };
+        for (i, hash) in g.state.hashes.iter().enumerate() {
+            let new_node = BCNode {
+                height: BlockHeight(g.state.hash_start_height.0 + i as u32), hash:*hash
+            };
+
+            // TODO: extract impl Eq for Node
+            if nodes.iter().find(|node| match node.data {
+                NodeKind::BCNode(node) => { node == new_node }
+            }).is_none() {
+                nodes.push(Node{
+                    // TODO: distance should be proportional to difficulty of newer block
+                    parent,
+                    pt : parent.map_or(Vec2::ZERO, |i| nodes[i].pt - vec2(0., 100.)),
+                    // TODO: base rad on num transactions?
+                    // could overlay internal circle/rings for shielded/transparent
+                    rad: 10.,
+                    data: NodeKind::BCNode(new_node),
+
+                });
+                parent = Some(nodes.len()-1);
+            }
+        }
 
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
@@ -268,15 +327,13 @@ async fn viz_main(
         };
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
 
-        let mut old_circle = Circle::new(0., 0., 0.);
-        for (i, hash) in g.state.hashes.iter().enumerate() {
-            let centre_dist = 100.; // TODO: difficulty of newer block
-            let rad = 10.; // TODO: num transactions? could overlay internal circle/rings for shielded/transparent
+        for (i, node) in nodes.iter().enumerate() {
             let col = WHITE; // TODO: depend on finality
 
             // NOTE: grows *upwards*
-            let new_circle = Circle::new(old_circle.x, old_circle.y - centre_dist, rad);
+            let new_circle = node.circle();
             if i > 0 {
+                let old_circle = nodes[i-1].circle();
                 // draw arrow
                 let arrow_bgn_pt = pt_on_circle_edge(old_circle, new_circle.point());
                 let arrow_end_pt = pt_on_circle_edge(new_circle, old_circle.point());
@@ -294,42 +351,45 @@ async fn viz_main(
             }
             draw_circle(new_circle, col);
 
+            // TODO: handle properly with new node structure
             let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
 
-            let hash_str = &hash.to_string()[..];
-            let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
-            let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
-            let font_size = 20.;
+            match node.data {
+                NodeKind::BCNode(bc_node) => {
+                    let hash_str = &bc_node.hash.to_string()[..];
+                    let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
+                    let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
+                    let font_size = 20.;
 
-            // NOTE: we use the full hash string for determining y-alignment
-            // need a single alignment point for baseline, otherwise the difference in heights
-            // between strings will make the baselines mismatch.
-            // TODO: use TextDimensions.offset_y to ensure matching baselines...
-            let text_align_y =
-                get_text_align_pt(hash_str, vec2(0., new_circle.y), font_size, vec2(1., 0.4)).y;
+                    // NOTE: we use the full hash string for determining y-alignment
+                    // need a single alignment point for baseline, otherwise the difference in heights
+                    // between strings will make the baselines mismatch.
+                    // TODO: use TextDimensions.offset_y to ensure matching baselines...
+                    let text_align_y =
+                        get_text_align_pt(hash_str, vec2(0., new_circle.y), font_size, vec2(1., 0.4)).y;
 
-            let pt = vec2(new_circle.x - (new_circle.r + 10.), text_align_y);
+                    let pt = vec2(new_circle.x - (new_circle.r + 10.), text_align_y);
 
-            let text_dims = draw_text_align(
-                &format!(
-                    "{} - {}",
-                    unique_hash_str,
-                    g.state.hash_start_height.0 as usize + i
-                ),
-                pt,
-                font_size,
-                WHITE,
-                vec2(1., 0.),
-            );
-            draw_text_align(
-                remain_hash_str,
-                pt - vec2(text_dims.width, 0.),
-                font_size,
-                LIGHTGRAY,
-                vec2(1., 0.),
-            );
-
-            old_circle = new_circle;
+                    let text_dims = draw_text_align(
+                        &format!(
+                            "{} - {}",
+                            unique_hash_str,
+                            g.state.hash_start_height.0 as usize + i
+                        ),
+                        pt,
+                        font_size,
+                        WHITE,
+                        vec2(1., 0.),
+                    );
+                    draw_text_align(
+                        remain_hash_str,
+                        pt - vec2(text_dims.width, 0.),
+                        font_size,
+                        LIGHTGRAY,
+                        vec2(1., 0.),
+                    );
+                }
+             }
         }
 
         // SCREEN SPACE UI ////////////////////////////////////////
