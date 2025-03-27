@@ -6,7 +6,7 @@ use macroquad::{
     color::{self, colors::*},
     input::*,
     math::{vec2, Circle, Rect, Vec2},
-    shapes,
+    shapes::{self, draw_triangle},
     text::{self, TextDimensions},
     time, window,
 };
@@ -122,6 +122,15 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
+/// Currently only offsets in y; TODO: offset in arbitrary dimensions
+fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
+    if pt.y < c.y {
+        vec2(c.x, c.y - c.r)
+    } else {
+        vec2(c.x, c.y + c.r)
+    }
+}
+
 /// Viz implementation root
 async fn viz_main(
     tokio_root_thread_handle: JoinHandle<()>,
@@ -204,15 +213,34 @@ async fn viz_main(
         };
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
 
-        draw_rect(
-            Rect {
-                x: window::screen_width() / 2. - 60.,
-                y: 100.,
-                w: 120.,
-                h: 60.,
-            },
-            GREEN,
-        );
+        let mut old_circle = Circle::new(0., 0., 0.);
+        for (i, _hash) in g.state.hashes.iter().enumerate() {
+            let centre_dist = 100.; // TODO: difficulty of newer block
+            let rad = 10.; // TODO: num transactions? could overlay internal circle/rings for shielded/transparent
+            let col = WHITE; // TODO: depend on finality
+
+            // NOTE: grows *upwards*
+            let new_circle = Circle::new(old_circle.x, old_circle.y - centre_dist, rad);
+            if i > 0 {
+                // draw arrow
+                let arrow_bgn_pt = pt_on_circle_edge(old_circle, new_circle.point());
+                let arrow_end_pt = pt_on_circle_edge(new_circle, old_circle.point());
+                let line_thick = 2.;
+                let arrow_size = 9.;
+                let arrow_col = GRAY;
+                let line_bgn_pt = arrow_bgn_pt - vec2(0., arrow_size);
+                draw_line(line_bgn_pt, arrow_end_pt, line_thick, arrow_col);
+                draw_triangle(
+                    arrow_bgn_pt,
+                    line_bgn_pt + vec2(0.5 * arrow_size, 0.),
+                    line_bgn_pt - vec2(0.5 * arrow_size, 0.),
+                    arrow_col,
+                );
+            }
+            draw_circle(new_circle, col);
+
+            old_circle = new_circle;
+        }
 
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
