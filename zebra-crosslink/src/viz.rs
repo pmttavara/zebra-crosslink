@@ -7,7 +7,7 @@ use macroquad::{
     input::*,
     math::{vec2, Circle, Rect, Vec2},
     shapes::{self, draw_triangle},
-    text::{self, TextDimensions},
+    text::{self, TextDimensions, TextParams},
     time, window,
 };
 use std::sync::Arc;
@@ -122,6 +122,45 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
+/// `align` {0..=1, 0..=1} determines which point on the text's bounding box will be placed at `pt`
+/// - Bottom-left (normal text) is {0,0}
+/// - Bottom-right (right-aligned) is {1,0}
+/// - Centred in both dimensions is: {0.5, 0.5}
+///
+/// N.B. this is the based on the dimensions provided by the font, which don't always match up
+/// with a minimal bounding box nor a visual proportional weighting.
+fn draw_text_align_ex(text: &str, pt: Vec2, params: TextParams, align: Vec2) -> TextDimensions {
+    let align = align.clamp(Vec2::ZERO, Vec2::ONE);
+    let dims = text::measure_text(text, params.font, params.font_size, params.font_scale);
+
+    let new_pt = pt + vec2(-align.x * dims.width, align.y * dims.height);
+    // bounding boxes:
+    // shapes::draw_rectangle_lines(pt.x,     pt.y-dims.height,     dims.width, dims.height, 2., BLACK);
+    // shapes::draw_rectangle_lines(new_pt.x, new_pt.y-dims.height, dims.width, dims.height, 2., YELLOW);
+    text::draw_text_ex(text, new_pt.x, new_pt.y, params)
+}
+
+/// see [`draw_text_align_ex`]
+fn draw_text_align(
+    text: &str,
+    pt: Vec2,
+    font_size: f32,
+    col: color::Color,
+    align: Vec2,
+) -> TextDimensions {
+    draw_text_align_ex(
+        text,
+        pt,
+        TextParams {
+            font_size: font_size as u16,
+            font_scale: 1.0,
+            color: col,
+            ..Default::default()
+        },
+        align,
+    )
+}
+
 /// Currently only offsets in y; TODO: offset in arbitrary dimensions
 fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
     if pt.y < c.y {
@@ -214,7 +253,7 @@ async fn viz_main(
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
 
         let mut old_circle = Circle::new(0., 0., 0.);
-        for (i, _hash) in g.state.hashes.iter().enumerate() {
+        for (i, hash) in g.state.hashes.iter().enumerate() {
             let centre_dist = 100.; // TODO: difficulty of newer block
             let rad = 10.; // TODO: num transactions? could overlay internal circle/rings for shielded/transparent
             let col = WHITE; // TODO: depend on finality
@@ -238,6 +277,16 @@ async fn viz_main(
                 );
             }
             draw_circle(new_circle, col);
+
+
+            // TODO: offset by max string length
+            draw_text_align(
+                &format!("{} - {}", hash, g.state.hash_start_height.0 as usize + i),
+                vec2(new_circle.x - (new_circle.r + 10.), new_circle.y),
+                20.,
+                WHITE,
+                vec2(1., 0.40),
+            );
 
             old_circle = new_circle;
         }
