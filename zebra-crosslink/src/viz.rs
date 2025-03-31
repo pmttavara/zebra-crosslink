@@ -120,20 +120,28 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct BCNode {
     height: BlockHeight,
     hash: BlockHash,
     // ...
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BFTNode {
+    height: u32,
+    text: String,
+    // ...
+}
+
+#[derive(Clone, Debug)]
 enum NodeKind {
     BCNode(BCNode),
+    BFTNode(BFTNode),
 }
 
 type NodeRef = Option<usize>;
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 struct Node {
     parent: NodeRef,
 
@@ -272,7 +280,11 @@ fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
 }
 
 fn make_circle(pt: Vec2, rad: f32) -> Circle {
-    Circle{ x: pt.x, y: pt.y, r: rad }
+    Circle {
+        x: pt.x,
+        y: pt.y,
+        r: rad,
+    }
 }
 
 // This exists because the existing [`Circle::scale`] mutates in place
@@ -336,9 +348,14 @@ async fn viz_main(
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
+    let mut bft_parent: NodeRef = None;
+    let mut bc_parent: NodeRef = None;
     let font_size = 20.;
 
-    let editbox_style = root_ui().style_builder().font_size(font_size as u16).build();
+    let editbox_style = root_ui()
+        .style_builder()
+        .font_size(font_size as u16)
+        .build();
     let skin = ui::Skin {
         editbox_style,
         ..root_ui().default_skin()
@@ -346,7 +363,7 @@ async fn viz_main(
     root_ui().push_skin(&skin);
 
     let mut edit_str = String::new();
-    let mut bg_col = DARKBLUE;
+    let bg_col = DARKBLUE;
 
     loop {
         // TFL DATA ////////////////////////////////////////
@@ -362,11 +379,6 @@ async fn viz_main(
 
         // Cache nodes
         // TODO: handle non-contiguous chunks
-        let mut parent = if nodes.len() > 0 {
-            Some(nodes.len() - 1)
-        } else {
-            None
-        };
         for (i, hash) in g.state.hashes.iter().enumerate() {
             let new_node = BCNode {
                 height: BlockHeight(g.state.hash_start_height.0 + i as u32),
@@ -376,21 +388,22 @@ async fn viz_main(
             // TODO: extract impl Eq for Node
             if nodes
                 .iter()
-                .find(|node| match node.data {
-                    NodeKind::BCNode(node) => node == new_node,
+                .find(|node| match &node.data {
+                    NodeKind::BCNode(node) => *node == new_node,
+                    _ => false,
                 })
                 .is_none()
             {
                 nodes.push(Node {
                     // TODO: distance should be proportional to difficulty of newer block
-                    parent,
-                    pt: parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., 100.)),
+                    parent: bc_parent,
+                    pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., 100.)),
                     // TODO: base rad on num transactions?
                     // could overlay internal circle/rings for shielded/transparent
                     rad: 10.,
                     data: NodeKind::BCNode(new_node),
                 });
-                parent = Some(nodes.len() - 1);
+                bc_parent = Some(nodes.len() - 1);
             }
         }
 
@@ -512,16 +525,38 @@ async fn viz_main(
         let text_wnd_size = text_size + vec2(0., 5.);
         ui_dynamic_window(
             hash!(),
-            vec2(0.5 * font_size, window::screen_height() - (text_wnd_size.y + 0.5 * font_size)),
+            vec2(
+                0.5 * font_size,
+                window::screen_height() - (text_wnd_size.y + 0.5 * font_size),
+            ),
             text_wnd_size,
             |ui| {
                 if widgets::Editbox::new(hash!(), text_size)
                     .multiline(false)
-                    .ui(ui, &mut edit_str) &&
-                    (is_key_pressed(KeyCode::Enter) ||
-                     is_key_pressed(KeyCode::KpEnter))
+                    .ui(ui, &mut edit_str)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
                 {
-                    bg_col = if bg_col == RED { DARKBLUE } else { RED };
+                    nodes.push(Node {
+                        // TODO: distance should be proportional to difficulty of newer block
+                        parent: bft_parent,
+                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
+                        // TODO: base rad on num transactions?
+                        // could overlay internal circle/rings for shielded/transparent
+                        rad: 10.,
+                        data: NodeKind::BFTNode(BFTNode {
+                            text: edit_str.clone(),
+                            height: bft_parent.map_or(0, |i| {
+                                if let NodeKind::BFTNode(parent_data) = &nodes[i].data {
+                                    parent_data.height + 1
+                                } else {
+                                    0
+                                }
+                            }),
+                        }),
+                    });
+                    bft_parent = Some(nodes.len() - 1);
+
+                    edit_str = "".to_string();
                 }
             },
         );
@@ -574,14 +609,15 @@ async fn viz_main(
             click_node_i = hover_node_i;
         }
 
+        // ALT: EoA
         for (i, node) in nodes.iter().enumerate() {
             // NOTE: grows *upwards*
-            let new_circle = node.circle();
-            if i > 0 {
-                let old_circle = nodes[i - 1].circle();
+            let circle = node.circle();
+            if let Some(parent_i) = node.parent {
+                let parent_circle = nodes[parent_i].circle();
                 // draw arrow
-                let arrow_bgn_pt = pt_on_circle_edge(old_circle, new_circle.point());
-                let arrow_end_pt = pt_on_circle_edge(new_circle, old_circle.point());
+                let arrow_bgn_pt = pt_on_circle_edge(parent_circle, circle.point());
+                let arrow_end_pt = pt_on_circle_edge(circle, parent_circle.point());
                 let line_thick = 2.;
                 let arrow_size = 9.;
                 let arrow_col = GRAY;
@@ -606,12 +642,13 @@ async fn viz_main(
             } else {
                 WHITE
             }; // TODO: depend on finality
-            draw_circle(new_circle, col);
+            draw_circle(circle, col);
 
             // TODO: handle properly with new node structure
             let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
+            let circle_text_o = circle.r + 10.;
 
-            match node.data {
+            match &node.data {
                 NodeKind::BCNode(bc_node) => {
                     let hash_str = &bc_node.hash.to_string()[..];
                     let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
@@ -621,21 +658,16 @@ async fn viz_main(
                     // need a single alignment point for baseline, otherwise the difference in heights
                     // between strings will make the baselines mismatch.
                     // TODO: use TextDimensions.offset_y to ensure matching baselines...
-                    let text_align_y = get_text_align_pt(
-                        hash_str,
-                        vec2(0., new_circle.y),
-                        font_size,
-                        vec2(1., 0.4),
-                    )
-                    .y;
+                    let text_align_y =
+                        get_text_align_pt(hash_str, vec2(0., circle.y), font_size, vec2(1., 0.4)).y;
 
-                    let pt = vec2(new_circle.x - (new_circle.r + 10.), text_align_y);
+                    let pt = vec2(circle.x - circle_text_o, text_align_y);
 
                     let text_dims = draw_text_align(
                         &format!(
                             "{} - {}",
                             unique_hash_str,
-                            g.state.hash_start_height.0 as usize + i
+                            bc_node.height.0
                         ),
                         pt,
                         font_size,
@@ -648,6 +680,16 @@ async fn viz_main(
                         font_size,
                         LIGHTGRAY,
                         vec2(1., 0.),
+                    );
+                }
+
+                NodeKind::BFTNode(bft_node) => {
+                    draw_text_align(
+                        &format!("{} - {}", bft_node.height, bft_node.text),
+                        vec2(circle.x + circle_text_o, circle.y),
+                        font_size,
+                        WHITE,
+                        vec2(0., 0.5),
                     );
                 }
             }
