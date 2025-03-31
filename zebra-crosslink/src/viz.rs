@@ -8,7 +8,9 @@ use macroquad::{
     math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
     text::{self, TextDimensions, TextParams},
-    time, window,
+    time,
+    ui::{self, hash, root_ui},
+    window,
 };
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -35,6 +37,7 @@ impl _1 for Vec2 {
     const _1: Vec2 = Vec2::ONE;
 }
 
+#[allow(unused)]
 trait Unit {
     const UNIT: Self;
 }
@@ -146,6 +149,13 @@ impl Node {
     }
 }
 
+#[derive(Debug)]
+enum MouseDrag {
+    Nil,
+    Ui,
+    World(Vec2), // start point (may need a different name?)
+}
+
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
 struct VizCtx {
@@ -153,7 +163,7 @@ struct VizCtx {
     screen_o: Vec2,
     screen_vel: Vec2,
     fix_screen_o: Vec2,
-    mouse_press: Vec2, // for determining drag
+    mouse_drag: MouseDrag,
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
@@ -270,6 +280,17 @@ fn circle_scale(circle: Circle, scale: f32) -> Circle {
     }
 }
 
+fn ui_camera_window<F: FnOnce(&mut ui::Ui)>(
+    id: ui::Id,
+    camera: &Camera2D,
+    world_pt: Vec2,
+    size: Vec2,
+    f: F,
+) -> bool {
+    root_ui().move_window(id, camera.world_to_screen(world_pt));
+    root_ui().window(id, vec2(0., 0.), size, f)
+}
+
 /// Viz implementation root
 async fn viz_main(
     tokio_root_thread_handle: JoinHandle<()>,
@@ -278,7 +299,7 @@ async fn viz_main(
         fix_screen_o: Vec2::_0,
         screen_o: Vec2::_0,
         screen_vel: Vec2::_0,
-        mouse_press: Vec2::_0,
+        mouse_drag: MouseDrag::Nil,
         mouse_drag_d: Vec2::_0,
         old_mouse_pt: {
             let (x, y) = mouse_position();
@@ -298,6 +319,12 @@ async fn viz_main(
     let mut hover_circle_start = Circle::_0;
     let mut hover_circle = Circle::_0;
     let mut old_hover_node_i: NodeRef = None;
+    // we track this as you have to mouse down *and* up on the same node to count as clicking on it
+    let mut mouse_dn_node_i: NodeRef = None;
+    let mut click_node_i: NodeRef = None;
+    let font_size = 20.;
+
+    let mut edit_str = String::new();
 
     loop {
         // TFL DATA ////////////////////////////////////////
@@ -350,21 +377,42 @@ async fn viz_main(
             let (x, y) = mouse_position();
             Vec2 { x, y }
         };
-        if is_mouse_button_pressed(MouseButton::Left) {
-            ctx.mouse_press = mouse_pt;
+        let mouse_l_is_down = is_mouse_button_down(MouseButton::Left);
+        let mouse_l_is_pressed = is_mouse_button_pressed(MouseButton::Left);
+        let mouse_l_is_released = is_mouse_button_released(MouseButton::Left);
+        let mouse_is_over_ui = root_ui().is_mouse_over(mouse_pt);
+        let mouse_l_is_world_down = !mouse_is_over_ui && mouse_l_is_down;
+        let mouse_l_is_world_pressed = !mouse_is_over_ui && mouse_l_is_pressed;
+        let mouse_l_is_world_released = !mouse_is_over_ui && mouse_l_is_released;
+
+        // NOTE: currently if the mouse is over UI we don't let it drag the world around.
+        // This means that if the user starts clicking on a button and then changes their mind,
+        // they can release it off the button to cancel the action. Otherwise the button gets
+        // "stuck" to their mouse.
+        // ALT: allow world dragging when mouse is over ui window chrome, but not interactive
+        // elements.
+        if mouse_l_is_pressed {
+            ctx.mouse_drag = if mouse_is_over_ui {
+                MouseDrag::Ui
+            } else {
+                root_ui().clear_input_focus();
+                MouseDrag::World(mouse_pt)
+            };
         } else {
-            if is_mouse_button_released(MouseButton::Left) {
+            if mouse_l_is_released {
                 ctx.fix_screen_o -= ctx.mouse_drag_d; // follow drag preview
 
                 // used for momentum after letting go
-                ctx.screen_vel = mouse_pt - ctx.old_mouse_pt; // ALT: average of last few frames?
+                if let MouseDrag::World(_) = ctx.mouse_drag {
+                    ctx.screen_vel = mouse_pt - ctx.old_mouse_pt; // ALT: average of last few frames?
+                }
+                ctx.mouse_drag = MouseDrag::Nil;
             }
             ctx.mouse_drag_d = Vec2::_0;
         }
 
-        let mouse_left_is_down = is_mouse_button_down(MouseButton::Left);
-        if mouse_left_is_down {
-            ctx.mouse_drag_d = mouse_pt - ctx.mouse_press;
+        if let MouseDrag::World(press_pt) = ctx.mouse_drag {
+            ctx.mouse_drag_d = mouse_pt - press_pt;
             ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
             window::clear_background(BLUE);
         } else {
@@ -378,7 +426,7 @@ async fn viz_main(
 
         if is_key_down(KeyCode::Escape) {
             ctx.mouse_drag_d = Vec2::_0;
-            ctx.mouse_press = mouse_pt;
+            ctx.mouse_drag = MouseDrag::Nil;
         }
 
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
@@ -397,7 +445,50 @@ async fn viz_main(
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
         let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
 
-        let hover_node_i = {
+        ui_camera_window(
+            hash!(),
+            &world_camera,
+            vec2(20., 20.),
+            vec2(300., 200.),
+            |ui| {
+                ui.label(
+                    None,
+                    if ui.is_mouse_over(mouse_pt) {
+                        "over"
+                    } else {
+                        "not over"
+                    },
+                );
+                ui.label(
+                    None,
+                    if ui.is_mouse_captured() {
+                        "captured"
+                    } else {
+                        "not captured"
+                    },
+                );
+                if ui.button(None, "Click") {
+                    // root_ui().button(None, "Clicked");
+                }
+            },
+        );
+
+        ui_camera_window(
+            hash!(),
+            &world_camera,
+            vec2(350., 300.),
+            vec2(300., 200.),
+            |ui| {
+                ui.label(None, &format!("over: {}", ui.is_mouse_over(mouse_pt)));
+                if ui.button(None, "Click") {
+                    // root_ui().button(None, "Clicked");
+                }
+            },
+        );
+
+        let hover_node_i: NodeRef = if mouse_is_over_ui {
+            None
+        } else {
             // Selection ring (behind node circle)
             let mut hover_node_i: NodeRef = None;
             for (i, node) in nodes.iter().enumerate() {
@@ -424,12 +515,24 @@ async fn viz_main(
             let target_rad = hover_circle_start.r * rad_mul;
             hover_circle.r = hover_circle.r.lerp(target_rad, 0.1);
             if hover_circle.r > hover_circle_start.r {
-                let col = if mouse_left_is_down { YELLOW } else { SKYBLUE };
+                let col = if mouse_l_is_world_down {
+                    YELLOW
+                } else {
+                    SKYBLUE
+                };
                 draw_ring(hover_circle, 2., 1., col);
             }
 
             hover_node_i
         };
+
+        // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
+        if mouse_l_is_world_pressed {
+            mouse_dn_node_i = hover_node_i;
+        } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i {
+            // node is clicked on
+            click_node_i = hover_node_i;
+        }
 
         for (i, node) in nodes.iter().enumerate() {
             // NOTE: grows *upwards*
@@ -452,8 +555,10 @@ async fn viz_main(
                 );
             }
 
-            let col = if hover_node_i.is_some() && i == hover_node_i.unwrap() {
-                if mouse_left_is_down {
+            let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
+                RED
+            } else if hover_node_i.is_some() && i == hover_node_i.unwrap() {
+                if mouse_l_is_world_down {
                     YELLOW
                 } else {
                     SKYBLUE
@@ -529,7 +634,13 @@ async fn viz_main(
             ctx.screen_vel,
             g.state.hashes.len()
         );
-        draw_multiline_text(&dbg_str, vec2(10.0, font_size), font_size, None, WHITE);
+        draw_multiline_text(
+            &dbg_str,
+            vec2(0.5 * font_size, font_size),
+            font_size,
+            None,
+            WHITE,
+        );
 
         if true {
             // draw mouse point's world location
@@ -537,12 +648,13 @@ async fn viz_main(
             draw_multiline_text(
                 &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_pt),
                 mouse_pt + vec2(5., -5.),
-                20.,
+                font_size,
                 None,
                 WHITE,
             );
         }
 
+        // TODO: if is_quit_requested() { send message for tokio to quit, then join }
         ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
@@ -560,4 +672,6 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
             macroquad::logging::error!("Error: {:?}", err);
         }
     });
+
+    // tokio_root_thread_handle.join();
 }
