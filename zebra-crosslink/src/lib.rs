@@ -1146,10 +1146,10 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
                 .filter(|tx| tx.has_shielded_data())
                 .count();
             print!(
-                " - {}, height: {}, difficulty: {}, {:3} transactions ({} shielded)",
+                " - {}, height: {}, work: {:?}, {:3} transactions ({} shielded)",
                 block.header.time,
                 block.coinbase_height().unwrap_or(BlockHeight(0)).0,
-                block.header.difficulty_threshold,
+                block.header.difficulty_threshold.to_work().unwrap(),
                 block.transactions.len(),
                 shielded_c
             );
