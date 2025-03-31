@@ -51,9 +51,18 @@ impl Unit for Circle {
     const UNIT: Circle = Circle::new(0., 0., 1.);
 }
 
+// TODO
+// /// Smaller block format: only transfer/cache what we need
+// struct VizBlock {
+//     difficulty: CompactDifficulty, // to be converted to_work()
+//     txs_n: u32,
+// }
+
 struct VizState {
+    latest_final_block: Option<(BlockHeight, BlockHash)>,
     hash_start_height: BlockHeight,
     hashes: Vec<BlockHash>,
+    blocks: Vec<Option<Arc<Block>>>,
 }
 #[derive(Clone)]
 struct VizGlobals {
@@ -69,8 +78,10 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
 
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
         state: std::sync::Arc::new(VizState {
-            hashes: Vec::new(),
+            latest_final_block: None,
             hash_start_height: BlockHeight(0),
+            hashes: Vec::new(),
+            blocks: Vec::new(),
         }),
         // wanted_height_rng: (0, 0),
         consumed: true,
@@ -85,7 +96,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
-        let (hash_start_height, hashes) = {
+        let (hash_start_height, hashes, blocks) = {
             use std::ops::Sub;
             use zebra_chain::block::HeightDiff as BlockHeightDiff;
 
@@ -98,21 +109,23 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                 if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
                     (call.read_state)(ReadStateRequest::BlockHeader(start_height.into())).await
                 {
-                    let (hashes, _) = tfl_block_sequence(&call, hash, None, true, false).await;
-                    (start_height, hashes)
+                    let (hashes, blocks) = tfl_block_sequence(&call, hash, None, true, true).await;
+                    (start_height, hashes, blocks)
                 } else {
                     error!("Failed to read start hash");
-                    (BlockHeight(0), Vec::new())
+                    (BlockHeight(0), Vec::new(), Vec::new())
                 }
             } else {
                 error!("Failed to read tip");
-                (BlockHeight(0), Vec::new())
+                (BlockHeight(0), Vec::new(), Vec::new())
             }
         };
 
         let new_state = VizState {
+            latest_final_block: tfl_handle.internal.lock().await.latest_final_block,
             hash_start_height,
             hashes,
+            blocks
         };
 
         new_g.state = Arc::new(new_state);
@@ -399,12 +412,15 @@ async fn viz_main(
     let mut bc_parent: NodeRef = None;
     let font_size = 20.;
 
-    let editbox_style = root_ui()
+    let base_style = root_ui()
         .style_builder()
         .font_size(font_size as u16)
         .build();
     let skin = ui::Skin {
-        editbox_style,
+        editbox_style: base_style.clone(),
+        label_style: base_style.clone(),
+        button_style: base_style.clone(),
+        combobox_style: base_style.clone(),
         ..root_ui().default_skin()
     };
     root_ui().push_skin(&skin);
@@ -525,7 +541,7 @@ async fn viz_main(
         ui_camera_window(
             hash!(),
             &world_camera,
-            vec2(20., 20.),
+            vec2(200., 20.),
             vec2(300., 200.),
             |ui| {
                 ui.label(
@@ -669,6 +685,27 @@ async fn viz_main(
         } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i {
             // node is clicked on
             click_node_i = hover_node_i;
+        }
+
+        if let Some(click_node_i) = click_node_i {
+            let click_node = &nodes[click_node_i];
+            ui_camera_window(
+                hash!(),
+                &world_camera,
+                vec2(click_node.pt.x - 350., click_node.pt.y),
+                vec2(300., 200.),
+                |ui| {
+                    match &click_node.data {
+                        NodeKind::BCNode(node) => {
+                            ui.label(None, &format!("Hash: {}", node.hash));
+                        }
+
+                        NodeKind::BFTNode(node) => {
+                            ui.label(None, &node.text);
+                        }
+                    }
+                }
+            );
         }
 
         // ALT: EoA
