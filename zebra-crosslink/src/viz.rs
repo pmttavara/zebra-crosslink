@@ -9,7 +9,7 @@ use macroquad::{
     shapes::{self, draw_triangle},
     text::{self, TextDimensions, TextParams},
     time,
-    ui::{self, hash, root_ui},
+    ui::{self, hash, root_ui, widgets},
     window,
 };
 use std::sync::Arc;
@@ -271,6 +271,10 @@ fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
     }
 }
 
+fn make_circle(pt: Vec2, rad: f32) -> Circle {
+    Circle{ x: pt.x, y: pt.y, r: rad }
+}
+
 // This exists because the existing [`Circle::scale`] mutates in place
 fn circle_scale(circle: Circle, scale: f32) -> Circle {
     Circle {
@@ -288,6 +292,16 @@ fn ui_camera_window<F: FnOnce(&mut ui::Ui)>(
     f: F,
 ) -> bool {
     root_ui().move_window(id, camera.world_to_screen(world_pt));
+    root_ui().window(id, vec2(0., 0.), size, f)
+}
+
+fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
+    id: ui::Id,
+    screen_pt: Vec2,
+    size: Vec2,
+    f: F,
+) -> bool {
+    root_ui().move_window(id, screen_pt);
     root_ui().window(id, vec2(0., 0.), size, f)
 }
 
@@ -324,7 +338,15 @@ async fn viz_main(
     let mut click_node_i: NodeRef = None;
     let font_size = 20.;
 
+    let editbox_style = root_ui().style_builder().font_size(font_size as u16).build();
+    let skin = ui::Skin {
+        editbox_style,
+        ..root_ui().default_skin()
+    };
+    root_ui().push_skin(&skin);
+
     let mut edit_str = String::new();
+    let mut bg_col = DARKBLUE;
 
     loop {
         // TFL DATA ////////////////////////////////////////
@@ -419,7 +441,7 @@ async fn viz_main(
             let (scroll_x, scroll_y) = mouse_wheel();
             ctx.screen_vel += vec2(0.3 * scroll_x, 0.3 * scroll_y);
 
-            window::clear_background(DARKBLUE);
+            window::clear_background(bg_col);
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
             ctx.screen_vel = ctx.screen_vel.lerp(Vec2::_0, 0.12); // apply friction
         }
@@ -482,6 +504,24 @@ async fn viz_main(
                 ui.label(None, &format!("over: {}", ui.is_mouse_over(mouse_pt)));
                 if ui.button(None, "Click") {
                     // root_ui().button(None, "Clicked");
+                }
+            },
+        );
+
+        let text_size = vec2(15. * font_size, 1.2 * font_size);
+        let text_wnd_size = text_size + vec2(0., 5.);
+        ui_dynamic_window(
+            hash!(),
+            vec2(0.5 * font_size, window::screen_height() - (text_wnd_size.y + 0.5 * font_size)),
+            text_wnd_size,
+            |ui| {
+                if widgets::Editbox::new(hash!(), text_size)
+                    .multiline(false)
+                    .ui(ui, &mut edit_str) &&
+                    (is_key_pressed(KeyCode::Enter) ||
+                     is_key_pressed(KeyCode::KpEnter))
+                {
+                    bg_col = if bg_col == RED { DARKBLUE } else { RED };
                 }
             },
         );
