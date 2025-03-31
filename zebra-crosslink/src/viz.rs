@@ -131,6 +131,7 @@ struct BCNode {
 struct BFTNode {
     height: u32,
     text: String,
+    final_bc: NodeRef,
     // ...
 }
 
@@ -175,10 +176,10 @@ fn find_bc_node_by_hash(nodes: &[Node], hash: BlockHash) -> Option<&Node> {
         })
 }
 
-fn find_bc_node_by_height(nodes: &[Node], height: BlockHeight) -> Option<&Node> {
+fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     nodes
         .iter()
-        .find(|node| match &node.data {
+        .position(|node| match &node.data {
             NodeKind::BCNode(node) => node.height == height,
             _ => false,
         })
@@ -238,6 +239,20 @@ fn draw_ring(circle: Circle, thick: f32, thick_ratio: f32, col: color::Color) {
     let r = circle.r - thick_ratio * thick;
     shapes::draw_arc(circle.x, circle.y, sides_n, r, 0., thick, 360.0, col)
 }
+
+fn draw_arrow(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color::Color) {
+    let dir = (end_pt - bgn_pt).normalize_or_zero();
+    let line_end_pt = end_pt - dir * head_size;
+    let perp = dir.perp() * 0.5 * head_size;
+    draw_line(bgn_pt, line_end_pt, thick, col);
+    draw_triangle(
+        end_pt,
+        line_end_pt + perp,
+        line_end_pt - perp,
+        col,
+    );
+}
+
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
     text::draw_text(text, pt.x, pt.y, font_size, col)
 }
@@ -306,13 +321,9 @@ fn draw_text_align(
     )
 }
 
-/// Currently only offsets in y; TODO: offset in arbitrary dimensions
+/// assumes point is outside circle
 fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
-    if pt.y < c.y {
-        vec2(c.x, c.y - c.r)
-    } else {
-        vec2(c.x, c.y + c.r)
-    }
+    c.point().move_towards(pt, c.r)
 }
 
 fn make_circle(pt: Vec2, rad: f32) -> Circle {
@@ -398,7 +409,8 @@ async fn viz_main(
     };
     root_ui().push_skin(&skin);
 
-    let mut edit_str = String::new();
+    let mut node_str = String::new();
+    let mut target_bc_str = String::new();
     let bg_col = DARKBLUE;
 
     loop {
@@ -552,7 +564,9 @@ async fn viz_main(
         );
 
         let text_size = vec2(15. * font_size, 1.2 * font_size);
-        let text_wnd_size = text_size + vec2(0., 5.);
+        let bc_i_size = vec2(4. * font_size, text_size.y);
+        // TODO: is there a nicer way of sizing windows to multiple items?
+        let text_wnd_size = text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -561,11 +575,20 @@ async fn viz_main(
             ),
             text_wnd_size,
             |ui| {
-                if widgets::Editbox::new(hash!(), text_size)
+                let mut enter_pressed = false;
+                enter_pressed |= widgets::Editbox::new(hash!(), text_size)
                     .multiline(false)
-                    .ui(ui, &mut edit_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
-                {
+                    .ui(ui, &mut node_str)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+
+                ui.same_line(text_size.x + font_size);
+
+                enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
+                    .multiline(false)
+                    .ui(ui, &mut target_bc_str)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+
+                if enter_pressed {
                     nodes.push(Node {
                         // TODO: distance should be proportional to difficulty of newer block
                         parent: bft_parent,
@@ -574,7 +597,15 @@ async fn viz_main(
                         // could overlay internal circle/rings for shielded/transparent
                         rad: 10.,
                         data: NodeKind::BFTNode(BFTNode {
-                            text: edit_str.clone(),
+                            text: node_str.clone(),
+                            final_bc: {
+                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                if let Some(bc_i) = bc {
+                                    find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                                } else {
+                                    None
+                                }
+                            },
                             height: bft_parent.map_or(0, |i| {
                                 if let NodeKind::BFTNode(parent_data) = &nodes[i].data {
                                     parent_data.height + 1
@@ -586,7 +617,8 @@ async fn viz_main(
                     });
                     bft_parent = Some(nodes.len() - 1);
 
-                    edit_str = "".to_string();
+                    node_str = "".to_string();
+                    target_bc_str = "".to_string();
                 }
             },
         );
@@ -646,19 +678,9 @@ async fn viz_main(
             if let Some(parent_i) = node.parent {
                 let parent_circle = nodes[parent_i].circle();
                 // draw arrow
-                let arrow_bgn_pt = pt_on_circle_edge(parent_circle, circle.point());
-                let arrow_end_pt = pt_on_circle_edge(circle, parent_circle.point());
-                let line_thick = 2.;
-                let arrow_size = 9.;
-                let arrow_col = GRAY;
-                let line_bgn_pt = arrow_bgn_pt - vec2(0., arrow_size);
-                draw_line(line_bgn_pt, arrow_end_pt, line_thick, arrow_col);
-                draw_triangle(
-                    arrow_bgn_pt,
-                    line_bgn_pt + vec2(0.5 * arrow_size, 0.),
-                    line_bgn_pt - vec2(0.5 * arrow_size, 0.),
-                    arrow_col,
-                );
+                let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
+                let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
+                draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
             }
 
             let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
@@ -721,6 +743,14 @@ async fn viz_main(
                         WHITE,
                         vec2(0., 0.5),
                     );
+
+                    if let Some(final_bc) = bft_node.final_bc {
+                        let bc_circle = nodes[final_bc].circle();
+                        // draw arrow
+                        let arrow_bgn_pt = pt_on_circle_edge(circle, bc_circle.point());
+                        let arrow_end_pt = pt_on_circle_edge(bc_circle, circle.point());
+                        draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
+                    }
                 }
             }
         }
