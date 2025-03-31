@@ -157,6 +157,42 @@ impl Node {
     }
 }
 
+fn find_bc_node_by_data<'a>(nodes: &'a[Node], new_node: &BCNode) -> Option<&'a Node> {
+    nodes
+        .iter()
+        .find(|node| match &node.data {
+            NodeKind::BCNode(node) => *node == *new_node,
+            _ => false,
+        })
+}
+
+fn find_bc_node_by_hash(nodes: &[Node], hash: BlockHash) -> Option<&Node> {
+    nodes
+        .iter()
+        .find(|node| match &node.data {
+            NodeKind::BCNode(node) => node.hash == hash,
+            _ => false,
+        })
+}
+
+fn find_bc_node_by_height(nodes: &[Node], height: BlockHeight) -> Option<&Node> {
+    nodes
+        .iter()
+        .find(|node| match &node.data {
+            NodeKind::BCNode(node) => node.height == height,
+            _ => false,
+        })
+}
+
+fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
+    nodes
+        .iter()
+        .find(|node| match &node.data {
+            NodeKind::BFTNode(node) => node.height == height,
+            _ => false,
+        })
+}
+
 #[derive(Debug)]
 enum MouseDrag {
     Nil,
@@ -386,13 +422,7 @@ async fn viz_main(
             };
 
             // TODO: extract impl Eq for Node
-            if nodes
-                .iter()
-                .find(|node| match &node.data {
-                    NodeKind::BCNode(node) => *node == new_node,
-                    _ => false,
-                })
-                .is_none()
+            if find_bc_node_by_data(nodes, &new_node).is_none()
             {
                 nodes.push(Node {
                     // TODO: distance should be proportional to difficulty of newer block
