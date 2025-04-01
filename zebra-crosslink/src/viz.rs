@@ -14,6 +14,7 @@ use macroquad::{
 };
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use zebra_chain::work::difficulty::Work;
 
 // consistent zero-initializers
 // TODO: create a derive macro
@@ -151,6 +152,8 @@ struct Node {
     text: String,
     hash: Option<[u8; 32]>,
     height: u32,
+    work: Option<Work>,
+    txs_n: u32, // N.B. includes coinbase
 
     // presentation
     pt: Vec2,
@@ -166,7 +169,6 @@ impl Node {
         self.hash.map(|hash| BlockHash(hash).to_string())
     }
 }
-
 
 trait ByHandle<T, H> {
     fn get_by_handle(&self, handle: H) -> Option<&T>
@@ -424,6 +426,8 @@ async fn viz_main(
     let mut target_bc_str = String::new();
     let bg_col = DARKBLUE;
 
+    let mut bc_work_max : u128 = 0;
+
     loop {
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
 
@@ -441,9 +445,21 @@ async fn viz_main(
         // Cache nodes
         // TODO: handle non-contiguous chunks
         for (i, hash) in g.state.hashes.iter().enumerate() {
-            if find_bc_node_by_hash(nodes, &hash).is_none() {
+            if find_bc_node_by_hash(nodes, hash).is_none() {
+                let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
+                    (
+                        block.header.difficulty_threshold.to_work(),
+                        block.transactions.len() as u32,
+                    )
+                });
+
+                let dy = work.map_or(100., |work| {
+                    bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
+
+                    150. * work.as_u128() as f32 / bc_work_max as f32
+                });
+
                 nodes.push(Node {
-                    // TODO: distance should be proportional to difficulty of newer block
                     parent: bc_parent, // TODO: can be implicit...
                     link: None,
 
@@ -451,8 +467,13 @@ async fn viz_main(
                     kind: NodeKind::BC,
                     hash: Some(hash.0),
                     height: g.state.hash_start_height.0 + i as u32,
+                    work,
+                    txs_n,
 
-                    pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., 100.)),
+                    // TODO: dynamically update length
+                    pt: bc_parent.map_or(Vec2::_0, |i| {
+                        nodes[i].pt - vec2(0., dy)
+                    }),
                     // TODO: base rad on num transactions?
                     // could overlay internal circle/rings for shielded/transparent
                     rad: 10.,
@@ -605,11 +626,10 @@ async fn viz_main(
                     nodes.push(Node {
                         // TODO: distance should be proportional to difficulty of newer block
                         parent: bft_parent,
-                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
-                        // TODO: base rad on num transactions?
-                        // could overlay internal circle/rings for shielded/transparent
                         hash: None,
-                        rad: 10.,
+                        work: None,
+                        txs_n: 0,
+
                         kind: NodeKind::BFT,
                         text: node_str.clone(),
                         link: {
@@ -623,6 +643,11 @@ async fn viz_main(
                         height: bft_parent
                             .and_then(|i| nodes.get(i))
                             .map_or(0, |parent| parent.height + 1),
+
+                        // TODO: base rad on num transactions?
+                        // could overlay internal circle/rings for shielded/transparent
+                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
+                        rad: 10.,
                     });
                     bft_parent = Some(nodes.len() - 1);
 
@@ -694,10 +719,12 @@ async fn viz_main(
                     if let Some(hash_str) = click_node.hash_string() {
                         // draw emphasized/deemphasized hash string (unpleasant API!)
                         // TODO: different hash presentations?
-                        let (remain_hash_str, unique_hash_str) = str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+                        let (remain_hash_str, unique_hash_str) =
+                            str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
                         ui.label(None, "Hash: ");
                         ui.push_skin(&ui::Skin {
-                            label_style: ui.style_builder()
+                            label_style: ui
+                                .style_builder()
                                 .font_size(font_size as u16)
                                 .text_color(GRAY)
                                 .build(),
@@ -755,13 +782,15 @@ async fn viz_main(
             }
 
             if let Some(hash_str) = node.hash_string() {
-                let (remain_hash_str, unique_hash_str) = str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+                let (remain_hash_str, unique_hash_str) =
+                    str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
                 // NOTE: we use the full hash string for determining y-alignment
                 // need a single alignment point for baseline, otherwise the difference in heights
                 // between strings will make the baselines mismatch.
                 // TODO: use TextDimensions.offset_y to ensure matching baselines...
                 let text_align_y =
-                    get_text_align_pt(&hash_str[..], vec2(0., circle.y), font_size, vec2(1., 0.4)).y;
+                    get_text_align_pt(&hash_str[..], vec2(0., circle.y), font_size, vec2(1., 0.4))
+                        .y;
 
                 let pt = vec2(circle.x - circle_text_o, text_align_y);
 
