@@ -597,6 +597,7 @@ async fn viz_main(
 
                 enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
                     .multiline(false)
+                    .filter(&|ch| char::is_ascii_digit(&ch))
                     .ui(ui, &mut target_bc_str)
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
@@ -683,7 +684,7 @@ async fn viz_main(
         let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
 
         if let Some(click_node_i) = click_node_i {
-            let click_node = &nodes[click_node_i];
+            let click_node = &mut nodes[click_node_i];
             ui_camera_window(
                 hash!(),
                 &world_camera,
@@ -711,8 +712,8 @@ async fn viz_main(
                         ui.label(None, unique_hash_str);
                     }
 
-                    if click_node.text.len() > 0 {
-                        ui.label(None, &click_node.text);
+                    if click_node.kind == NodeKind::BFT || click_node.text.len() > 0 {
+                        ui.input_text(hash!(), "", &mut click_node.text);
                     }
                 },
             );
