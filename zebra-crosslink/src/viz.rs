@@ -161,6 +161,28 @@ impl Node {
     fn circle(&self) -> Circle {
         Circle::new(self.pt.x, self.pt.y, self.rad)
     }
+
+    fn hash_string(&self) -> Option<String> {
+        self.hash.map(|hash| BlockHash(hash).to_string())
+    }
+}
+
+
+trait ByHandle<T, H> {
+    fn get_by_handle(&self, handle: H) -> Option<&T>
+    where
+        Self: std::marker::Sized;
+}
+
+impl ByHandle<Node, NodeRef> for [Node] {
+    fn get_by_handle(&self, handle: NodeRef) -> Option<&Node> {
+        if let Some(handle) = handle {
+            // TODO: generations
+            self.get(handle)
+        } else {
+            None
+        }
+    }
 }
 
 // TODO: extract impl Eq for Node?
@@ -182,6 +204,9 @@ fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
         .find(|node| node.kind == NodeKind::BFT && node.height == height)
 }
 
+fn str_partition_at(string: &str, at: usize) -> (&str, &str) {
+    (&string[..at], &string[at..])
+}
 #[derive(Debug)]
 enum MouseDrag {
     Nil,
@@ -400,6 +425,8 @@ async fn viz_main(
     let bg_col = DARKBLUE;
 
     loop {
+        let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
+
         // TFL DATA ////////////////////////////////////////
         if tokio_root_thread_handle.is_finished() {
             break Ok(());
@@ -652,17 +679,36 @@ async fn viz_main(
             click_node_i = hover_node_i;
         }
 
+        // TODO: handle properly with new node structure
+        let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
+
         if let Some(click_node_i) = click_node_i {
             let click_node = &nodes[click_node_i];
             ui_camera_window(
                 hash!(),
                 &world_camera,
                 vec2(click_node.pt.x - 350., click_node.pt.y),
-                vec2(300., 200.),
+                vec2(72. * ch_w, 200.),
                 |ui| {
-                    if let Some(hash) = click_node.hash {
+                    if let Some(hash_str) = click_node.hash_string() {
+                        // draw emphasized/deemphasized hash string (unpleasant API!)
                         // TODO: different hash presentations?
-                        ui.label(None, &format!("Hash: {}", BlockHash(hash)));
+                        let (remain_hash_str, unique_hash_str) = str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+                        ui.label(None, "Hash: ");
+                        ui.push_skin(&ui::Skin {
+                            label_style: ui.style_builder()
+                                .font_size(font_size as u16)
+                                .text_color(GRAY)
+                                .build(),
+                            ..skin.clone()
+                        });
+                        ui.same_line(0.);
+                        ui.label(None, remain_hash_str);
+                        ui.pop_skin();
+
+                        // NOTE: unfortunately this sometimes offsets the text!
+                        ui.same_line(0.);
+                        ui.label(None, unique_hash_str);
                     }
 
                     if click_node.text.len() > 0 {
@@ -697,8 +743,6 @@ async fn viz_main(
             }; // TODO: depend on finality
             draw_circle(circle, col);
 
-            // TODO: handle properly with new node structure
-            let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
             let circle_text_o = circle.r + 10.;
 
             if let Some(link) = node.link {
@@ -709,47 +753,41 @@ async fn viz_main(
                 draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
             }
 
-            match node.kind {
-                NodeKind::BC => {
-                    let hash = BlockHash(node.hash.expect("BC should have a hash"));
-                    let hash_str = &hash.to_string()[..];
-                    let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
-                    let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
+            if let Some(hash_str) = node.hash_string() {
+                let (remain_hash_str, unique_hash_str) = str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+                // NOTE: we use the full hash string for determining y-alignment
+                // need a single alignment point for baseline, otherwise the difference in heights
+                // between strings will make the baselines mismatch.
+                // TODO: use TextDimensions.offset_y to ensure matching baselines...
+                let text_align_y =
+                    get_text_align_pt(&hash_str[..], vec2(0., circle.y), font_size, vec2(1., 0.4)).y;
 
-                    // NOTE: we use the full hash string for determining y-alignment
-                    // need a single alignment point for baseline, otherwise the difference in heights
-                    // between strings will make the baselines mismatch.
-                    // TODO: use TextDimensions.offset_y to ensure matching baselines...
-                    let text_align_y =
-                        get_text_align_pt(hash_str, vec2(0., circle.y), font_size, vec2(1., 0.4)).y;
+                let pt = vec2(circle.x - circle_text_o, text_align_y);
 
-                    let pt = vec2(circle.x - circle_text_o, text_align_y);
+                let text_dims = draw_text_align(
+                    &format!("{} - {}", unique_hash_str, node.height),
+                    pt,
+                    font_size,
+                    WHITE,
+                    vec2(1., 0.),
+                );
+                draw_text_align(
+                    remain_hash_str,
+                    pt - vec2(text_dims.width, 0.),
+                    font_size,
+                    LIGHTGRAY,
+                    vec2(1., 0.),
+                );
+            }
 
-                    let text_dims = draw_text_align(
-                        &format!("{} - {}", unique_hash_str, node.height),
-                        pt,
-                        font_size,
-                        WHITE,
-                        vec2(1., 0.),
-                    );
-                    draw_text_align(
-                        remain_hash_str,
-                        pt - vec2(text_dims.width, 0.),
-                        font_size,
-                        LIGHTGRAY,
-                        vec2(1., 0.),
-                    );
-                }
-
-                NodeKind::BFT => {
-                    draw_text_align(
-                        &format!("{} - {}", node.height, node.text),
-                        vec2(circle.x + circle_text_o, circle.y),
-                        font_size,
-                        WHITE,
-                        vec2(0., 0.5),
-                    );
-                }
+            if node.text.len() > 0 {
+                draw_text_align(
+                    &format!("{} - {}", node.height, node.text),
+                    vec2(circle.x + circle_text_o, circle.y),
+                    font_size,
+                    WHITE,
+                    vec2(0., 0.5),
+                );
             }
         }
 
