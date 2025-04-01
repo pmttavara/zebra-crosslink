@@ -125,7 +125,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             latest_final_block: tfl_handle.internal.lock().await.latest_final_block,
             hash_start_height,
             hashes,
-            blocks
+            blocks,
         };
 
         new_g.state = Arc::new(new_state);
@@ -134,35 +134,27 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct BCNode {
-    height: BlockHeight,
-    hash: BlockHash,
-    // ...
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct BFTNode {
-    height: u32,
-    text: String,
-    final_bc: NodeRef,
-    // ...
-}
-
-#[derive(Clone, Debug)]
 enum NodeKind {
-    BCNode(BCNode),
-    BFTNode(BFTNode),
+    BC,
+    BFT,
 }
 
-type NodeRef = Option<usize>;
+type NodeRef = Option<usize>; // TODO: generational handle
 #[derive(Clone, Debug)]
 struct Node {
-    parent: NodeRef,
+    // structure
+    parent: NodeRef, // TODO: do we need explicit edges?
+    link: NodeRef,
 
+    // data
+    kind: NodeKind,
+    text: String,
+    hash: Option<[u8; 32]>,
+    height: u32,
+
+    // presentation
     pt: Vec2,
     rad: f32,
-
-    data: NodeKind,
 }
 
 impl Node {
@@ -171,40 +163,23 @@ impl Node {
     }
 }
 
-fn find_bc_node_by_data<'a>(nodes: &'a[Node], new_node: &BCNode) -> Option<&'a Node> {
+// TODO: extract impl Eq for Node?
+fn find_bc_node_by_hash<'a>(nodes: &'a [Node], hash: &BlockHash) -> Option<&'a Node> {
     nodes
         .iter()
-        .find(|node| match &node.data {
-            NodeKind::BCNode(node) => *node == *new_node,
-            _ => false,
-        })
-}
-
-fn find_bc_node_by_hash(nodes: &[Node], hash: BlockHash) -> Option<&Node> {
-    nodes
-        .iter()
-        .find(|node| match &node.data {
-            NodeKind::BCNode(node) => node.hash == hash,
-            _ => false,
-        })
+        .find(|node| node.kind == NodeKind::BC && node.hash.as_ref() == Some(&hash.0))
 }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     nodes
         .iter()
-        .position(|node| match &node.data {
-            NodeKind::BCNode(node) => node.height == height,
-            _ => false,
-        })
+        .position(|node| node.kind == NodeKind::BC && node.height == height.0)
 }
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
     nodes
         .iter()
-        .find(|node| match &node.data {
-            NodeKind::BFTNode(node) => node.height == height,
-            _ => false,
-        })
+        .find(|node| node.kind == NodeKind::BFT && node.height == height)
 }
 
 #[derive(Debug)]
@@ -258,12 +233,7 @@ fn draw_arrow(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color
     let line_end_pt = end_pt - dir * head_size;
     let perp = dir.perp() * 0.5 * head_size;
     draw_line(bgn_pt, line_end_pt, thick, col);
-    draw_triangle(
-        end_pt,
-        line_end_pt + perp,
-        line_end_pt - perp,
-        col,
-    );
+    draw_triangle(end_pt, line_end_pt + perp, line_end_pt - perp, col);
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
@@ -444,22 +414,21 @@ async fn viz_main(
         // Cache nodes
         // TODO: handle non-contiguous chunks
         for (i, hash) in g.state.hashes.iter().enumerate() {
-            let new_node = BCNode {
-                height: BlockHeight(g.state.hash_start_height.0 + i as u32),
-                hash: *hash,
-            };
-
-            // TODO: extract impl Eq for Node
-            if find_bc_node_by_data(nodes, &new_node).is_none()
-            {
+            if find_bc_node_by_hash(nodes, &hash).is_none() {
                 nodes.push(Node {
                     // TODO: distance should be proportional to difficulty of newer block
-                    parent: bc_parent,
+                    parent: bc_parent, // TODO: can be implicit...
+                    link: None,
+
+                    text: "".to_string(),
+                    kind: NodeKind::BC,
+                    hash: Some(hash.0),
+                    height: g.state.hash_start_height.0 + i as u32,
+
                     pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., 100.)),
                     // TODO: base rad on num transactions?
                     // could overlay internal circle/rings for shielded/transparent
                     rad: 10.,
-                    data: NodeKind::BCNode(new_node),
                 });
                 bc_parent = Some(nodes.len() - 1);
             }
@@ -611,25 +580,21 @@ async fn viz_main(
                         pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
                         // TODO: base rad on num transactions?
                         // could overlay internal circle/rings for shielded/transparent
+                        hash: None,
                         rad: 10.,
-                        data: NodeKind::BFTNode(BFTNode {
-                            text: node_str.clone(),
-                            final_bc: {
-                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                if let Some(bc_i) = bc {
-                                    find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
-                                } else {
-                                    None
-                                }
-                            },
-                            height: bft_parent.map_or(0, |i| {
-                                if let NodeKind::BFTNode(parent_data) = &nodes[i].data {
-                                    parent_data.height + 1
-                                } else {
-                                    0
-                                }
-                            }),
-                        }),
+                        kind: NodeKind::BFT,
+                        text: node_str.clone(),
+                        link: {
+                            let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                            if let Some(bc_i) = bc {
+                                find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                            } else {
+                                None
+                            }
+                        },
+                        height: bft_parent
+                            .and_then(|i| nodes.get(i))
+                            .map_or(0, |parent| parent.height + 1),
                     });
                     bft_parent = Some(nodes.len() - 1);
 
@@ -695,16 +660,15 @@ async fn viz_main(
                 vec2(click_node.pt.x - 350., click_node.pt.y),
                 vec2(300., 200.),
                 |ui| {
-                    match &click_node.data {
-                        NodeKind::BCNode(node) => {
-                            ui.label(None, &format!("Hash: {}", node.hash));
-                        }
-
-                        NodeKind::BFTNode(node) => {
-                            ui.label(None, &node.text);
-                        }
+                    if let Some(hash) = click_node.hash {
+                        // TODO: different hash presentations?
+                        ui.label(None, &format!("Hash: {}", BlockHash(hash)));
                     }
-                }
+
+                    if click_node.text.len() > 0 {
+                        ui.label(None, &click_node.text);
+                    }
+                },
             );
         }
 
@@ -737,9 +701,18 @@ async fn viz_main(
             let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
             let circle_text_o = circle.r + 10.;
 
-            match &node.data {
-                NodeKind::BCNode(bc_node) => {
-                    let hash_str = &bc_node.hash.to_string()[..];
+            if let Some(link) = node.link {
+                let target = nodes[link].circle();
+                // draw arrow
+                let arrow_bgn_pt = pt_on_circle_edge(circle, target.point());
+                let arrow_end_pt = pt_on_circle_edge(target, circle.point());
+                draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
+            }
+
+            match node.kind {
+                NodeKind::BC => {
+                    let hash = BlockHash(node.hash.expect("BC should have a hash"));
+                    let hash_str = &hash.to_string()[..];
                     let unique_hash_str = &hash_str[hash_str.len() - unique_chars_n..];
                     let remain_hash_str = &hash_str[..hash_str.len() - unique_chars_n];
 
@@ -753,11 +726,7 @@ async fn viz_main(
                     let pt = vec2(circle.x - circle_text_o, text_align_y);
 
                     let text_dims = draw_text_align(
-                        &format!(
-                            "{} - {}",
-                            unique_hash_str,
-                            bc_node.height.0
-                        ),
+                        &format!("{} - {}", unique_hash_str, node.height),
                         pt,
                         font_size,
                         WHITE,
@@ -772,22 +741,14 @@ async fn viz_main(
                     );
                 }
 
-                NodeKind::BFTNode(bft_node) => {
+                NodeKind::BFT => {
                     draw_text_align(
-                        &format!("{} - {}", bft_node.height, bft_node.text),
+                        &format!("{} - {}", node.height, node.text),
                         vec2(circle.x + circle_text_o, circle.y),
                         font_size,
                         WHITE,
                         vec2(0., 0.5),
                     );
-
-                    if let Some(final_bc) = bft_node.final_bc {
-                        let bc_circle = nodes[final_bc].circle();
-                        // draw arrow
-                        let arrow_bgn_pt = pt_on_circle_edge(circle, bc_circle.point());
-                        let arrow_end_pt = pt_on_circle_edge(bc_circle, circle.point());
-                        draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
-                    }
                 }
             }
         }
