@@ -7,7 +7,7 @@ use macroquad::{
     input::*,
     math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
-    telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard },
+    telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard},
     text::{self, TextDimensions, TextParams},
     time,
     ui::{self, hash, root_ui, widgets},
@@ -60,13 +60,19 @@ struct BBox {
 }
 
 impl _0 for BBox {
-    const _0: BBox = BBox { min: Vec2::_0, max: Vec2::_0, };
+    const _0: BBox = BBox {
+        min: Vec2::_0,
+        max: Vec2::_0,
+    };
 }
 
 impl From<Rect> for BBox {
     fn from(rect: Rect) -> Self {
         let min = rect.point();
-        BBox { min, max: min + rect.size()  }
+        BBox {
+            min,
+            max: min + rect.size(),
+        }
     }
 }
 
@@ -102,7 +108,10 @@ fn end_zone(active_depth: u32) {
         // (which we'd get for free if macroquad hadn't made it private!)
         // Almost all uses of this could be on the call stack with location info...
         // Or we could maintain an array/vector.
-        assert_eq!(expected_depth, active_depth, "mismatched telemetry zone begin/end pairs");
+        assert_eq!(
+            expected_depth, active_depth,
+            "mismatched telemetry zone begin/end pairs"
+        );
         PROFILER_ZONE_DEPTH -= 1;
     }
     end_zone_unchecked();
@@ -341,7 +350,13 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
-fn draw_arrow_between_circles(bgn_circle: Circle, end_circle: Circle, thick: f32, head_size: f32, col: color::Color) {
+fn draw_arrow_between_circles(
+    bgn_circle: Circle,
+    end_circle: Circle,
+    thick: f32,
+    head_size: f32,
+    col: color::Color,
+) {
     let arrow_bgn_pt = pt_on_circle_edge(bgn_circle, end_circle.point());
     let arrow_end_pt = pt_on_circle_edge(end_circle, bgn_circle.point());
     draw_arrow(arrow_bgn_pt, arrow_end_pt, thick, head_size, col);
@@ -402,10 +417,20 @@ fn draw_text_align(
     )
 }
 
-fn draw_text_right_align(text: &str, pt: Vec2, font_size: f32, col: color::Color, ch_w: f32) -> TextDimensions {
-    draw_text(text, pt - vec2(ch_w * text.len() as f32, 0.), font_size, col)
+fn draw_text_right_align(
+    text: &str,
+    pt: Vec2,
+    font_size: f32,
+    col: color::Color,
+    ch_w: f32,
+) -> TextDimensions {
+    draw_text(
+        text,
+        pt - vec2(ch_w * text.len() as f32, 0.),
+        font_size,
+        col,
+    )
 }
-
 
 /// assumes point is outside circle
 fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
@@ -502,7 +527,7 @@ async fn viz_main(
     let mut target_bc_str = String::new();
     let bg_col = DARKBLUE;
 
-    let mut bc_work_max : u128 = 0;
+    let mut bc_work_max: u128 = 0;
 
     loop {
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
@@ -551,9 +576,7 @@ async fn viz_main(
                     is_real: true,
 
                     // TODO: dynamically update length
-                    pt: bc_parent.map_or(Vec2::_0, |i| {
-                        nodes[i].pt - vec2(0., dy)
-                    }),
+                    pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
                     // TODO: base rad on num transactions?
                     // could overlay internal circle/rings for shielded/transparent
                     rad: 10.,
@@ -637,11 +660,12 @@ async fn viz_main(
         let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
         let world_bbox = BBox {
             min: world_camera.screen_to_world(Vec2::_0),
-            max: world_camera.screen_to_world(vec2(window::screen_width(), window::screen_height())),
+            max: world_camera
+                .screen_to_world(vec2(window::screen_width(), window::screen_height())),
         };
 
         const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
-        let world_bbox = if  TEST_BBOX {
+        let world_bbox = if TEST_BBOX {
             // test bounding box functionality by shrinking it on screen
             let t = 0.25;
             BBox {
@@ -813,7 +837,9 @@ async fn viz_main(
             mouse_dn_node_i = hover_node_i;
         } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i {
             // node is clicked on
-            if hover_node_i.is_some() && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl)) {
+            if hover_node_i.is_some()
+                && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
+            {
                 let hover_node = &nodes[hover_node_i.unwrap()];
                 nodes.push(Node {
                     parent: hover_node_i,
@@ -927,7 +953,7 @@ async fn viz_main(
                         pt,
                         font_size,
                         WHITE,
-                        ch_w
+                        ch_w,
                     );
                     end_zone(z_get_text_align_1);
                     let z_get_text_align_2 = begin_zone("get_text_align_2");
@@ -936,7 +962,7 @@ async fn viz_main(
                         pt - vec2(text_dims.width, 0.),
                         font_size,
                         LIGHTGRAY,
-                        ch_w
+                        ch_w,
                     );
                     end_zone(z_get_text_align_2);
                 }
@@ -999,7 +1025,7 @@ async fn viz_main(
         }
 
         macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
-            fps_counter_pos: vec2(window::screen_width() - 120., 10.)
+            fps_counter_pos: vec2(window::screen_width() - 120., 10.),
         });
 
         // TODO: if is_quit_requested() { send message for tokio to quit, then join }
