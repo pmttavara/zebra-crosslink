@@ -1222,6 +1222,7 @@ impl DiskDb {
                 "assuming the open file limit is high enough for Zebra",
             );
         } else {
+            /* These info prints are spammy.
             #[cfg(not(test))]
             info!(
                 ?current_limit,
@@ -1236,6 +1237,7 @@ impl DiskDb {
                 ideal_limit = ?DiskDb::IDEAL_OPEN_FILE_LIMIT,
                 "the open file limit is high enough for Zebra",
             );
+            */
         }
 
         current_limit
