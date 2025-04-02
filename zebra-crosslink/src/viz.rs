@@ -575,11 +575,11 @@ async fn viz_main(
                     txs_n,
                     is_real: true,
 
-                    // TODO: dynamically update length
+                    // TODO: dynamically update length & rad
                     pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
-                    // TODO: base rad on num transactions?
-                    // could overlay internal circle/rings for shielded/transparent
-                    rad: 10.,
+                    // TODO: could overlay internal circle/rings for shielded/transparent
+                    // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+                    rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                 });
                 bc_parent = Some(nodes.len() - 1);
             }
@@ -900,6 +900,10 @@ async fn viz_main(
 
                     if click_node.kind == NodeKind::BFT || click_node.text.len() > 0 {
                         ui.input_text(hash!(), "", &mut click_node.text);
+                    }
+
+                    if click_node.txs_n > 0 {
+                        ui.label(None, &format!("Transactions: {}", click_node.txs_n));
                     }
                 },
             );
