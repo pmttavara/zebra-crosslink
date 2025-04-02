@@ -190,7 +190,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum NodeKind {
     BC,
     BFT,
@@ -210,6 +210,8 @@ struct Node {
     height: u32,
     work: Option<Work>,
     txs_n: u32, // N.B. includes coinbase
+
+    is_real: bool,
 
     // presentation
     pt: Vec2,
@@ -546,6 +548,7 @@ async fn viz_main(
                     height: g.state.hash_start_height.0 + i as u32,
                     work,
                     txs_n,
+                    is_real: true,
 
                     // TODO: dynamically update length
                     pt: bc_parent.map_or(Vec2::_0, |i| {
@@ -736,6 +739,7 @@ async fn viz_main(
                         hash: None,
                         work: None,
                         txs_n: 0,
+                        is_real: false,
 
                         kind: NodeKind::BFT,
                         text: node_str.clone(),
@@ -809,7 +813,27 @@ async fn viz_main(
             mouse_dn_node_i = hover_node_i;
         } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i {
             // node is clicked on
-            click_node_i = hover_node_i;
+            if hover_node_i.is_some() && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl)) {
+                let hover_node = &nodes[hover_node_i.unwrap()];
+                nodes.push(Node {
+                    parent: hover_node_i,
+                    link: None,
+
+                    kind: hover_node.kind,
+                    height: hover_node.height + 1,
+
+                    text: "".to_string(),
+                    hash: None,
+                    is_real: false,
+                    work: None,
+                    txs_n: 0,
+
+                    pt: vec2(hover_node.pt.x, hover_node.pt.y - 100.),
+                    rad: 10.,
+                });
+            } else {
+                click_node_i = hover_node_i;
+            }
         }
 
         // TODO: handle properly with new node structure
