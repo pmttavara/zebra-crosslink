@@ -41,12 +41,14 @@ rand = "0.8"
 serde_json = "1.0"
 sha3 = "0.10"
 
+static_assertions = { workspace = true }
+
 macroquad = { version = "0.4.14", optional = true }
-# TODO: macroquad-profiler
+macroquad-profiler = { version = "0.2.0", optional = true }
 
 [features]
 default = ["viz_gui"]
-viz_gui = ["macroquad"]
+viz_gui = ["macroquad", "macroquad-profiler"]
 
 [dependencies.malachitebft-app-channel]
 version = "0.0.1"

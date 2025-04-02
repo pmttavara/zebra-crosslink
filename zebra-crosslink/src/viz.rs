@@ -7,6 +7,7 @@ use macroquad::{
     input::*,
     math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
+    telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard },
     text::{self, TextDimensions, TextParams},
     time,
     ui::{self, hash, root_ui, widgets},
@@ -50,6 +51,33 @@ impl Unit for Rect {
 }
 impl Unit for Circle {
     const UNIT: Circle = Circle::new(0., 0., 1.);
+}
+
+// NOTE: the telemetry profiler uses a mutable global like this; we're
+//       continuing the pattern rather than adding a new approach.
+static mut PROFILER_ZONE_DEPTH: u32 = 0;
+
+#[allow(unsafe_code)]
+fn begin_zone(name: &str) -> u32 {
+    telemetry::begin_zone(name);
+    unsafe {
+        PROFILER_ZONE_DEPTH += 1;
+        PROFILER_ZONE_DEPTH
+    }
+}
+
+#[allow(unsafe_code)]
+fn end_zone(active_depth: u32) {
+    unsafe {
+        let expected_depth = PROFILER_ZONE_DEPTH;
+        // TODO: could maintain additional stack info to help diagnose mismatch
+        // (which we'd get for free if macroquad hadn't made it private!)
+        // Almost all uses of this could be on the call stack with location info...
+        // Or we could maintain an array/vector.
+        assert_eq!(expected_depth, active_depth, "mismatched telemetry zone begin/end pairs");
+        PROFILER_ZONE_DEPTH -= 1;
+    }
+    end_zone_unchecked();
 }
 
 // TODO
@@ -166,6 +194,7 @@ impl Node {
     }
 
     fn hash_string(&self) -> Option<String> {
+        let _z = ZoneGuard::new("hash_string()");
         self.hash.map(|hash| BlockHash(hash).to_string())
     }
 }
@@ -189,18 +218,21 @@ impl ByHandle<Node, NodeRef> for [Node] {
 
 // TODO: extract impl Eq for Node?
 fn find_bc_node_by_hash<'a>(nodes: &'a [Node], hash: &BlockHash) -> Option<&'a Node> {
+    let _z = ZoneGuard::new("find_bc_node_by_hash");
     nodes
         .iter()
         .find(|node| node.kind == NodeKind::BC && node.hash.as_ref() == Some(&hash.0))
 }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
+    let _z = ZoneGuard::new("find_bc_node_i_by_height");
     nodes
         .iter()
         .position(|node| node.kind == NodeKind::BC && node.height == height.0)
 }
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
+    let _z = ZoneGuard::new("find_bft_node_by_height");
     nodes
         .iter()
         .find(|node| node.kind == NodeKind::BFT && node.height == height)
@@ -444,7 +476,10 @@ async fn viz_main(
 
         // Cache nodes
         // TODO: handle non-contiguous chunks
+        let z_cache_blocks = begin_zone("cache blocks");
         for (i, hash) in g.state.hashes.iter().enumerate() {
+            let _z = ZoneGuard::new("cache block");
+
             if find_bc_node_by_hash(nodes, hash).is_none() {
                 let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
                     (
@@ -481,6 +516,7 @@ async fn viz_main(
                 bc_parent = Some(nodes.len() - 1);
             }
         }
+        end_zone(z_cache_blocks);
 
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
@@ -709,6 +745,8 @@ async fn viz_main(
         let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
 
         if let Some(click_node_i) = click_node_i {
+            let _z = ZoneGuard::new("click node UI");
+
             let click_node = &mut nodes[click_node_i];
             ui_camera_window(
                 hash!(),
@@ -747,7 +785,11 @@ async fn viz_main(
         }
 
         // ALT: EoA
+        let z_draw_nodes = begin_zone("draw nodes");
         for (i, node) in nodes.iter().enumerate() {
+            let _z = ZoneGuard::new("draw node");
+
+            let z_draw_node_shapes = begin_zone("draw node shapes");
             // NOTE: grows *upwards*
             let circle = node.circle();
             if let Some(parent_i) = node.parent {
@@ -780,20 +822,27 @@ async fn viz_main(
                 let arrow_end_pt = pt_on_circle_edge(target, circle.point());
                 draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
             }
+            end_zone(z_draw_node_shapes);
 
+            let z_hash_string = begin_zone("hash string");
             if let Some(hash_str) = node.hash_string() {
+                let z_str_partition_at = begin_zone("str_partition_at");
                 let (remain_hash_str, unique_hash_str) =
                     str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+                end_zone(z_str_partition_at);
                 // NOTE: we use the full hash string for determining y-alignment
                 // need a single alignment point for baseline, otherwise the difference in heights
                 // between strings will make the baselines mismatch.
                 // TODO: use TextDimensions.offset_y to ensure matching baselines...
+                let z_get_text_align = begin_zone("get_text_align");
                 let text_align_y =
                     get_text_align_pt(&hash_str[..], vec2(0., circle.y), font_size, vec2(1., 0.4))
                         .y;
+                end_zone(z_get_text_align);
 
                 let pt = vec2(circle.x - circle_text_o, text_align_y);
 
+                let z_get_text_align_1 = begin_zone("get_text_align_1");
                 let text_dims = draw_text_align(
                     &format!("{} - {}", unique_hash_str, node.height),
                     pt,
@@ -801,6 +850,8 @@ async fn viz_main(
                     WHITE,
                     vec2(1., 0.),
                 );
+                end_zone(z_get_text_align_1);
+                let z_get_text_align_2 = begin_zone("get_text_align_2");
                 draw_text_align(
                     remain_hash_str,
                     pt - vec2(text_dims.width, 0.),
@@ -808,8 +859,11 @@ async fn viz_main(
                     LIGHTGRAY,
                     vec2(1., 0.),
                 );
+                end_zone(z_get_text_align_2);
             }
+            end_zone(z_hash_string);
 
+            let z_node_text = begin_zone("node text");
             if node.text.len() > 0 {
                 draw_text_align(
                     &format!("{} - {}", node.height, node.text),
@@ -819,7 +873,9 @@ async fn viz_main(
                     vec2(0., 0.5),
                 );
             }
+            end_zone(z_node_text);
         }
+        end_zone(z_draw_nodes);
 
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
@@ -861,6 +917,10 @@ async fn viz_main(
                 WHITE,
             );
         }
+
+        macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
+            fps_counter_pos: vec2(window::screen_width() - 120., 10.)
+        });
 
         // TODO: if is_quit_requested() { send message for tokio to quit, then join }
         ctx.old_mouse_pt = mouse_pt;
