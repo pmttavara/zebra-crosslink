@@ -1013,6 +1013,19 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
     let config = window::Conf {
         window_title: "Zcash blocks".to_owned(),
         fullscreen: false,
+        icon: Some({
+            let png_bytes = include_bytes!("../../book/theme/favicon.png");
+            let png =
+                image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
+            let icon16 = png.thumbnail_exact(16, 16);
+            let icon32 = png.thumbnail_exact(32, 32);
+            let icon64 = png.thumbnail_exact(64, 64);
+            miniquad::conf::Icon {
+                small: icon16.as_bytes().try_into().expect("correct size"),
+                medium: icon32.as_bytes().try_into().expect("correct size"),
+                big: icon64.as_bytes().try_into().expect("correct size"),
+            }
+        }),
         ..Default::default()
     };
     macroquad::Window::from_config(config, async {
