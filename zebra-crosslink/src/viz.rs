@@ -363,6 +363,11 @@ fn draw_text_align(
     )
 }
 
+fn draw_text_right_align(text: &str, pt: Vec2, font_size: f32, col: color::Color, ch_w: f32) -> TextDimensions {
+    draw_text(text, pt - vec2(ch_w * text.len() as f32, 0.), font_size, col)
+}
+
+
 /// assumes point is outside circle
 fn pt_on_circle_edge(c: Circle, pt: Vec2) -> Vec2 {
     c.point().move_towards(pt, c.r)
@@ -826,38 +831,27 @@ async fn viz_main(
 
             let z_hash_string = begin_zone("hash string");
             if let Some(hash_str) = node.hash_string() {
-                let z_str_partition_at = begin_zone("str_partition_at");
                 let (remain_hash_str, unique_hash_str) =
                     str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
-                end_zone(z_str_partition_at);
-                // NOTE: we use the full hash string for determining y-alignment
-                // need a single alignment point for baseline, otherwise the difference in heights
-                // between strings will make the baselines mismatch.
-                // TODO: use TextDimensions.offset_y to ensure matching baselines...
-                let z_get_text_align = begin_zone("get_text_align");
-                let text_align_y =
-                    get_text_align_pt(&hash_str[..], vec2(0., circle.y), font_size, vec2(1., 0.4))
-                        .y;
-                end_zone(z_get_text_align);
 
-                let pt = vec2(circle.x - circle_text_o, text_align_y);
+                let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
 
                 let z_get_text_align_1 = begin_zone("get_text_align_1");
-                let text_dims = draw_text_align(
+                let text_dims = draw_text_right_align(
                     &format!("{} - {}", unique_hash_str, node.height),
                     pt,
                     font_size,
                     WHITE,
-                    vec2(1., 0.),
+                    ch_w
                 );
                 end_zone(z_get_text_align_1);
                 let z_get_text_align_2 = begin_zone("get_text_align_2");
-                draw_text_align(
+                draw_text_right_align(
                     remain_hash_str,
                     pt - vec2(text_dims.width, 0.),
                     font_size,
                     LIGHTGRAY,
-                    vec2(1., 0.),
+                    ch_w
                 );
                 end_zone(z_get_text_align_2);
             }
