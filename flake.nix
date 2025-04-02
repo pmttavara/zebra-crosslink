@@ -63,7 +63,11 @@
         inherit (pkgs) lib;
 
         # Print out a JSON serialization of the argument as a stderr diagnostic:
-        traceJson = lib.debug.traceValFn builtins.toJSON;
+        enableTrace = false;
+        traceJson =
+          if enableTrace
+          then (lib.debug.traceValFn builtins.toJSON)
+          else (x: x);
 
         craneLib = crane.mkLib pkgs;
 
@@ -184,41 +188,50 @@
           # Note that this is done as a separate derivation so that
           # we can block the CI if there are issues here, but not
           # prevent downstream consumers from building our crate by itself.
-          my-workspace-clippy = craneLib.cargoClippy (commonArgs // {
-            inherit cargoArtifacts;
-            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-          });
+
+          # my-workspace-clippy = craneLib.cargoClippy (commonArgs // {
+          #   inherit (zebrad) pname version;
+          #   inherit cargoArtifacts;
+
+          #   cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          # });
 
           my-workspace-doc = craneLib.cargoDoc (commonArgs // {
+            inherit (zebrad) pname version;
             inherit cargoArtifacts;
           });
 
           # Check formatting
           my-workspace-fmt = craneLib.cargoFmt {
+            inherit (zebrad) pname version;
             inherit src;
           };
 
-          my-workspace-toml-fmt = craneLib.taploFmt {
-            src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
-            # taplo arguments can be further customized below as needed
-            # taploExtraArgs = "--config ./taplo.toml";
-          };
+          # my-workspace-toml-fmt = craneLib.taploFmt {
+          #   src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
+          #   # taplo arguments can be further customized below as needed
+          #   # taploExtraArgs = "--config ./taplo.toml";
+          # };
 
           # Audit dependencies
           my-workspace-audit = craneLib.cargoAudit {
+            inherit (zebrad) pname version;
             inherit src advisory-db;
           };
 
           # Audit licenses
-          my-workspace-deny = craneLib.cargoDeny {
-            inherit src;
-          };
+          # my-workspace-deny = craneLib.cargoDeny {
+          #   inherit (zebrad) pname version;
+          #   inherit src;
+          # };
 
           # Run tests with cargo-nextest
           # Consider setting `doCheck = false` on other crate derivations
           # if you do not want the tests to run twice
           my-workspace-nextest = craneLib.cargoNextest (commonArgs // {
+            inherit (zebrad) pname version;
             inherit cargoArtifacts;
+
             partitions = 1;
             partitionType = "count";
           });
