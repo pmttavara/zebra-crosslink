@@ -339,6 +339,12 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
+fn draw_arrow_between_circles(bgn_circle: Circle, end_circle: Circle, thick: f32, head_size: f32, col: color::Color) {
+    let arrow_bgn_pt = pt_on_circle_edge(bgn_circle, end_circle.point());
+    let arrow_end_pt = pt_on_circle_edge(end_circle, bgn_circle.point());
+    draw_arrow(arrow_bgn_pt, arrow_end_pt, thick, head_size, col);
+}
+
 /// `align` {0..=1, 0..=1} determines which point on the text's bounding box will be placed at `pt`
 /// - Bottom-left (normal text) is {0,0}
 /// - Bottom-right (right-aligned) is {1,0}
@@ -861,18 +867,10 @@ async fn viz_main(
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent_i) = node.parent {
-                    let parent_circle = nodes[parent_i].circle();
-                    // draw arrow
-                    let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
-                    let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
-                    draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
+                    draw_arrow_between_circles(circle, nodes[parent_i].circle(), 2., 9., GRAY);
                 };
-                if let Some(link_i) = node.link {
-                    let parent_circle = nodes[link_i].circle();
-                    // draw arrow
-                    let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
-                    let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
-                    draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
+                if let Some(link) = node.link {
+                    draw_arrow_between_circles(circle, nodes[link].circle(), 2., 9., PINK);
                 }
             }
 
