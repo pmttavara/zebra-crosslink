@@ -53,6 +53,34 @@ impl Unit for Circle {
     const UNIT: Circle = Circle::new(0., 0., 1.);
 }
 
+#[derive(Debug, Copy, Clone)]
+struct BBox {
+    min: Vec2,
+    max: Vec2,
+}
+
+impl _0 for BBox {
+    const _0: BBox = BBox { min: Vec2::_0, max: Vec2::_0, };
+}
+
+impl From<Rect> for BBox {
+    fn from(rect: Rect) -> Self {
+        let min = rect.point();
+        BBox { min, max: min + rect.size()  }
+    }
+}
+
+impl From<BBox> for Rect {
+    fn from(bbox: BBox) -> Self {
+        Rect {
+            x: bbox.min.x,
+            y: bbox.min.y,
+            w: bbox.max.x - bbox.min.x,
+            h: bbox.max.y - bbox.min.y,
+        }
+    }
+}
+
 // NOTE: the telemetry profiler uses a mutable global like this; we're
 //       continuing the pattern rather than adding a new approach.
 static mut PROFILER_ZONE_DEPTH: u32 = 0;
@@ -272,6 +300,9 @@ fn draw_vertical_line(x: f32, stroke_thickness: f32, col: color::Color) {
 }
 fn draw_rect(rect: Rect, col: color::Color) {
     shapes::draw_rectangle(rect.x, rect.y, rect.w, rect.h, col)
+}
+fn draw_rect_lines(rect: Rect, thick: f32, col: color::Color) {
+    shapes::draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, thick, col)
 }
 fn draw_circle(circle: Circle, col: color::Color) {
     let sides_n = 30; // TODO: base on radius
@@ -595,6 +626,35 @@ async fn viz_main(
         };
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
         let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
+        let world_bbox = BBox {
+            min: world_camera.screen_to_world(Vec2::_0),
+            max: world_camera.screen_to_world(vec2(window::screen_width(), window::screen_height())),
+        };
+
+        const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
+        let world_bbox = if  TEST_BBOX {
+            // test bounding box functionality by shrinking it on screen
+            let t = 0.25;
+            BBox {
+                min: Vec2 {
+                    x: world_bbox.min.x.lerp(world_bbox.max.x, t),
+                    y: world_bbox.min.y.lerp(world_bbox.max.y, t),
+                },
+                max: Vec2 {
+                    x: world_bbox.max.x.lerp(world_bbox.min.x, t),
+                    y: world_bbox.max.y.lerp(world_bbox.min.y, t),
+                },
+            }
+        } else {
+            world_bbox
+        };
+        assert!(world_bbox.min.x < world_bbox.max.x);
+        assert!(world_bbox.min.y < world_bbox.max.y);
+        let world_rect = Rect::from(world_bbox);
+
+        if TEST_BBOX {
+            draw_rect_lines(world_rect, 2., MAGENTA);
+        }
 
         ui_camera_window(
             hash!(),
@@ -792,82 +852,86 @@ async fn viz_main(
         // ALT: EoA
         let z_draw_nodes = begin_zone("draw nodes");
         for (i, node) in nodes.iter().enumerate() {
+            // draw nodes that are on-screen
             let _z = ZoneGuard::new("draw node");
-
-            let z_draw_node_shapes = begin_zone("draw node shapes");
             // NOTE: grows *upwards*
             let circle = node.circle();
-            if let Some(parent_i) = node.parent {
-                let parent_circle = nodes[parent_i].circle();
-                // draw arrow
-                let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
-                let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
-                draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
-            }
 
-            let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
-                RED
-            } else if hover_node_i.is_some() && i == hover_node_i.unwrap() {
-                if mouse_l_is_world_down {
-                    YELLOW
-                } else {
-                    SKYBLUE
+            {
+                // TODO: check line->screen intersections
+                let _z = ZoneGuard::new("draw links");
+                if let Some(parent_i) = node.parent {
+                    let parent_circle = nodes[parent_i].circle();
+                    // draw arrow
+                    let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
+                    let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
+                    draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
+                };
+                if let Some(link_i) = node.link {
+                    let parent_circle = nodes[link_i].circle();
+                    // draw arrow
+                    let arrow_bgn_pt = pt_on_circle_edge(circle, parent_circle.point());
+                    let arrow_end_pt = pt_on_circle_edge(parent_circle, circle.point());
+                    draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., GRAY)
                 }
-            } else {
-                WHITE
-            }; // TODO: depend on finality
-            draw_circle(circle, col);
-
-            let circle_text_o = circle.r + 10.;
-
-            if let Some(link) = node.link {
-                let target = nodes[link].circle();
-                // draw arrow
-                let arrow_bgn_pt = pt_on_circle_edge(circle, target.point());
-                let arrow_end_pt = pt_on_circle_edge(target, circle.point());
-                draw_arrow(arrow_bgn_pt, arrow_end_pt, 2., 9., PINK)
             }
-            end_zone(z_draw_node_shapes);
 
-            let z_hash_string = begin_zone("hash string");
-            if let Some(hash_str) = node.hash_string() {
-                let (remain_hash_str, unique_hash_str) =
-                    str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+            if circle.overlaps_rect(&world_rect) {
+                let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
+                    RED
+                } else if hover_node_i.is_some() && i == hover_node_i.unwrap() {
+                    if mouse_l_is_world_down {
+                        YELLOW
+                    } else {
+                        SKYBLUE
+                    }
+                } else {
+                    WHITE
+                }; // TODO: depend on finality
+                draw_circle(circle, col);
 
-                let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+                let circle_text_o = circle.r + 10.;
 
-                let z_get_text_align_1 = begin_zone("get_text_align_1");
-                let text_dims = draw_text_right_align(
-                    &format!("{} - {}", unique_hash_str, node.height),
-                    pt,
-                    font_size,
-                    WHITE,
-                    ch_w
-                );
-                end_zone(z_get_text_align_1);
-                let z_get_text_align_2 = begin_zone("get_text_align_2");
-                draw_text_right_align(
-                    remain_hash_str,
-                    pt - vec2(text_dims.width, 0.),
-                    font_size,
-                    LIGHTGRAY,
-                    ch_w
-                );
-                end_zone(z_get_text_align_2);
+                let z_hash_string = begin_zone("hash string");
+                if let Some(hash_str) = node.hash_string() {
+                    let (remain_hash_str, unique_hash_str) =
+                        str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+
+                    let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+
+                    let z_get_text_align_1 = begin_zone("get_text_align_1");
+                    let text_dims = draw_text_right_align(
+                        &format!("{} - {}", unique_hash_str, node.height),
+                        pt,
+                        font_size,
+                        WHITE,
+                        ch_w
+                    );
+                    end_zone(z_get_text_align_1);
+                    let z_get_text_align_2 = begin_zone("get_text_align_2");
+                    draw_text_right_align(
+                        remain_hash_str,
+                        pt - vec2(text_dims.width, 0.),
+                        font_size,
+                        LIGHTGRAY,
+                        ch_w
+                    );
+                    end_zone(z_get_text_align_2);
+                }
+                end_zone(z_hash_string);
+
+                let z_node_text = begin_zone("node text");
+                if node.text.len() > 0 {
+                    draw_text_align(
+                        &format!("{} - {}", node.height, node.text),
+                        vec2(circle.x + circle_text_o, circle.y),
+                        font_size,
+                        WHITE,
+                        vec2(0., 0.5),
+                    );
+                }
+                end_zone(z_node_text);
             }
-            end_zone(z_hash_string);
-
-            let z_node_text = begin_zone("node text");
-            if node.text.len() > 0 {
-                draw_text_align(
-                    &format!("{} - {}", node.height, node.text),
-                    vec2(circle.x + circle_text_o, circle.y),
-                    font_size,
-                    WHITE,
-                    vec2(0., 0.5),
-                );
-            }
-            end_zone(z_node_text);
         }
         end_zone(z_draw_nodes);
 
