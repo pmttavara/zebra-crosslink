@@ -948,6 +948,20 @@ async fn tfl_set_finality_by_hash(
     }
 }
 
+trait SatSubAffine<D> {
+    fn sat_sub(&self, d: D) -> Self;
+}
+
+/// Saturating subtract: goes to 0 if self < d
+impl SatSubAffine<i32> for BlockHeight {
+    fn sat_sub(&self, d: i32) -> BlockHeight {
+        use std::ops::Sub;
+        use zebra_chain::block::HeightDiff as BlockHeightDiff;
+        self.sub(BlockHeightDiff::from(d)).unwrap_or(BlockHeight(0))
+    }
+}
+
+
 // TODO: handle headers as well?
 // NOTE: this is currently best-chain-only due to request/response limitations
 // TODO: add more request/response pairs directly in zebra-state's ReadStateService
@@ -967,7 +981,7 @@ async fn tfl_block_sequence(
             if include_start_hash {
                 // NOTE: BlockHashes does not return the first hash provided, so we move back 1.
                 //       We would probably also be fine to just push it directly.
-                (Some(height), Some(header.previous_block_hash))
+                (Some(height.sat_sub(1)), Some(header.previous_block_hash))
             } else {
                 (Some(height), Some(start_hash))
             }
