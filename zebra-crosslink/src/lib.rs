@@ -351,7 +351,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
     }
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
-    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!("/ip4/0.0.0.0/tcp/{}", 24834 + temp_peer_id)).unwrap();
+    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!("/ip4/0.0.0.0/udp/{}/quic-v1", 24834 + temp_peer_id)).unwrap();
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
         bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
