@@ -580,17 +580,17 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
         if new_bc_final != current_bc_final {
             info!("final changed to {:?}", new_bc_final);
-            if let Some((_, new_final_hash)) = new_bc_final {
-                let start_hash = if let Some((_, prev_hash)) = current_bc_final {
-                    prev_hash
+            if let Some(new_final_height_hash) = new_bc_final {
+                let start_hash = if let Some(prev_height_hash) = current_bc_final {
+                    prev_height_hash.1
                 } else {
-                    new_final_hash
+                    new_final_height_hash.1
                 };
 
                 let (new_final_blocks, infos) = tfl_block_sequence(
                     &call,
                     start_hash,
-                    Some(new_final_hash),
+                    Some(new_final_height_hash),
                     /*include_start_hash*/ true,
                     true,
                 )
@@ -969,7 +969,7 @@ impl SatSubAffine<i32> for BlockHeight {
 async fn tfl_block_sequence(
     call: &TFLServiceCalls,
     start_hash: BlockHash,
-    final_hash: Option<BlockHash>,
+    final_height_hash: Option<(BlockHeight, BlockHash)>,
     include_start_hash: bool,
     read_extra_info: bool, // NOTE: done here rather than on print to isolate async from sync code
 ) -> (Vec<BlockHash>, Vec<Option<Arc<Block>>>) {
@@ -989,12 +989,12 @@ async fn tfl_block_sequence(
             (None, None)
         }
     };
-    let final_height_hash = if let Some(hash) = final_hash {
-        block_height_hash_from_hash(call, hash).await
+    let (final_height, final_hash) = if let Some((height, hash)) = final_height_hash {
+        (Some(height), Some(hash))
     } else if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
-        val
+        val.unzip()
     } else {
-        None
+        (None, None)
     };
 
     // check validity //////////////////////////////
@@ -1005,11 +1005,11 @@ async fn tfl_block_sequence(
     let start_height = start_height.unwrap();
     let init_hash = init_hash.unwrap();
 
-    if final_height_hash.is_none() {
-        error!(?final_height_hash, "final_hash has invalid height");
+    if final_height.is_none() {
+        error!(?final_height, "final_hash has invalid height");
         return (Vec::new(), Vec::new());
     }
-    let final_height = final_height_hash.unwrap().0;
+    let final_height = final_height.unwrap();
 
     if final_height < start_height {
         error!(?final_height, ?start_height, "final_height < start_height");
@@ -1176,10 +1176,10 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
 async fn tfl_dump_block_sequence(
     call: &TFLServiceCalls,
     start_hash: BlockHash,
-    final_hash: Option<BlockHash>,
+    final_height_hash: Option<(BlockHeight, BlockHash)>,
     include_start_hash: bool,
 ) {
     let (blocks, infos) =
-        tfl_block_sequence(call, start_hash, final_hash, include_start_hash, true).await;
+        tfl_block_sequence(call, start_hash, final_height_hash, include_start_hash, true).await;
     tfl_dump_blocks(&blocks[..], &infos[..]);
 }
