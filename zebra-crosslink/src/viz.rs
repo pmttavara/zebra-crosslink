@@ -125,16 +125,22 @@ fn end_zone(active_depth: u32) {
 // }
 
 struct VizState {
+    // general chain info
     latest_final_block: Option<(BlockHeight, BlockHash)>,
-    hash_start_height: BlockHeight,
+    bc_tip: Option<(BlockHeight, BlockHash)>,
+
+    // requested info
+    lo_height: BlockHeight,
     hashes: Vec<BlockHash>,
     blocks: Vec<Option<Arc<Block>>>,
 }
+
 #[derive(Clone)]
 struct VizGlobals {
     state: std::sync::Arc<VizState>,
     // wanted_height_rng: (u32, u32),
     consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
+    bc_req_h: (i32, i32), // negative implies relative to tip
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
@@ -145,11 +151,13 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
         state: std::sync::Arc::new(VizState {
             latest_final_block: None,
-            hash_start_height: BlockHeight(0),
+            bc_tip: None,
+
+            lo_height: BlockHeight(0),
             hashes: Vec::new(),
             blocks: Vec::new(),
         }),
-        // wanted_height_rng: (0, 0),
+        bc_req_h: (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1),
         consumed: true,
     });
 
@@ -162,34 +170,74 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
-        let (hash_start_height, hashes, blocks) = {
-            use std::ops::Sub;
-            use zebra_chain::block::HeightDiff as BlockHeightDiff;
+        #[allow(clippy::never_loop)]
+        let (lo_height, bc_tip, hashes, blocks) = loop {
+            let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
+            assert!(lo <= hi || (lo >= 0 && hi < 0), "lo ({}) should be below hi ({})", lo, hi);
 
-            if let Ok(ReadStateResponse::Tip(Some((tip_height, _)))) =
-                (call.read_state)(ReadStateRequest::Tip).await
-            {
-                let start_height = tip_height
-                    .sub(BlockHeightDiff::from(zebra_state::MAX_BLOCK_REORG_HEIGHT))
-                    .unwrap_or(BlockHeight(0));
-                if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
-                    (call.read_state)(ReadStateRequest::BlockHeader(start_height.into())).await
+            let tip_height_hash: (BlockHeight, BlockHash) = {
+                if let Ok(ReadStateResponse::Tip(Some(tip_height_hash))) =
+                    (call.read_state)(ReadStateRequest::Tip).await
                 {
-                    let (hashes, blocks) = tfl_block_sequence(&call, hash, None, true, true).await;
-                    (start_height, hashes, blocks)
+                    tip_height_hash
                 } else {
-                    error!("Failed to read start hash");
-                    (BlockHeight(0), Vec::new(), Vec::new())
+                    error!("Failed to read tip");
+                    break (BlockHeight(0), None, Vec::new(), Vec::new());
                 }
+            };
+
+            let (h_lo, h_hi) = (
+                {
+                    if lo >= 0 {
+                        BlockHeight(lo.try_into().unwrap())
+                    } else {
+                        tip_height_hash.0.sat_sub(-lo)
+                    }
+                },
+                {
+                    if hi >= 0 {
+                        BlockHeight(hi.try_into().unwrap())
+                    } else {
+                        tip_height_hash.0.sat_sub(-hi)
+                    }
+                },
+            );
+            assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
+
+            let get_height_hash = async |h: BlockHeight, existing_height_hash: (BlockHeight, BlockHash)| {
+                if h == existing_height_hash.0 {
+                    // avoid duplicating work if we've already got that value
+                    Some(existing_height_hash)
+                } else if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
+                    (call.read_state)(ReadStateRequest::BlockHeader(h.into())).await
+                {
+                    Some((h, hash))
+                } else {
+                    error!("Failed to read block header at height {}", h.0);
+                    None
+                }
+            };
+
+            let hi_height_hash = if let Some(hi_height_hash) = get_height_hash(h_hi, tip_height_hash).await {
+                hi_height_hash
             } else {
-                error!("Failed to read tip");
-                (BlockHeight(0), Vec::new(), Vec::new())
-            }
+                break (BlockHeight(0), None, Vec::new(), Vec::new());
+            };
+
+            let lo_height_hash = if let Some(lo_height_hash) = get_height_hash(h_lo, hi_height_hash).await {
+                lo_height_hash
+            } else {
+                break (BlockHeight(0), None, Vec::new(), Vec::new());
+            };
+
+            let (hashes, blocks) = tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
+            break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
         let new_state = VizState {
             latest_final_block: tfl_handle.internal.lock().await.latest_final_block,
-            hash_start_height,
+            bc_tip,
+            lo_height,
             hashes,
             blocks,
         };
@@ -537,10 +585,14 @@ async fn viz_main(
             break Ok(());
         }
 
+        // TODO: should we move/copy this to the end so that we can overlap frame rendering with
+        // gathering data?
         let g = {
             let mut lock = VIZ_G.lock().unwrap();
+            let g = lock.as_ref().unwrap().clone();
             lock.as_mut().unwrap().consumed = true;
-            lock.as_ref().unwrap().clone()
+            lock.as_mut().unwrap().bc_req_h = (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1);
+            g
         };
 
         // Cache nodes
@@ -570,7 +622,7 @@ async fn viz_main(
                     text: "".to_string(),
                     kind: NodeKind::BC,
                     hash: Some(hash.0),
-                    height: g.state.hash_start_height.0 + i as u32,
+                    height: g.state.lo_height.0 + i as u32,
                     work,
                     txs_n,
                     is_real: true,
