@@ -146,7 +146,7 @@ static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None)
 
 /// Bridge between tokio & viz code
 pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
-    let call = tfl_handle.call;
+    let call = tfl_handle.clone().call;
 
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
         state: std::sync::Arc::new(VizState {
@@ -235,7 +235,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         };
 
         let new_state = VizState {
-            latest_final_block: tfl_handle.internal.lock().await.latest_final_block,
+            latest_final_block: tfl_final_block_height_hash(tfl_handle.clone()).await,
             bc_tip,
             lo_height,
             hashes,
@@ -1099,6 +1099,20 @@ async fn viz_main(
             }
 
             if circle.overlaps_rect(&world_rect) {
+                // node is on screen
+
+                let is_final = if node.kind == NodeKind::BC {
+                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| std::cmp::min(h, node.height)));
+                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| std::cmp::max(h, node.height)));
+                    if let Some((final_h, _)) = g.state.latest_final_block {
+                        node.height <= final_h.0
+                    } else {
+                        false
+                    }
+                } else {
+                    true
+                };
+
                 let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
                     RED
                 } else if hover_node_i.is_some() && i == hover_node_i.unwrap() {
@@ -1110,7 +1124,12 @@ async fn viz_main(
                 } else {
                     WHITE
                 }; // TODO: depend on finality
-                draw_circle(circle, col);
+
+                if is_final {
+                    draw_circle(circle, col);
+                } else {
+                    draw_ring(circle, 3., 1., col);
+                }
 
                 let circle_text_o = circle.r + 10.;
 
