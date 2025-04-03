@@ -1,6 +1,6 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -18,12 +18,16 @@ use async_trait::async_trait;
 use malachitebft_app_channel::app::events::*;
 use malachitebft_app_channel::app::types::core::*;
 use malachitebft_app_channel::app::types::*;
-use malachitebft_app_channel::app::types::config as mconfig;
+use malachitebft_app_channel::app::config as mconfig;
 use malachitebft_app_channel::app::*;
 use malachitebft_test::{
     Address, Ed25519Provider, Genesis, Height as BFTHeight, PrivateKey, PublicKey, TestContext,
-    Validator, ValidatorSet,
+    Validator, ValidatorSet, ProposalPart, ProposalInit, ProposalData, ProposalFin
 };
+use malachitebft_app_channel::app::node::NodeConfig;
+use malachitebft_app_channel::NetworkMsg;
+use tempdir::TempDir;
+use sha3::Digest;
 
 pub mod service;
 pub mod config {
@@ -314,13 +318,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let temp_peer_id : u64 = if let Some(id) = config.node_id {
         id
     } else { rand::random::<u64>() % 100 + 100 };
-    *tpeer_id_for_wal.lock().unwrap() = temp_peer_id;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(temp_peer_id);
     let private_key = PrivateKey::generate(&mut rng);
     let public_key = private_key.public_key();
-    let _address = Address::from_public_key(&public_key);
-    let _signing_provider = Ed25519Provider::new(private_key.clone());
+    let my_address = Address::from_public_key(&public_key);
+    let my_signing_provider = Ed25519Provider::new(private_key.clone());
     let ctx = TestContext::new();
 
     let genesis = Genesis {
@@ -336,7 +339,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
-    let mut bft_config: malachitebft_test_cli::config::Config = Default::default(); // TODO: read from file?
+    let mut bft_config: BFTConfig = Default::default(); // TODO: read from file?
 
     if let Some(addr_str) = config.node_0_ip_endpoint.as_ref() {
         bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
@@ -347,8 +350,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     if let Some(addr_str) = config.node_2_ip_endpoint.as_ref() {
         bft_config.consensus.p2p.persistent_peers.push(Multiaddr::from_str(addr_str).unwrap());
     }
-    bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
-    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!("/ip4/0.0.0.0/udp/{}/quic-v1", 24834 + temp_peer_id)).unwrap();
+    //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
+    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!("/ip4/0.0.0.0/tcp/{}", 24834 + temp_peer_id)).unwrap();
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
         bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
@@ -382,7 +385,10 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut current_bft_proposer = None;
     let mut vote_extensions =
         std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
-    // let mut bft_values           = Vec::<Option<LocallyProposedValue>>::new();
+
+    let mut prev_bft_values = HashMap::<(u64, i64), ProposedValue<TestContext>>::new();
+
+    let mut streams_map = strm::PartStreamsMap::new();
 
     loop {
         tokio::select! {
@@ -398,10 +404,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     BFTAppMsg::ConsensusReady { reply } => {
                         info!("BFT Consensus is ready");
 
-                        if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                                current_bft_height,
-                                genesis.validator_set.clone(),
-                        )).is_err() {
+                        if reply.send((current_bft_height, genesis.validator_set.clone())).is_err() {
                             tracing::error!("Failed to send ConsensusReady reply");
                         }
                     },
@@ -412,12 +415,25 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         height,
                         round,
                         proposer,
+                        reply_value,
                     } => {
                         info!(%height, %round, %proposer, "Started round");
 
                         current_bft_height   = height;
                         current_bft_round    = round;
                         current_bft_proposer = Some(proposer);
+
+                        // If we have already built or seen a value for this height and round,
+                        // send it back to consensus. This may happen when we are restarting after a crash.
+                        if let Some(proposal) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
+                            info!(%height, %round, "Replaying already known proposed value: {}", proposal.value.id());
+
+                            if reply_value.send(Some(proposal.clone())).is_err() {
+                                error!("Failed to send undecided proposal");
+                            }
+                        } else {
+                            let _ = reply_value.send(None);
+                        }
                     },
 
                     // At some point, we may end up being the proposer for that round, and the engine
@@ -425,49 +441,128 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     BFTAppMsg::GetValue {
                         height,
                         round,
-                        timeout: _,
+                        timeout,
                         reply,
                     } => {
-                        info!(%height, %round, "Consensus is requesting a value to propose");
+                        info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
 
-                        // TODO: read from existing
 
-                        // // Check if we have a previously built value for that height and round
-                        // if let Some(proposal) = state.get_previously_built_value(height, round) {
-                        //     info!(value = %proposal.value.id(), "Re-using previously built value");
-
-                        //     if reply.send(proposal).is_err() {
-                        //         tracing::error!("Failed to send GetValue reply");
-                        //     }
-
-                        //     return Ok(());
-                        // }
-
-                        // // Otherwise, propose a new value
-                        // let proposal = state.propose_value(height, round);
-                        //
-
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-
-                        let proposal = LocallyProposedValue::<TestContext> {
-                            value: bft_make_value(&mut rng, &mut vote_extensions, height, round),
-                            height,
-                            round,
+                        // Here it is important that, if we have previously built a value for this height and round,
+                        // we send back the very same value.
+                        let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
+                            info!(value = %val.value.id(), "Re-using previously built value");
+                            val.clone()
+                        } else {
+                            let val = ProposedValue {
+                                height,
+                                round,
+                                valid_round: Round::Nil,
+                                proposer: my_address,
+                                value: malachitebft_test::Value::new(rng.gen_range(100..=100000)),
+                                validity: Validity::Valid,
+                                // extension: None, TODO? "does not have this field"
+                            };
+                            prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
+                            val
                         };
-
-                        // Send it to consensus
-                        if reply.send(proposal.clone()).is_err() {
-                            tracing::error!("Failed to send GetValue reply");
+                        if reply.send(LocallyProposedValue::<TestContext>::new(
+                                proposal.height,
+                                proposal.round,
+                                proposal.value.clone(),
+                            )).is_err() {
+                            error!("Failed to send GetValue reply");
                         }
 
-                        // // Decompose the proposal into proposal parts and stream them over the network
-                        // for stream_message in state.stream_proposal(proposal) {
-                        //     info!(%height, %round, "Streaming proposal part: {stream_message:?}");
-                        //     channels
-                        //         .network
-                        //         .send(malachitebft_app_channel::NetworkMsg::PublishProposalPart(stream_message))
-                        //         .await?;
-                        // }
+                        // The POL round is always nil when we propose a newly built value.
+                        // See L15/L18 of the Tendermint algorithm.
+                        let pol_round = Round::Nil;
+
+                        // NOTE(Sam): I have inlined the code from the example so that we
+                        // can actually see the functionality. I am not sure what the purpose
+                        // of this circus is. Why not just send the value with a simple signature?
+                        // I am sure there is a good reason.
+
+                        let mut hasher = sha3::Keccak256::new();
+                        let mut parts = Vec::new();
+
+                        // Init
+                        // Include metadata about the proposal
+                        {
+                            parts.push(ProposalPart::Init(ProposalInit {
+                                height: proposal.height,
+                                round: proposal.round,
+                                pol_round,
+                                proposer: my_address,
+                            }));
+
+                            hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                            hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                        }
+
+fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
+    let mut factors = Vec::new();
+    let mut n = value.value;
+
+    let mut i = 2;
+    while i * i <= n {
+        if n % i == 0 {
+            factors.push(i);
+            n /= i;
+        } else {
+            i += 1;
+        }
+    }
+
+    if n > 1 {
+        factors.push(n);
+    }
+
+    factors
+}
+
+                        // Data
+                        // Include each prime factor of the value as a separate proposal part
+                        {
+                            for factor in factor_value(proposal.value) {
+                                parts.push(ProposalPart::Data(ProposalData::new(factor)));
+
+                                hasher.update(factor.to_be_bytes().as_slice());
+                            }
+                        }
+
+                        // Fin
+                        // Sign the hash of the proposal parts
+                        {
+                            let hash = hasher.finalize().to_vec();
+                            let signature = my_signing_provider.sign(&hash);
+                            parts.push(ProposalPart::Fin(ProposalFin::new(signature)));
+                        }
+
+                        let stream_id = {
+                            let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                            bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                            bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
+                            malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                        };
+
+                        let mut msgs = Vec::with_capacity(parts.len() + 1);
+                        let mut sequence = 0;
+
+                        for part in parts {
+                            let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
+                            sequence += 1;
+                            msgs.push(msg);
+                        }
+
+                        msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+
+                        for stream_message in msgs {
+                            info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                            channels
+                                .network
+                                .send(NetworkMsg::PublishProposalPart(stream_message))
+                                .await.unwrap();
+                        }
                     },
 
                     BFTAppMsg::ProcessSyncedValue {
@@ -578,6 +673,115 @@ tracing::error!("extend vote");
 tracing::error!("verify vote extension");
                         if reply.send(Ok(())).is_err() {
                             tracing::error!("Failed to send VerifyVoteExtension reply");
+                        }
+                    },
+
+                    // On the receiving end of these proposal parts (ie. when we are not the proposer),
+                    // we need to process these parts and re-assemble the full value.
+                    // To this end, we store each part that we receive and assemble the full value once we
+                    // have all its constituent parts. Then we send that value back to consensus for it to
+                    // consider and vote for or against it (ie. vote `nil`), depending on its validity.
+                    BFTAppMsg::ReceivedProposalPart { from, part, reply } => {
+                        let part_type = match &part.content {
+                            malachitebft_app_channel::app::streaming::StreamContent::Data(part) => part.get_type(),
+                            malachitebft_app_channel::app::streaming::StreamContent::Fin => "end of stream",
+                        };
+
+                        info!(%from, %part.sequence, part.type = %part_type, "Received proposal part");
+
+                        let sequence = part.sequence;
+
+                        // Check if we have a full proposal
+                        if let Some(parts) = streams_map.insert(from, part) {
+
+                            // NOTE(Sam): It seems VERY odd that we don't drop individual stream parts for being too
+                            // old. Why assemble something that might never finish and is known to be stale?
+
+                            // Check if the proposal is outdated
+                            if parts.height < current_bft_height {
+                                info!(
+                                    height = %current_bft_height,
+                                    round = %current_bft_round,
+                                    part.height = %parts.height,
+                                    part.round = %parts.round,
+                                    part.sequence = %sequence,
+                                    "Received outdated proposal part, ignoring"
+                                );
+                            } else {
+
+                                // signature verification
+                                {
+                                    let mut hasher = sha3::Keccak256::new();
+
+                                    let init = parts.init().unwrap();
+                                    let fin = parts.fin().unwrap();
+
+                                    let hash = {
+                                        hasher.update(init.height.as_u64().to_be_bytes());
+                                        hasher.update(init.round.as_i64().to_be_bytes());
+
+                                        // The correctness of the hash computation relies on the parts being ordered by sequence
+                                        // number, which is guaranteed by the `PartStreamsMap`.
+                                        for part in parts.parts.iter().filter_map(|part| part.as_data()) {
+                                            hasher.update(part.factor.to_be_bytes());
+                                        }
+
+                                        hasher.finalize()
+                                    };
+
+                                    // TEMP get the proposers key
+                                    let mut pindex = 0;
+                                    loop {
+                                        let mut rng = rand::rngs::StdRng::seed_from_u64(pindex);
+                                        let private_key = PrivateKey::generate(&mut rng);
+                                        let public_key = private_key.public_key();
+                                        let my_address = Address::from_public_key(&public_key);
+                                        if my_address == parts.proposer {
+                                            break;
+                                        }
+                                        pindex += 1;
+                                        assert!(pindex < 150); // proposer not found
+                                    }
+                                    let mut rng = rand::rngs::StdRng::seed_from_u64(pindex);
+                                    let proposer_private_key = PrivateKey::generate(&mut rng);
+
+                                    // Verify the signature
+                                    assert!(my_signing_provider.verify(&hash, &fin.signature, &proposer_private_key.public_key()));
+                                }
+
+                                // Re-assemble the proposal from its parts
+                                let value : ProposedValue::<TestContext> = {
+                                    let init = parts.init().unwrap();
+
+                                    let value = parts
+                                        .parts
+                                        .iter()
+                                        .filter_map(|part| part.as_data())
+                                        .fold(1, |acc, data| acc * data.factor);
+
+                                    ProposedValue {
+                                        height: parts.height,
+                                        round: parts.round,
+                                        valid_round: init.pol_round,
+                                        proposer: parts.proposer,
+                                        value: malachitebft_test::Value::new(value),
+                                        validity: Validity::Valid,
+                                    }
+                                };
+
+
+                                info!(
+                                    "Storing undecided proposal {} {}",
+                                    value.height, value.round
+                                );
+
+                                prev_bft_values.insert((value.height.as_u64(), value.round.as_i64()), value.clone());
+
+
+                                if reply.send(Some(value)).is_err() {
+                                    error!("Failed to send ReceivedProposalPart reply");
+                                }
+                            }
                         }
                     },
 
@@ -713,7 +917,7 @@ struct BFTNode {
 struct DummyHandle;
 
 #[async_trait]
-impl NodeHandle<TestContext> for DummyHandle {
+impl malachitebft_app_channel::app::node::NodeHandle<TestContext> for DummyHandle {
     fn subscribe(&self) -> RxEvent<TestContext> {
         panic!();
     }
@@ -723,10 +927,10 @@ impl NodeHandle<TestContext> for DummyHandle {
     }
 }
 
-static tpeer_id_for_wal: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+static temp_dir_for_wal: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::new(None);
 
 #[async_trait]
-impl Node for BFTNode {
+impl malachitebft_app_channel::app::node::Node for BFTNode {
     type Context = TestContext;
     type Genesis = Genesis;
     type PrivateKeyFile = ();
@@ -734,14 +938,11 @@ impl Node for BFTNode {
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from(format!("aah_very_annoying_that_the_wal_is_required_id_is_{}", *tpeer_id_for_wal.lock().unwrap()))
-    }
-
-    fn generate_private_key<R>(&self, rng: R) -> PrivateKey
-    where
-        R: RngCore + CryptoRng,
-    {
-        PrivateKey::generate(rng)
+        let mut td = temp_dir_for_wal.lock().unwrap();
+        if td.is_none() {
+            *td = Some(TempDir::new(&format!("aah_very_annoying_that_the_wal_is_required_id_is_{}", rand::random::<u32>())).unwrap());
+        }
+        std::path::PathBuf::from(td.as_ref().unwrap().path())
     }
 
     fn get_address(&self, pk: &PublicKey) -> Address {
@@ -760,30 +961,16 @@ impl Node for BFTNode {
         self.private_key.clone()
     }
 
-    fn load_private_key_file(&self) -> std::io::Result<()> {
+    fn load_private_key_file(&self) -> Result<(), eyre::ErrReport> {
         Ok(())
-    }
-
-    fn make_private_key_file(&self, _private_key: PrivateKey) {
-        panic!();
     }
 
     fn get_signing_provider(&self, private_key: PrivateKey) -> Self::SigningProvider {
         Ed25519Provider::new(private_key)
     }
 
-    fn load_genesis(&self) -> std::io::Result<Self::Genesis> {
+    fn load_genesis(&self) -> Result<Self::Genesis, eyre::ErrReport> {
         panic!();
-    }
-
-    fn make_genesis(&self, validators: Vec<(PublicKey, VotingPower)>) -> Self::Genesis {
-        let validators = validators
-            .into_iter()
-            .map(|(pk, vp)| Validator::new(pk, vp));
-
-        let validator_set = ValidatorSet::new(validators);
-
-        Genesis { validator_set }
     }
 
     async fn start(&self) -> eyre::Result<DummyHandle> {
@@ -792,6 +979,10 @@ impl Node for BFTNode {
 
     async fn run(self) -> eyre::Result<()> {
         Ok(())
+    }
+    type Config = BFTConfig;
+    fn load_config(&self) -> eyre::Result<Self::Config> {
+        panic!()
     }
 }
 
@@ -1203,4 +1394,196 @@ async fn tfl_dump_block_sequence(
     let (blocks, infos) =
         tfl_block_sequence(call, start_hash, final_hash, include_start_hash, true).await;
     tfl_dump_blocks(&blocks[..], &infos[..]);
+}
+
+mod strm {
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BinaryHeap, HashSet};
+
+use malachitebft_app_channel::app::consensus::PeerId;
+use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
+use malachitebft_app_channel::app::types::core::Round;
+use malachitebft_test::{Address, Height, ProposalFin, ProposalInit, ProposalPart};
+
+struct MinSeq<T>(StreamMessage<T>);
+
+impl<T> PartialEq for MinSeq<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.sequence == other.0.sequence
+    }
+}
+
+impl<T> Eq for MinSeq<T> {}
+
+impl<T> Ord for MinSeq<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.sequence.cmp(&self.0.sequence)
+    }
+}
+
+impl<T> PartialOrd for MinSeq<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+struct MinHeap<T>(BinaryHeap<MinSeq<T>>);
+
+impl<T> Default for MinHeap<T> {
+    fn default() -> Self {
+        Self(BinaryHeap::new())
+    }
+}
+
+impl<T> MinHeap<T> {
+    fn push(&mut self, msg: StreamMessage<T>) {
+        self.0.push(MinSeq(msg));
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn drain(&mut self) -> Vec<T> {
+        let mut vec = Vec::with_capacity(self.0.len());
+        while let Some(MinSeq(msg)) = self.0.pop() {
+            if let Some(data) = msg.content.into_data() {
+                vec.push(data);
+            }
+        }
+        vec
+    }
+}
+
+#[derive(Default)]
+struct StreamState {
+    buffer: MinHeap<ProposalPart>,
+    init_info: Option<ProposalInit>,
+    seen_sequences: HashSet<Sequence>,
+    total_messages: usize,
+    fin_received: bool,
+}
+
+impl StreamState {
+    fn is_done(&self) -> bool {
+        self.init_info.is_some() && self.fin_received && self.buffer.len() == self.total_messages
+    }
+
+    fn insert(&mut self, msg: StreamMessage<ProposalPart>) -> Option<ProposalParts> {
+        if msg.is_first() {
+            self.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
+        }
+
+        if msg.is_fin() {
+            self.fin_received = true;
+            self.total_messages = msg.sequence as usize + 1;
+        }
+
+        self.buffer.push(msg);
+
+        if self.is_done() {
+            let init_info = self.init_info.take()?;
+
+            Some(ProposalParts {
+                height: init_info.height,
+                round: init_info.round,
+                proposer: init_info.proposer,
+                parts: self.buffer.drain(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposalParts {
+    pub height: Height,
+    pub round: Round,
+    pub proposer: Address,
+    pub parts: Vec<ProposalPart>,
+}
+
+impl ProposalParts {
+    pub fn init(&self) -> Option<&ProposalInit> {
+        self.parts.iter().find_map(|p| p.as_init())
+    }
+
+    pub fn fin(&self) -> Option<&ProposalFin> {
+        self.parts.iter().find_map(|p| p.as_fin())
+    }
+}
+
+#[derive(Default)]
+pub struct PartStreamsMap {
+    streams: BTreeMap<(PeerId, StreamId), StreamState>,
+}
+
+impl PartStreamsMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(
+        &mut self,
+        peer_id: PeerId,
+        msg: StreamMessage<ProposalPart>,
+    ) -> Option<ProposalParts> {
+        let stream_id = msg.stream_id.clone();
+        let state = self
+            .streams
+            .entry((peer_id, stream_id.clone()))
+            .or_default();
+
+        if !state.seen_sequences.insert(msg.sequence) {
+            // We have already seen a message with this sequence number.
+            return None;
+        }
+
+        let result = state.insert(msg);
+
+        if state.is_done() {
+            self.streams.remove(&(peer_id, stream_id));
+        }
+
+        result
+    }
+}
+
+}
+
+/// Malachite configuration options
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BFTConfig {
+    /// A custom human-readable name for this node
+    pub moniker: String,
+
+    /// Log configuration options
+    pub logging: mconfig::LoggingConfig,
+
+    /// Consensus configuration options
+    pub consensus: mconfig::ConsensusConfig,
+
+    /// ValueSync configuration options
+    pub value_sync: mconfig::ValueSyncConfig,
+
+    /// Metrics configuration options
+    pub metrics: mconfig::MetricsConfig,
+
+    /// Runtime configuration options
+    pub runtime: mconfig::RuntimeConfig,
+}
+
+impl NodeConfig for BFTConfig {
+    fn moniker(&self) -> &str {
+        &self.moniker
+    }
+
+    fn consensus(&self) -> &mconfig::ConsensusConfig {
+        &self.consensus
+    }
+
+    fn value_sync(&self) -> &mconfig::ValueSyncConfig {
+        &self.value_sync
+    }
 }
