@@ -555,8 +555,9 @@ async fn viz_main(
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
     let mut bft_parent: NodeRef = None;
-    let mut bc_parent: NodeRef = None;
-    let font_size = 20.;
+    let mut bc_hi: NodeRef = None;
+    let mut bc_lo: NodeRef = None;
+    let font_size = 30.;
 
     let base_style = root_ui()
         .style_builder()
@@ -571,6 +572,7 @@ async fn viz_main(
     };
     root_ui().push_skin(&skin);
 
+    let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
     let bg_col = DARKBLUE;
@@ -590,50 +592,165 @@ async fn viz_main(
         let g = {
             let mut lock = VIZ_G.lock().unwrap();
             let g = lock.as_ref().unwrap().clone();
+
+            // TODO: do outside mutex
+            let bc_req_h: (i32, i32) = {
+                let (lo, hi) = g.bc_req_h;
+                let (h_lo, h_hi) = (
+                    if lo >= 0 {
+                        BlockHeight(lo.try_into().unwrap())
+                    } else if let Some(tip) = g.state.bc_tip {
+                        tip.0.sat_sub(-lo)
+                    } else {
+                        BlockHeight(0)
+                    },
+                    if hi >= 0 {
+                        BlockHeight(hi.try_into().unwrap())
+                    } else if let Some(tip) = g.state.bc_tip {
+                        tip.0.sat_sub(-hi)
+                    } else {
+                        BlockHeight(0)
+                    });
+
+
+                let mut bc_req_h = (h_lo.0 as i32, h_hi.0 as i32);
+                let mut is_set = false;
+                if let Some(on_screen_hi) = bc_h_hi_prev {
+                    if on_screen_hi + 5 >= h_hi.0 {
+                        is_set = true;
+                        bc_req_h.0 += 30;
+                        bc_req_h.1 += 30;
+                    }
+                }
+
+                if let Some(on_screen_lo) = bc_h_lo_prev {
+                    if on_screen_lo - 5 <= h_lo.0 {
+                        assert!(!is_set);
+                        bc_req_h.0 -= 30;
+                        bc_req_h.1 -= 30;
+                    }
+                }
+
+                if let Some(tip) = g.state.bc_tip {
+                    if bc_req_h.1 >= 0 && bc_req_h.1 as u32 >= tip.0.0 {
+                        bc_req_h.1 = -1; // tip may have moved
+                    }
+                }
+                bc_req_h
+            };
+
+            if bc_req_h != g.bc_req_h {
+                info!("changing requested block range from {:?} to {:?}", g.bc_req_h, bc_req_h);
+            }
+
             lock.as_mut().unwrap().consumed = true;
-            lock.as_mut().unwrap().bc_req_h = (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1);
+            lock.as_mut().unwrap().bc_req_h = bc_req_h;
             g
         };
 
         // Cache nodes
         // TODO: handle non-contiguous chunks
         let z_cache_blocks = begin_zone("cache blocks");
-        for (i, hash) in g.state.hashes.iter().enumerate() {
-            let _z = ZoneGuard::new("cache block");
+        // TODO: safer access
+        let new_hi = bc_lo.map_or(true, |i| {
+            let lo_height = g.state.lo_height.0;
+            let lo_node = &nodes[i];
+            lo_node.height <= lo_height
+        });
+        if new_hi {
+            for (i, hash) in g.state.hashes.iter().enumerate() {
+                let _z = ZoneGuard::new("cache block");
 
-            if find_bc_node_by_hash(nodes, hash).is_none() {
-                let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
-                    (
-                        block.header.difficulty_threshold.to_work(),
-                        block.transactions.len() as u32,
-                    )
-                });
+                if find_bc_node_by_hash(nodes, hash).is_none() {
+                    let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
+                        (
+                            block.header.difficulty_threshold.to_work(),
+                            block.transactions.len() as u32,
+                        )
+                    });
 
-                let dy = work.map_or(100., |work| {
-                    bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
+                    let dy = work.map_or(100., |work| {
+                        bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
 
-                    150. * work.as_u128() as f32 / bc_work_max as f32
-                });
+                        150. * work.as_u128() as f32 / bc_work_max as f32
+                    });
 
-                nodes.push(Node {
-                    parent: bc_parent, // TODO: can be implicit...
-                    link: None,
+                    let height = g.state.lo_height.0 + i as u32;
+                    if let Some(parent) = bc_hi {
+                        assert!(nodes[parent].height == height - 1, "parent: {}, new: {}", nodes[parent].height, height);
+                    }
 
-                    text: "".to_string(),
-                    kind: NodeKind::BC,
-                    hash: Some(hash.0),
-                    height: g.state.lo_height.0 + i as u32,
-                    work,
-                    txs_n,
-                    is_real: true,
+                    nodes.push(Node {
+                        parent: bc_hi, // TODO: can be implicit...
+                        link: None,
 
-                    // TODO: dynamically update length & rad
-                    pt: bc_parent.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
-                    // TODO: could overlay internal circle/rings for shielded/transparent
-                    // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-                    rad: ((txs_n as f32).sqrt() * 5.).min(50.),
-                });
-                bc_parent = Some(nodes.len() - 1);
+                        text: "".to_string(),
+                        kind: NodeKind::BC,
+                        hash: Some(hash.0),
+                        height,
+                        work,
+                        txs_n,
+                        is_real: true,
+
+                        // TODO: dynamically update length & rad
+                        pt: bc_hi.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
+                        // TODO: could overlay internal circle/rings for shielded/transparent
+                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
+                    });
+                    bc_hi = Some(nodes.len() - 1);
+                    if bc_lo.is_none() {
+                        bc_lo = bc_hi;
+                    }
+                }
+            }
+        } else {
+            for (i, hash) in g.state.hashes.iter().enumerate().rev() {
+                let _z = ZoneGuard::new("cache block");
+
+                if find_bc_node_by_hash(nodes, hash).is_none() {
+                    let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
+                        (
+                            block.header.difficulty_threshold.to_work(),
+                            block.transactions.len() as u32,
+                        )
+                    });
+
+                    let dy = work.map_or(100., |work| {
+                        bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
+
+                        150. * work.as_u128() as f32 / bc_work_max as f32
+                    });
+
+
+                    let height = g.state.lo_height.0 + i as u32;
+
+                    nodes.push(Node {
+                        parent: None, // new lowest
+                        link: None,
+
+                        text: "".to_string(),
+                        kind: NodeKind::BC,
+                        hash: Some(hash.0),
+                        height,
+                        work,
+                        txs_n,
+                        is_real: true,
+
+                        // TODO: dynamically update length & rad
+                        pt: bc_lo.map_or(Vec2::_0, |i| nodes[i].pt + vec2(0., dy)),
+                        // TODO: could overlay internal circle/rings for shielded/transparent
+                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
+                    });
+
+                    if let Some(child) = bc_lo {
+                        assert!(nodes[child].parent.is_none());
+                        assert!(nodes[child].height == height + 1, "child: {}, new: {}", nodes[child].height, height);
+                        nodes[child].parent = Some(nodes.len() - 1);
+                    }
+                    bc_lo = Some(nodes.len() - 1)
+                }
             }
         }
         end_zone(z_cache_blocks);
@@ -962,6 +1079,7 @@ async fn viz_main(
         }
 
         // ALT: EoA
+        let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
         let z_draw_nodes = begin_zone("draw nodes");
         for (i, node) in nodes.iter().enumerate() {
             // draw nodes that are on-screen
@@ -1085,6 +1203,8 @@ async fn viz_main(
         });
 
         // TODO: if is_quit_requested() { send message for tokio to quit, then join }
+        bc_h_lo_prev = bc_h_lo;
+        bc_h_hi_prev = bc_h_hi;
         ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
