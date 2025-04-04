@@ -17,6 +17,11 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use zebra_chain::work::difficulty::Work;
 
+const IS_DEV: bool = true;
+fn dev(show_in_dev: bool) -> bool {
+    IS_DEV && show_in_dev
+}
+
 // consistent zero-initializers
 // TODO: create a derive macro
 trait _0 {
@@ -797,15 +802,15 @@ async fn viz_main(
         if let MouseDrag::World(press_pt) = ctx.mouse_drag {
             ctx.mouse_drag_d = mouse_pt - press_pt;
             ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
-            window::clear_background(BLUE);
+            // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
             let (scroll_x, scroll_y) = mouse_wheel();
             ctx.screen_vel += vec2(0.3 * scroll_x, 0.3 * scroll_y);
 
-            window::clear_background(bg_col);
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
             ctx.screen_vel = ctx.screen_vel.lerp(Vec2::_0, 0.12); // apply friction
         }
+        window::clear_background(bg_col);
 
         if is_key_down(KeyCode::Escape) {
             ctx.mouse_drag_d = Vec2::_0;
@@ -858,46 +863,48 @@ async fn viz_main(
             draw_rect_lines(world_rect, 2., MAGENTA);
         }
 
-        ui_camera_window(
-            hash!(),
-            &world_camera,
-            vec2(200., 20.),
-            vec2(300., 200.),
-            |ui| {
-                ui.label(
-                    None,
-                    if ui.is_mouse_over(mouse_pt) {
-                        "over"
-                    } else {
-                        "not over"
-                    },
-                );
-                ui.label(
-                    None,
-                    if ui.is_mouse_captured() {
-                        "captured"
-                    } else {
-                        "not captured"
-                    },
-                );
-                if ui.button(None, "Click") {
-                    // root_ui().button(None, "Clicked");
-                }
-            },
-        );
+        if dev(false) {
+            ui_camera_window(
+                hash!(),
+                &world_camera,
+                vec2(200., 20.),
+                vec2(300., 200.),
+                |ui| {
+                    ui.label(
+                        None,
+                        if ui.is_mouse_over(mouse_pt) {
+                            "over"
+                        } else {
+                            "not over"
+                        },
+                    );
+                    ui.label(
+                        None,
+                        if ui.is_mouse_captured() {
+                            "captured"
+                        } else {
+                            "not captured"
+                        },
+                    );
+                    if ui.button(None, "Click") {
+                        // root_ui().button(None, "Clicked");
+                    }
+                },
+            );
 
-        ui_camera_window(
-            hash!(),
-            &world_camera,
-            vec2(350., 300.),
-            vec2(300., 200.),
-            |ui| {
-                ui.label(None, &format!("over: {}", ui.is_mouse_over(mouse_pt)));
-                if ui.button(None, "Click") {
-                    // root_ui().button(None, "Clicked");
-                }
-            },
-        );
+            ui_camera_window(
+                hash!(),
+                &world_camera,
+                vec2(350., 300.),
+                vec2(300., 200.),
+                |ui| {
+                    ui.label(None, &format!("over: {}", ui.is_mouse_over(mouse_pt)));
+                    if ui.button(None, "Click") {
+                        // root_ui().button(None, "Clicked");
+                    }
+                },
+            );
+        }
 
         let text_size = vec2(15. * font_size, 1.2 * font_size);
         let bc_i_size = vec2(4. * font_size, text_size.y);
@@ -1183,29 +1190,34 @@ async fn viz_main(
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
         // VIZ DEBUG INFO ////////////////////
-        let dbg_str = format!(
-            "{:2.3} ms\n\
-            target: {}, offset: {}, zoom: {}\n\
-            screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
-            {} hashes",
-            time::get_frame_time() * 1000.,
-            world_camera.target,
-            world_camera.offset,
-            world_camera.zoom,
-            ctx.screen_o,
-            ctx.mouse_drag_d,
-            ctx.screen_vel,
-            g.state.hashes.len()
-        );
-        draw_multiline_text(
-            &dbg_str,
-            vec2(0.5 * font_size, font_size),
-            font_size,
-            None,
-            WHITE,
-        );
+        if IS_DEV {
+            let dbg_str = format!(
+                "{:2.3} ms\n\
+                target: {}, offset: {}, zoom: {}\n\
+                screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
+                {} hashes\n\
+                Node height range: [{:?}, {:?}]\n\
+                req: {:?}",
+                time::get_frame_time() * 1000.,
+                world_camera.target,
+                world_camera.offset,
+                world_camera.zoom,
+                ctx.screen_o,
+                ctx.mouse_drag_d,
+                ctx.screen_vel,
+                g.state.hashes.len(),
+                bc_h_lo,
+                bc_h_hi,
+                g.bc_req_h,
+            );
+            draw_multiline_text(
+                &dbg_str,
+                vec2(0.5 * font_size, font_size),
+                font_size,
+                None,
+                WHITE,
+            );
 
-        if true {
             // draw mouse point's world location
             let old_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
             draw_multiline_text(
@@ -1215,11 +1227,11 @@ async fn viz_main(
                 None,
                 WHITE,
             );
-        }
 
-        macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
-            fps_counter_pos: vec2(window::screen_width() - 120., 10.),
-        });
+            macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
+                fps_counter_pos: vec2(window::screen_width() - 120., 10.),
+            });
+        }
 
         // TODO: if is_quit_requested() { send message for tokio to quit, then join }
         bc_h_lo_prev = bc_h_lo;
@@ -1234,6 +1246,8 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
     let config = window::Conf {
         window_title: "Zcash blocks".to_owned(),
         fullscreen: false,
+        window_width: 1200,
+        window_height: 800,
         icon: Some({
             let png_bytes = include_bytes!("../../book/theme/favicon.png");
             let png =
