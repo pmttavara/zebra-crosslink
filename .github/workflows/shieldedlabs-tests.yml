@@ -88,6 +88,13 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@v30
+      - name: GC root all check outputs
+        run: |
+          mkdir -p /tmp/nix-gc-roots
+          nix eval .#checks.x86_64-linux --json \
+            | jq -r 'to_entries[].value' \
+            | xargs -n1 nix path-info \
+            | xargs -I{} ln -s {} /tmp/nix-gc-roots/
       - uses: nix-community/cache-nix-action@v6
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.run_id }}
