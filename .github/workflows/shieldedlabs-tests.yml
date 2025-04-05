@@ -22,7 +22,7 @@ env:
   CARGO_INCREMENTAL: ${{ vars.CARGO_INCREMENTAL }} # defaults to 0
 
 jobs:
-  test-no-run:
+  test:
     name: Crosslink Tests
     runs-on: ubuntu-latest-xl
     steps:
@@ -31,6 +31,10 @@ jobs:
         with:
           packages: protobuf-compiler
           version: 1.0
+      - name: Static Analysis
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --workspace
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Build Test Binary
