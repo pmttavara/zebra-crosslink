@@ -31,10 +31,6 @@ jobs:
         with:
           packages: protobuf-compiler
           version: 1.0
-      - name: Static Analysis
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --workspace
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
       - name: Build Test Binary
@@ -54,7 +50,10 @@ jobs:
           version: 1.0
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
+      - name: Static Analysis
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --workspace
       - name: Ensure Crosslink docs generate
         run: cd zebra-crosslink && cargo doc --lib
       - name: Ensure all docs generate
