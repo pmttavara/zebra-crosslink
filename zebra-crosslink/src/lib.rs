@@ -54,8 +54,7 @@ pub mod config {
     }
 }
 
-// TODO: feature = "viz"
-// #[cfg(feature = "macroquad")]
+#[cfg(feature = "viz_gui")]
 pub mod viz;
 
 use crate::service::{
@@ -298,9 +297,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let call = internal_handle.call.clone();
     let config = internal_handle.config.clone();
 
-    let rt = tokio::runtime::Handle::current();
-    let viz_tfl_handle = internal_handle.clone();
-    tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
+
+#[cfg(feature = "viz_gui")]
+    {
+        let rt = tokio::runtime::Handle::current();
+        let viz_tfl_handle = internal_handle.clone();
+        tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
+    }
 
     let initial_validator_set = {
         let mut array = Vec::new();

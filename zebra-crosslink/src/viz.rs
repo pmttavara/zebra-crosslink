@@ -237,7 +237,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                     error!("Failed to read block header at height {}", h.0);
                     None
                 }
-            };
+            }
 
             let hi_height_hash = if let Some(hi_height_hash) = get_height_hash(call.clone(), h_hi, tip_height_hash).await {
                 hi_height_hash
