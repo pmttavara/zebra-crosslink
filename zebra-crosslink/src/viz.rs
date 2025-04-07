@@ -225,7 +225,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             // temp
             //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
 
-            let get_height_hash = async |h: BlockHeight, existing_height_hash: (BlockHeight, BlockHash)| {
+            async fn get_height_hash(call: TFLServiceCalls, h: BlockHeight, existing_height_hash: (BlockHeight, BlockHash)) -> Option<(BlockHeight, BlockHash)>{
                 if h == existing_height_hash.0 {
                     // avoid duplicating work if we've already got that value
                     Some(existing_height_hash)
@@ -239,13 +239,13 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                 }
             };
 
-            let hi_height_hash = if let Some(hi_height_hash) = get_height_hash(h_hi, tip_height_hash).await {
+            let hi_height_hash = if let Some(hi_height_hash) = get_height_hash(call.clone(), h_hi, tip_height_hash).await {
                 hi_height_hash
             } else {
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let lo_height_hash = if let Some(lo_height_hash) = get_height_hash(h_lo, hi_height_hash).await {
+            let lo_height_hash = if let Some(lo_height_hash) = get_height_hash(call.clone(), h_lo, hi_height_hash).await {
                 lo_height_hash
             } else {
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
