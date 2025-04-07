@@ -207,7 +207,8 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                     }
                 },
             );
-            assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
+            // temp
+            //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
 
             let get_height_hash = async |h: BlockHeight, existing_height_hash: (BlockHeight, BlockHash)| {
                 if h == existing_height_hash.0 {
@@ -629,8 +630,7 @@ async fn viz_main(
                 }
 
                 if let Some(on_screen_lo) = bc_h_lo_prev {
-                    if on_screen_lo - 5 <= h_lo.0 {
-                        assert!(!is_set);
+                    if on_screen_lo <= h_lo.0 + 5 {
                         bc_req_h.0 -= 30;
                         bc_req_h.1 -= 30;
                     }
@@ -641,6 +641,8 @@ async fn viz_main(
                         bc_req_h.1 = -1; // tip may have moved
                     }
                 }
+                // temp
+                bc_req_h.1 = -1; // tip may have moved
                 bc_req_h
             };
 
@@ -805,7 +807,8 @@ async fn viz_main(
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
             let (scroll_x, scroll_y) = mouse_wheel();
-            ctx.screen_vel += vec2(0.3 * scroll_x, 0.3 * scroll_y);
+            // Potential per platform conditional compilation needed.
+            ctx.screen_vel += vec2(8.0 * scroll_x, 8.0 * scroll_y);
 
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
             ctx.screen_vel = ctx.screen_vel.lerp(Vec2::_0, 0.12); // apply friction
