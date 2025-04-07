@@ -457,122 +457,123 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     } => {
                         info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
 
-
-                        // Here it is important that, if we have previously built a value for this height and round,
-                        // we send back the very same value.
-                        let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
-                            info!(value = %val.value.id(), "Re-using previously built value");
-                            val.clone()
-                        } else {
-                            let val = ProposedValue {
-                                height,
-                                round,
-                                valid_round: Round::Nil,
-                                proposer: my_address,
-                                value: malachitebft_test::Value::new(rng.gen_range(100..=100000)),
-                                validity: Validity::Valid,
-                                // extension: None, TODO? "does not have this field"
+                        if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
+                            // Here it is important that, if we have previously built a value for this height and round,
+                            // we send back the very same value.
+                            let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
+                                info!(value = %val.value.id(), "Re-using previously built value");
+                                val.clone()
+                            } else {
+                                let val = ProposedValue {
+                                    height,
+                                    round,
+                                    valid_round: Round::Nil,
+                                    proposer: my_address,
+                                    value: malachitebft_test::Value::new(propose_string.parse().unwrap_or(rng.gen_range(100..=100000))),
+                                    validity: Validity::Valid,
+                                    // extension: None, TODO? "does not have this field"
+                                };
+                                prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
+                                val
                             };
-                            prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
-                            val
-                        };
-                        if reply.send(LocallyProposedValue::<TestContext>::new(
-                                proposal.height,
-                                proposal.round,
-                                proposal.value.clone(),
-                            )).is_err() {
-                            error!("Failed to send GetValue reply");
-                        }
-
-                        // The POL round is always nil when we propose a newly built value.
-                        // See L15/L18 of the Tendermint algorithm.
-                        let pol_round = Round::Nil;
-
-                        // NOTE(Sam): I have inlined the code from the example so that we
-                        // can actually see the functionality. I am not sure what the purpose
-                        // of this circus is. Why not just send the value with a simple signature?
-                        // I am sure there is a good reason.
-
-                        let mut hasher = sha3::Keccak256::new();
-                        let mut parts = Vec::new();
-
-                        // Init
-                        // Include metadata about the proposal
-                        {
-                            parts.push(ProposalPart::Init(ProposalInit {
-                                height: proposal.height,
-                                round: proposal.round,
-                                pol_round,
-                                proposer: my_address,
-                            }));
-
-                            hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
-                            hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
-                        }
-
-fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
-    let mut factors = Vec::new();
-    let mut n = value.value;
-
-    let mut i = 2;
-    while i * i <= n {
-        if n % i == 0 {
-            factors.push(i);
-            n /= i;
-        } else {
-            i += 1;
-        }
-    }
-
-    if n > 1 {
-        factors.push(n);
-    }
-
-    factors
-}
-
-                        // Data
-                        // Include each prime factor of the value as a separate proposal part
-                        {
-                            for factor in factor_value(proposal.value) {
-                                parts.push(ProposalPart::Data(ProposalData::new(factor)));
-
-                                hasher.update(factor.to_be_bytes().as_slice());
+                            if reply.send(LocallyProposedValue::<TestContext>::new(
+                                    proposal.height,
+                                    proposal.round,
+                                    proposal.value.clone(),
+                                )).is_err() {
+                                error!("Failed to send GetValue reply");
                             }
-                        }
 
-                        // Fin
-                        // Sign the hash of the proposal parts
-                        {
-                            let hash = hasher.finalize().to_vec();
-                            let signature = my_signing_provider.sign(&hash);
-                            parts.push(ProposalPart::Fin(ProposalFin::new(signature)));
-                        }
+                            // The POL round is always nil when we propose a newly built value.
+                            // See L15/L18 of the Tendermint algorithm.
+                            let pol_round = Round::Nil;
 
-                        let stream_id = {
-                            let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
-                            bytes.extend_from_slice(&height.as_u64().to_be_bytes());
-                            bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
-                            malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
-                        };
+                            // NOTE(Sam): I have inlined the code from the example so that we
+                            // can actually see the functionality. I am not sure what the purpose
+                            // of this circus is. Why not just send the value with a simple signature?
+                            // I am sure there is a good reason.
 
-                        let mut msgs = Vec::with_capacity(parts.len() + 1);
-                        let mut sequence = 0;
+                            let mut hasher = sha3::Keccak256::new();
+                            let mut parts = Vec::new();
 
-                        for part in parts {
-                            let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
-                            sequence += 1;
-                            msgs.push(msg);
-                        }
+                            // Init
+                            // Include metadata about the proposal
+                            {
+                                parts.push(ProposalPart::Init(ProposalInit {
+                                    height: proposal.height,
+                                    round: proposal.round,
+                                    pol_round,
+                                    proposer: my_address,
+                                }));
 
-                        msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+                                hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                                hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                            }
 
-                        for stream_message in msgs {
-                            info!(%height, %round, "Streaming proposal part: {stream_message:?}");
-                            channels
-                                .network
-                                .send(NetworkMsg::PublishProposalPart(stream_message))
-                                .await.unwrap();
+    fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
+        let mut factors = Vec::new();
+        let mut n = value.value;
+
+        let mut i = 2;
+        while i * i <= n {
+            if n % i == 0 {
+                factors.push(i);
+                n /= i;
+            } else {
+                i += 1;
+            }
+        }
+
+        if n > 1 {
+            factors.push(n);
+        }
+
+        factors
+    }
+
+                            // Data
+                            // Include each prime factor of the value as a separate proposal part
+                            {
+                                for factor in factor_value(proposal.value) {
+                                    parts.push(ProposalPart::Data(ProposalData::new(factor)));
+
+                                    hasher.update(factor.to_be_bytes().as_slice());
+                                }
+                            }
+
+                            // Fin
+                            // Sign the hash of the proposal parts
+                            {
+                                let hash = hasher.finalize().to_vec();
+                                let signature = my_signing_provider.sign(&hash);
+                                parts.push(ProposalPart::Fin(ProposalFin::new(signature)));
+                            }
+
+                            let stream_id = {
+                                let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                                bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                                bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
+                                malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                            };
+
+                            let mut msgs = Vec::with_capacity(parts.len() + 1);
+                            let mut sequence = 0;
+
+                            for part in parts {
+                                let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
+                                sequence += 1;
+                                msgs.push(msg);
+                            }
+
+                            msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+
+                            for stream_message in msgs {
+                                info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                                channels
+                                    .network
+                                    .send(NetworkMsg::PublishProposalPart(stream_message))
+                                    .await.unwrap();
+                            }
                         }
                     },
 
@@ -631,7 +632,7 @@ fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
                         );
 
                         let mut internal = internal_handle.internal.lock().await;
-                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap().value));
+                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap().value.value));
 
                         // When that happens, we store the decided value in our store
                         // TODO: state.commit(certificate, extensions).await?;
