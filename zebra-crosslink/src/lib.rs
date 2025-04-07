@@ -299,7 +299,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let rt = tokio::runtime::Handle::current();
     let viz_tfl_handle = internal_handle.clone();
-    tokio::task::spawn_blocking(move || { rt.block_on(viz::service_viz_requests(viz_tfl_handle)) });
+    tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
 
     let initial_validator_set = {
         let mut array = Vec::new();
@@ -1010,7 +1010,7 @@ async fn tfl_service_incoming_request(
     #[allow(unreachable_patterns)]
     match request {
         TFLServiceRequest::IsTFLActivated => Ok(TFLServiceResponse::IsTFLActivated(
-                internal_handle.internal.lock().await.tfl_is_activated
+            internal_handle.internal.lock().await.tfl_is_activated,
         )),
 
         TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
@@ -1212,7 +1212,6 @@ impl SatSubAffine<i32> for BlockHeight {
     }
 }
 
-
 // TODO: handle headers as well?
 // NOTE: this is currently best-chain-only due to request/response limitations
 // TODO: add more request/response pairs directly in zebra-state's ReadStateService
@@ -1357,25 +1356,40 @@ fn dump_hash_highlight_lo(hash: &BlockHash, highlight_chars_n: usize) {
     print!("{}", s);
 }
 
+trait HasBlockHash {
+    fn get_hash(&self) -> Option<BlockHash>;
+}
+impl HasBlockHash for BlockHash {
+    fn get_hash(&self) -> Option<BlockHash> {
+        Some(*self)
+    }
+}
+
 /// "How many little-endian chars are needed to uniquely identify any of the blocks in the given
 /// slice"
-fn block_hash_unique_chars_n(hashes: &[BlockHash]) -> usize {
-    let is_unique = |prefix_len: usize, hashes: &[BlockHash]| -> bool {
-        let mut prefixes = HashSet::with_capacity(hashes.len());
+fn block_hash_unique_chars_n<T>(hashes: &[T]) -> usize
+where
+    T: HasBlockHash,
+{
+    let is_unique = |prefix_len: usize, hashes: &[T]| -> bool {
+        let mut prefixes = HashSet::<BlockHash>::with_capacity(hashes.len());
 
         // NOTE: characters correspond to nibbles
         let bytes_n = prefix_len / 2;
         let is_nib = (prefix_len % 2) != 0;
 
         for hash in hashes {
-            let nib = if is_nib {
-                Some(hash.0[bytes_n] & 0xf)
-            } else {
-                None
-            };
+            if let Some(hash) = hash.get_hash() {
+                let mut subhash = BlockHash([0; 32]);
+                subhash.0[..bytes_n].clone_from_slice(&hash.0[..bytes_n]);
 
-            if !prefixes.insert((&hash.0[..bytes_n], nib)) {
-                return false;
+                if is_nib {
+                    subhash.0[bytes_n] = hash.0[bytes_n] & 0xf;
+                }
+
+                if !prefixes.insert(subhash) {
+                    return false;
+                }
             }
         }
 
@@ -1430,8 +1444,14 @@ async fn tfl_dump_block_sequence(
     final_height_hash: Option<(BlockHeight, BlockHash)>,
     include_start_hash: bool,
 ) {
-    let (blocks, infos) =
-        tfl_block_sequence(call, start_hash, final_height_hash, include_start_hash, true).await;
+    let (blocks, infos) = tfl_block_sequence(
+        call,
+        start_hash,
+        final_height_hash,
+        include_start_hash,
+        true,
+    )
+    .await;
     tfl_dump_blocks(&blocks[..], &infos[..]);
 }
 

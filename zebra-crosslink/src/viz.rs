@@ -292,6 +292,17 @@ impl Node {
     }
 }
 
+impl HasBlockHash for Node {
+    fn get_hash(&self) -> Option<BlockHash> {
+        if self.kind == NodeKind::BC {
+            assert!(self.hash.is_some());
+            self.hash.map(BlockHash)
+        } else {
+            None
+        }
+    }
+}
+
 trait ByHandle<T, H> {
     fn get_by_handle(&self, handle: H) -> Option<&T>
     where
@@ -1086,8 +1097,7 @@ async fn viz_main(
             }
         }
 
-        // TODO: handle properly with new node structure
-        let unique_chars_n = block_hash_unique_chars_n(&g.state.hashes[..]);
+        let unique_chars_n = block_hash_unique_chars_n(nodes);
 
         if let Some(click_node_i) = click_node_i {
             let _z = ZoneGuard::new("click node UI");
