@@ -28,6 +28,7 @@ use malachitebft_app_channel::app::node::NodeConfig;
 use malachitebft_app_channel::NetworkMsg;
 use tempdir::TempDir;
 use sha3::Digest;
+use sync::RawDecidedValue;
 
 pub mod service;
 pub mod config {
@@ -401,6 +402,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
 
     let mut prev_bft_values = HashMap::<(u64, i64), ProposedValue<TestContext>>::new();
+    let mut decided_bft_values = HashMap::<u64, RawDecidedValue<TestContext>>::new();
 
     let mut streams_map = strm::PartStreamsMap::new();
 
@@ -590,16 +592,18 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         info!(%height, %round, "Processing synced value");
 
                         let value = codec.decode(value_bytes).unwrap();
-
-                        if reply.send(ProposedValue {
+                        let proposed_value = ProposedValue {
                             height,
                             round,
                             valid_round: Round::Nil,
                             proposer,
                             value,
                             validity: Validity::Valid,
-                            // extension: None, TODO? "does not have this field"
-                        }).is_err() {
+                        };
+
+                        prev_bft_values.insert((height.as_u64(), round.as_i64()), proposed_value.clone());
+
+                        if reply.send(proposed_value).is_err() {
                             tracing::error!("Failed to send ProcessSyncedValue reply");
                         }
                     },
@@ -634,8 +638,17 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                             "Consensus has decided on value"
                         );
 
+                        let decided_value = prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap();
+
+                        let raw_decided_value = RawDecidedValue {
+                            certificate: certificate.clone(),
+                            value_bytes: ProtobufCodec.encode(&decided_value.value).unwrap(),
+                        };
+
+                        decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
+
                         let mut internal = internal_handle.internal.lock().await;
-                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap().value.value));
+                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", decided_value.value.value));
 
                         // When that happens, we store the decided value in our store
                         // TODO: state.commit(certificate, extensions).await?;
@@ -660,10 +673,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     },
 
                     BFTAppMsg::GetDecidedValue { height, reply } => {
-tracing::error!("get decided value");
-                        let decided_value = None; // state.get_decided_value(&height).cloned();
+                        let raw_decided_value = decided_bft_values.get(&height.as_u64()).cloned();
 
-                        if reply.send(decided_value).is_err() {
+                        if reply.send(raw_decided_value).is_err() {
                             tracing::error!("Failed to send GetDecidedValue reply");
                         }
                     },
