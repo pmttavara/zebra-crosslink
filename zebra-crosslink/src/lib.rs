@@ -630,7 +630,7 @@ fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
                         );
 
                         let mut internal = internal_handle.internal.lock().await;
-                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize, format!("{:?}", prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap().value));
+                        internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap().value));
 
                         // When that happens, we store the decided value in our store
                         // TODO: state.commit(certificate, extensions).await?;
