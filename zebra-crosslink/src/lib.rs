@@ -81,6 +81,7 @@ pub(crate) struct TFLServiceInternal {
     final_change_tx: broadcast::Sender<BlockHash>,
 
     bft_block_strings: Vec<String>,
+    proposed_bft_string: Option<String>,
 }
 
 /// The finality status of a block

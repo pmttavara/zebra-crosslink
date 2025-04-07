@@ -136,6 +136,7 @@ pub fn spawn_new_tfl_service(
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
             bft_block_strings: Vec::new(),
+            proposed_bft_string: None,
         })),
         call: TFLServiceCalls {
             read_state: read_state_service_call,

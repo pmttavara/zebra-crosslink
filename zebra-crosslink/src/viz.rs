@@ -138,6 +138,9 @@ struct VizState {
     lo_height: BlockHeight,
     hashes: Vec<BlockHash>,
     blocks: Vec<Option<Arc<Block>>>,
+
+    internal_proposed_bft_string: Option<String>,
+    bft_block_strings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -146,6 +149,9 @@ struct VizGlobals {
     // wanted_height_rng: (u32, u32),
     consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
     bc_req_h: (i32, i32), // negative implies relative to tip
+    // TODO: bft_req_h: (i32, i32),
+
+    proposed_bft_string: Option<String>,
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
@@ -161,13 +167,22 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             lo_height: BlockHeight(0),
             hashes: Vec::new(),
             blocks: Vec::new(),
+
+            internal_proposed_bft_string: None,
+            bft_block_strings: Vec::new(),
         }),
         bc_req_h: (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1),
+        proposed_bft_string: None,
         consumed: true,
     });
 
     loop {
         let old_g = VIZ_G.lock().unwrap().as_ref().unwrap().clone();
+
+        if old_g.proposed_bft_string.is_some() {
+            tfl_handle.internal.lock().await.proposed_bft_string = old_g.proposed_bft_string.clone();
+        }
+
         if !old_g.consumed {
             std::thread::sleep(std::time::Duration::from_micros(500));
             continue;
@@ -240,12 +255,21 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
+        let (bft_block_strings, internal_proposed_bft_string) = {
+            let internal = tfl_handle.internal.lock().await;
+            (
+                internal.bft_block_strings.clone(),
+                internal.proposed_bft_string.clone(),
+            )
+        };
         let new_state = VizState {
             latest_final_block: tfl_final_block_height_hash(tfl_handle.clone()).await,
             bc_tip,
             lo_height,
             hashes,
             blocks,
+            internal_proposed_bft_string,
+            bft_block_strings,
         };
 
         new_g.state = Arc::new(new_state);
@@ -594,6 +618,9 @@ async fn viz_main(
     let mut target_bc_str = String::new();
     let bg_col = DARKBLUE;
 
+    let mut edit_proposed_bft_string = String::new();
+    let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
+
     let mut bc_work_max: u128 = 0;
 
     loop {
@@ -661,8 +688,10 @@ async fn viz_main(
                 info!("changing requested block range from {:?} to {:?}", g.bc_req_h, bc_req_h);
             }
 
-            lock.as_mut().unwrap().consumed = true;
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
+            lock.as_mut().unwrap().proposed_bft_string = proposed_bft_string;
+            lock.as_mut().unwrap().consumed = true;
+            proposed_bft_string = None;
             g
         };
 
@@ -777,7 +806,7 @@ async fn viz_main(
         let new_bft_height = bft_parent
             .and_then(|i| nodes.get(i))
             .map_or(0, |parent| parent.height + 1) as usize;
-        let strings = vec!["A:1", "B:2", "C:2"];
+        let strings = &g.state.bft_block_strings;
         for i in new_bft_height..strings.len() {
             let s : Vec<&str> = strings[i].split(":").collect();
             nodes.push(Node {
@@ -957,10 +986,10 @@ async fn viz_main(
             );
         }
 
-        let text_size = vec2(15. * font_size, 1.2 * font_size);
-        let bc_i_size = vec2(4. * font_size, text_size.y);
+        let text_size = vec2(32. * ch_w, 1.2 * font_size);
+        let bc_i_size = vec2(15. * ch_w, text_size.y);
         // TODO: is there a nicer way of sizing windows to multiple items?
-        let text_wnd_size = text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.);
+        let text_wnd_size = text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -1008,13 +1037,22 @@ async fn viz_main(
 
                         // TODO: base rad on num transactions?
                         // could overlay internal circle/rings for shielded/transparent
-                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
+                        // min distance = 2 radii (avoid overlap if at all possible)
+                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 20.)),
                         rad: 10.,
                     });
                     bft_parent = Some(nodes.len() - 1);
 
                     node_str = "".to_string();
                     target_bc_str = "".to_string();
+                }
+
+
+                if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
+                    .multiline(false)
+                    .ui(ui, &mut edit_proposed_bft_string)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter)) {
+                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
                 }
             },
         );
@@ -1247,7 +1285,8 @@ async fn viz_main(
                 screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
                 {} hashes\n\
                 Node height range: [{:?}, {:?}]\n\
-                req: {:?}",
+                req: {:?}\n\
+                Proposed BFT: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
                 world_camera.offset,
@@ -1259,6 +1298,7 @@ async fn viz_main(
                 bc_h_lo,
                 bc_h_hi,
                 g.bc_req_h,
+                g.state.internal_proposed_bft_string,
             );
             draw_multiline_text(
                 &dbg_str,
