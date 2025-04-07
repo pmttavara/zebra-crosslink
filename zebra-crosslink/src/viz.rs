@@ -664,6 +664,51 @@ async fn viz_main(
             let lo_node = &nodes[i];
             lo_node.height <= lo_height
         });
+
+        // TODO: this is dumb and should be replaced with something better
+        let mut i = 0;
+        while i < nodes.len() {
+            if nodes[i].kind == NodeKind::BFT {
+                nodes.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        bft_parent = None;
+
+        let strings = vec!["A:1", "B:2", "C:2"];
+        for s in strings {
+            let s2 : Vec<&str> = s.split(":").collect();
+            nodes.push(Node {
+                // TODO: distance should be proportional to difficulty of newer block
+                parent: bft_parent,
+                hash: None,
+                work: None,
+                txs_n: 0,
+                is_real: false,
+
+                kind: NodeKind::BFT,
+                text: s2[0].to_owned(),
+                link: {
+                    let bc: Option<u32> = s2.get(1).unwrap_or(&"").trim().parse().ok();
+                    if let Some(bc_i) = bc {
+                        find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                    } else {
+                        None
+                    }
+                },
+                height: bft_parent
+                    .and_then(|i| nodes.get(i))
+                    .map_or(0, |parent| parent.height + 1),
+
+                // TODO: base rad on num transactions?
+                // could overlay internal circle/rings for shielded/transparent
+                pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
+                rad: 10.,
+            });
+            bft_parent = Some(nodes.len() - 1);
+        }
+
         if new_hi {
             for (i, hash) in g.state.hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
