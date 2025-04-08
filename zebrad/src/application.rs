@@ -558,7 +558,7 @@ pub fn boot(app_cell: &'static AppCell<ZebradApp>) -> ! {
         // TODO: gate behind feature-flag
         // TODO: only open the visualization window for the `start` command.
         // i.e.: can we move it to that code without major refactor to make compiler happy?
-        let tokio_root_thread_handle = std::thread::spawn(move ||{
+        let tokio_root_thread_handle = std::thread::spawn(move || {
             ZebradApp::run(app_cell, args);
         });
 

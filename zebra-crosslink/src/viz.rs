@@ -150,7 +150,6 @@ struct VizGlobals {
     consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
     bc_req_h: (i32, i32), // negative implies relative to tip
     // TODO: bft_req_h: (i32, i32),
-
     proposed_bft_string: Option<String>,
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
@@ -180,7 +179,8 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         let old_g = VIZ_G.lock().unwrap().as_ref().unwrap().clone();
 
         if old_g.proposed_bft_string.is_some() {
-            tfl_handle.internal.lock().await.proposed_bft_string = old_g.proposed_bft_string.clone();
+            tfl_handle.internal.lock().await.proposed_bft_string =
+                old_g.proposed_bft_string.clone();
         }
 
         if !old_g.consumed {
@@ -193,7 +193,12 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         #[allow(clippy::never_loop)]
         let (lo_height, bc_tip, hashes, blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
-            assert!(lo <= hi || (lo >= 0 && hi < 0), "lo ({}) should be below hi ({})", lo, hi);
+            assert!(
+                lo <= hi || (lo >= 0 && hi < 0),
+                "lo ({}) should be below hi ({})",
+                lo,
+                hi
+            );
 
             let tip_height_hash: (BlockHeight, BlockHash) = {
                 if let Ok(ReadStateResponse::Tip(Some(tip_height_hash))) =
@@ -225,7 +230,11 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             // temp
             //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
 
-            async fn get_height_hash(call: TFLServiceCalls, h: BlockHeight, existing_height_hash: (BlockHeight, BlockHash)) -> Option<(BlockHeight, BlockHash)>{
+            async fn get_height_hash(
+                call: TFLServiceCalls,
+                h: BlockHeight,
+                existing_height_hash: (BlockHeight, BlockHash),
+            ) -> Option<(BlockHeight, BlockHash)> {
                 if h == existing_height_hash.0 {
                     // avoid duplicating work if we've already got that value
                     Some(existing_height_hash)
@@ -239,19 +248,24 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                 }
             }
 
-            let hi_height_hash = if let Some(hi_height_hash) = get_height_hash(call.clone(), h_hi, tip_height_hash).await {
+            let hi_height_hash = if let Some(hi_height_hash) =
+                get_height_hash(call.clone(), h_hi, tip_height_hash).await
+            {
                 hi_height_hash
             } else {
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let lo_height_hash = if let Some(lo_height_hash) = get_height_hash(call.clone(), h_lo, hi_height_hash).await {
+            let lo_height_hash = if let Some(lo_height_hash) =
+                get_height_hash(call.clone(), h_lo, hi_height_hash).await
+            {
                 lo_height_hash
             } else {
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let (hashes, blocks) = tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
+            let (hashes, blocks) =
+                tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
@@ -654,8 +668,8 @@ async fn viz_main(
                         tip.0.sat_sub(-hi)
                     } else {
                         BlockHeight(0)
-                    });
-
+                    },
+                );
 
                 let mut bc_req_h = (h_lo.0 as i32, h_hi.0 as i32);
                 let mut is_set = false;
@@ -675,7 +689,7 @@ async fn viz_main(
                 }
 
                 if let Some(tip) = g.state.bc_tip {
-                    if bc_req_h.1 >= 0 && bc_req_h.1 as u32 >= tip.0.0 {
+                    if bc_req_h.1 >= 0 && bc_req_h.1 as u32 >= tip.0 .0 {
                         bc_req_h.1 = -1; // tip may have moved
                     }
                 }
@@ -685,7 +699,10 @@ async fn viz_main(
             };
 
             if bc_req_h != g.bc_req_h {
-                info!("changing requested block range from {:?} to {:?}", g.bc_req_h, bc_req_h);
+                info!(
+                    "changing requested block range from {:?} to {:?}",
+                    g.bc_req_h, bc_req_h
+                );
             }
 
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
@@ -725,7 +742,12 @@ async fn viz_main(
 
                     let height = g.state.lo_height.0 + i as u32;
                     if let Some(parent) = bc_hi {
-                        assert!(nodes[parent].height == height - 1, "parent: {}, new: {}", nodes[parent].height, height);
+                        assert!(
+                            nodes[parent].height == height - 1,
+                            "parent: {}, new: {}",
+                            nodes[parent].height,
+                            height
+                        );
                     }
 
                     nodes.push(Node {
@@ -770,7 +792,6 @@ async fn viz_main(
                         150. * work.as_u128() as f32 / bc_work_max as f32
                     });
 
-
                     let height = g.state.lo_height.0 + i as u32;
 
                     nodes.push(Node {
@@ -794,7 +815,12 @@ async fn viz_main(
 
                     if let Some(child) = bc_lo {
                         assert!(nodes[child].parent.is_none());
-                        assert!(nodes[child].height == height + 1, "child: {}, new: {}", nodes[child].height, height);
+                        assert!(
+                            nodes[child].height == height + 1,
+                            "child: {}, new: {}",
+                            nodes[child].height,
+                            height
+                        );
                         nodes[child].parent = Some(nodes.len() - 1);
                     }
                     bc_lo = Some(nodes.len() - 1)
@@ -802,13 +828,12 @@ async fn viz_main(
             }
         }
 
-
         let new_bft_height = bft_parent
             .and_then(|i| nodes.get(i))
             .map_or(0, |parent| parent.height + 1) as usize;
         let strings = &g.state.bft_block_strings;
         for i in new_bft_height..strings.len() {
-            let s : Vec<&str> = strings[i].split(":").collect();
+            let s: Vec<&str> = strings[i].split(":").collect();
             nodes.push(Node {
                 // TODO: distance should be proportional to difficulty of newer block
                 parent: bft_parent,
@@ -989,7 +1014,8 @@ async fn viz_main(
         let text_size = vec2(32. * ch_w, 1.2 * font_size);
         let bc_i_size = vec2(15. * ch_w, text_size.y);
         // TODO: is there a nicer way of sizing windows to multiple items?
-        let text_wnd_size = text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
+        let text_wnd_size =
+            text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -1047,12 +1073,12 @@ async fn viz_main(
                     target_bc_str = "".to_string();
                 }
 
-
                 if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
                     .multiline(false)
                     .ui(ui, &mut edit_proposed_bft_string)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter)) {
-                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
+                {
+                    proposed_bft_string = Some(edit_proposed_bft_string.clone())
                 }
             },
         );
