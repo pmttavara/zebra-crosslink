@@ -32,7 +32,7 @@ jobs:
         run: |
           git remote set-url origin https://x-access-token:${{ secrets.PAT_FOR_SYNC }}@github.com/ShieldedLabs/zebra-crosslink-staging.git
 
-      - name: Hard reset to upstream/main
+      - name: Pull upstream/main and push origin/main
         working-directory: staging
         run: |
           git checkout main
