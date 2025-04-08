@@ -85,9 +85,19 @@ jobs:
   nix:
     runs-on: ubuntu-latest
     name: Check Nix Flake
+    permissions:
+      actions: write
     steps:
       - uses: actions/checkout@v3
       - name: Install Nix
-        uses: cachix/install-nix-action@v17
+        uses: nixbuild/nix-quick-install-action@v30
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.run_id }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-
+          purge-created: 86400 # 1 day
+          purge-primary-key: never
       - name: nix flake check
         run: nix flake check
