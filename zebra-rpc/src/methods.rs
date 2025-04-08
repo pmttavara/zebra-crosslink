@@ -182,6 +182,22 @@ pub trait Rpc {
     #[method(name = "getblock")]
     async fn get_block(&self, hash_or_height: String, verbosity: Option<u8>) -> Result<GetBlock>;
 
+    /// Placeholder function for checking whether the TFL has been activated.
+    ///
+    /// zcashd reference: none
+    /// method: post
+    /// tags: tfl
+    ///
+    /// ## Example Usage
+    /// ```shell
+    /// curl -X POST -H "Content-Type: application/json" -d \
+    /// '{ "jsonrpc": "2.0", "method": "is_tfl_activated", "params": [], "id": 1 }' \
+    /// http://127.0.0.1:8232
+    /// ```
+    /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
+    #[method(name = "is_tfl_activated")]
+    async fn is_tfl_activated(&self) -> Option<bool>;
+
     /// Placeholder function for getting finalizer roster.
     ///
     /// zcashd reference: none
@@ -1270,6 +1286,23 @@ where
             })
         } else {
             Err("invalid verbosity value").map_error(server::error::LegacyCode::InvalidParameter)
+        }
+    }
+
+    async fn is_tfl_activated(&self) -> Option<bool> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::IsTFLActivated)
+            .await;
+        if let Ok(TFLServiceResponse::IsTFLActivated(is_activated)) = ret {
+            Some(is_activated)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
         }
     }
 

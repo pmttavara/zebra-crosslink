@@ -257,18 +257,21 @@ impl StartCmd {
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
             let read_only_state_service = read_only_state_service.clone();
-            zebra_crosslink::service::spawn_new_tfl_service(Arc::new(move |req| {
-                let read_only_state_service = read_only_state_service.clone();
-                Box::pin(async move {
-                    read_only_state_service
-                        .clone()
-                        .ready()
-                        .await
-                        .unwrap()
-                        .call(req)
-                        .await
-                })
-            }))
+            zebra_crosslink::service::spawn_new_tfl_service(
+                Arc::new(move |req| {
+                    let read_only_state_service = read_only_state_service.clone();
+                    Box::pin(async move {
+                        read_only_state_service
+                            .clone()
+                            .ready()
+                            .await
+                            .unwrap()
+                            .call(req)
+                            .await
+                    })
+                }),
+                config.crosslink.clone(),
+            )
         };
         let tfl_service = BoxService::new(tfl);
         let tfl_service = ServiceBuilder::new().buffer(1).service(tfl_service);

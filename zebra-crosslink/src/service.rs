@@ -40,6 +40,8 @@ impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
 /// These map one to one to the variants of the same name in [`TFLServiceResponse`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TFLServiceRequest {
+    /// Is the TFL service activated yet?
+    IsTFLActivated,
     /// Get the final block hash
     FinalBlockHash,
     /// Get a receiver for the final block hash
@@ -61,6 +63,8 @@ pub enum TFLServiceRequest {
 /// These map one to one to the variants of the same name in [`TFLServiceRequest`].
 #[derive(Debug)]
 pub enum TFLServiceResponse {
+    /// Is the TFL service activated yet?
+    IsTFLActivated(bool),
     /// Final block hash
     FinalBlockHash(Option<BlockHash>),
     /// Receiver for the final block hash
@@ -122,6 +126,7 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
     read_state_service_call: ReadStateServiceProcedure,
+    config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let handle1 = TFLServiceHandle {
         internal: Arc::new(Mutex::new(TFLServiceInternal {
@@ -129,10 +134,13 @@ pub fn spawn_new_tfl_service(
             tfl_is_activated: false,
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
+            bft_block_strings: Vec::new(),
+            proposed_bft_string: None,
         })),
         call: TFLServiceCalls {
             read_state: read_state_service_call,
         },
+        config: config,
     };
     let handle2 = handle1.clone();
 
@@ -160,6 +168,7 @@ impl fmt::Debug for TFLServiceCalls {
 pub struct TFLServiceHandle {
     pub(crate) internal: Arc<Mutex<TFLServiceInternal>>,
     pub(crate) call: TFLServiceCalls,
+    pub config: crate::config::Config,
 }
 
 #[cfg(test)]

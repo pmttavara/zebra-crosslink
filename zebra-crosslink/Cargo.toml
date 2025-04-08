@@ -40,6 +40,19 @@ multiaddr = "0.18.2"
 rand = "0.8"
 serde_json = "1.0"
 sha3 = "0.10"
+tempdir = "0.3.7"
+
+static_assertions = { workspace = true }
+
+macroquad = { version = "0.4.14", optional = true }
+macroquad-profiler = { version = "0.2.0", optional = true }
+# macroquad transitive dependencies:
+image = { version = "0.24", default-features = false, features = ["png", "tga"], optional = true }
+miniquad = { version = "0.4.8", optional = true }
+
+[features]
+default = ["viz_gui"]
+viz_gui = ["macroquad", "macroquad-profiler", "image", "miniquad"]
 
 [dependencies.malachitebft-app-channel]
 version = "0.0.1"
@@ -62,3 +75,8 @@ package = "informalsystems-malachitebft-test"
 version = "0.0.1"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-test-cli"
+
+[dependencies.malachitebft-proto]
+version = "0.0.1"
+git = "https://git@github.com/informalsystems/malachite.git"
+package = "informalsystems-malachitebft-proto"
