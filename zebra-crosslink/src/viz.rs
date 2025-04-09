@@ -155,6 +155,22 @@ struct VizGlobals {
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
+const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
+
+fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> BlockHeight {
+    if height >= 0 {
+        BlockHeight(height.try_into().unwrap())
+    } else if let Some(tip) = tip {
+        tip.0.sat_sub(-height)
+    } else {
+        BlockHeight(0)
+    }
+}
+
+fn abs_block_heights(heights: (i32, i32), tip: Option<(BlockHeight, BlockHash)>) -> (BlockHeight, BlockHeight) {
+    (abs_block_height(heights.0, tip), abs_block_height(heights.1, tip))
+}
+
 /// Bridge between tokio & viz code
 pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
     let call = tfl_handle.clone().call;
@@ -171,7 +187,11 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             internal_proposed_bft_string: None,
             bft_block_strings: Vec::new(),
         }),
-        bc_req_h: (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1),
+
+        // NOTE: bitwise not of x (!x in rust) is the same as -1 - x
+        // (in 2s complement, which is how Rust's signed ints are represented)
+        // i.e. it's accessing in reverse order from the tip
+        bc_req_h: (!VIZ_REQ_N as i32, !0),
         proposed_bft_string: None,
         consumed: true,
     });
@@ -213,20 +233,8 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             };
 
             let (h_lo, h_hi) = (
-                {
-                    if lo >= 0 {
-                        BlockHeight(lo.try_into().unwrap())
-                    } else {
-                        tip_height_hash.0.sat_sub(-lo)
-                    }
-                },
-                {
-                    if hi >= 0 {
-                        BlockHeight(hi.try_into().unwrap())
-                    } else {
-                        tip_height_hash.0.sat_sub(-hi)
-                    }
-                },
+                std::cmp::min(tip_height_hash.0, abs_block_height(lo, Some(tip_height_hash))),
+                std::cmp::min(tip_height_hash.0, abs_block_height(hi, Some(tip_height_hash))),
             );
             // temp
             //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
@@ -402,6 +410,24 @@ struct VizCtx {
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
+}
+
+fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
+    let diff: i32 = d.try_into().unwrap();
+    if val >= diff || val < 0 {
+        val - diff
+    } else {
+        0
+    }
+}
+
+fn sat_add_2_sided(val: i32, d: u32) -> i32 {
+    let diff: i32 = d.try_into().unwrap();
+    if val <= -1 - diff || val > 0 {
+        val + diff
+    } else {
+        -1
+    }
 }
 
 fn draw_texture(tex: &Texture2D, pt: Vec2, col: color::Color) {
@@ -699,49 +725,51 @@ async fn viz_main(
 
             // TODO: do outside mutex
             let bc_req_h: (i32, i32) = {
-                let (lo, hi) = g.bc_req_h;
-                let (h_lo, h_hi) = (
-                    if lo >= 0 {
-                        BlockHeight(lo.try_into().unwrap())
-                    } else if let Some(tip) = g.state.bc_tip {
-                        tip.0.sat_sub(-lo)
-                    } else {
-                        BlockHeight(0)
-                    },
-                    if hi >= 0 {
-                        BlockHeight(hi.try_into().unwrap())
-                    } else if let Some(tip) = g.state.bc_tip {
-                        tip.0.sat_sub(-hi)
-                    } else {
-                        BlockHeight(0)
-                    },
-                );
+                // Hard requirements:
+                // - when starting on mainnet, we want to be at the tip (!0/-1)
+                // - if we're moving smoothly, we should add directly above or below the current
+                //   lo/hi range to maintain a continuous chain
+                // - handle being at the start of the chain
+                // - handle being at the end of the chain
+                // - handle the entire chain being smaller than the request range
+                // Soft requirements:
+                // - there should be no visible wait for loading new items on screen when scrolling
+                // - minimize the number of repeated requests
+                // - the request range shouldn't ping-pong between 2 values
+                let (h_lo, h_hi) = abs_block_heights(g.bc_req_h, g.state.bc_tip);
 
-                let mut bc_req_h = (h_lo.0 as i32, h_hi.0 as i32);
-                let mut is_set = false;
-                if let Some(on_screen_hi) = bc_h_hi_prev {
-                    if on_screen_hi + 5 >= h_hi.0 {
-                        is_set = true;
-                        bc_req_h.0 += 30;
-                        bc_req_h.1 += 30;
+                // TODO: track cached bc lo/hi and reference off that
+                let mut bids_c = 0;
+                let mut bids = [0u32; 2];
+
+                let req_o = std::cmp::min(5, h_hi.0 - h_lo.0);
+
+                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, bc_lo) {
+                    if on_screen_lo <= nodes[bc_lo].height + req_o {
+                        bids[bids_c] = nodes[bc_lo].height;
+                        bids_c += 1;
+                    }
+                }
+                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, bc_hi) {
+                    if on_screen_hi + req_o >= nodes[bc_hi].height {
+                        bids[bids_c] = nodes[bc_hi].height + VIZ_REQ_N;
+                        bids_c += 1;
                     }
                 }
 
-                if let Some(on_screen_lo) = bc_h_lo_prev {
-                    if on_screen_lo <= h_lo.0 + 5 {
-                        bc_req_h.0 -= 30;
-                        bc_req_h.1 -= 30;
-                    }
-                }
+                let mut new_hi = match bids_c {
+                    1 => bids[0],
+                    2 => (bids[0] + bids[1]) / 2,
+                    _ => h_hi.0,
+                } as i32;
 
                 if let Some(tip) = g.state.bc_tip {
-                    if bc_req_h.1 >= 0 && bc_req_h.1 as u32 >= tip.0 .0 {
-                        bc_req_h.1 = -1; // tip may have moved
+                    if new_hi + req_o as i32 >= tip.0 .0 as i32 {
+                        new_hi = !0; // tip may have moved; track it
                     }
-                }
-                // temp
-                bc_req_h.1 = -1; // tip may have moved
-                bc_req_h
+                };
+
+                (sat_sub_2_sided(new_hi, VIZ_REQ_N), new_hi)
             };
 
             if bc_req_h != g.bc_req_h {
@@ -790,7 +818,7 @@ async fn viz_main(
                     if let Some(parent) = bc_hi {
                         assert!(
                             nodes[parent].height == height - 1,
-                            "parent: {}, new: {}",
+                            "new height should be 1 greater than parent; parent height: {}, new height: {}",
                             nodes[parent].height,
                             height
                         );
@@ -1357,7 +1385,7 @@ async fn viz_main(
                 screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
                 {} hashes\n\
                 Node height range: [{:?}, {:?}]\n\
-                req: {:?}\n\
+                req: {:?} == {:?}\n\
                 Proposed BFT: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
@@ -1370,6 +1398,7 @@ async fn viz_main(
                 bc_h_lo,
                 bc_h_hi,
                 g.bc_req_h,
+                abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
             );
             draw_multiline_text(
@@ -1432,4 +1461,39 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
     });
 
     // tokio_root_thread_handle.join();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sat_sub_2_sided_normal() {
+        assert_eq!(sat_sub_2_sided(12, 6), 6);
+    }
+    #[test]
+    fn test_sat_sub_2_sided_saturate_on_0() {
+        assert_eq!(sat_sub_2_sided(3, 6), 0);
+    }
+    #[test]
+    fn test_sat_sub_2_sided_negative() {
+        assert_eq!(sat_sub_2_sided(-6, 3), -9);
+    }
+
+    #[test]
+    fn test_sat_add_2_sided_normal() {
+        assert_eq!(sat_add_2_sided(12, 6), 18);
+    }
+    #[test]
+    fn test_sat_add_2_sided_saturate_on_neg1_exact() {
+        assert_eq!(sat_add_2_sided(-3, 3), -1);
+    }
+    #[test]
+    fn test_sat_add_2_sided_saturate_on_neg1() {
+        assert_eq!(sat_add_2_sided(-3, 6), -1);
+    }
+    #[test]
+    fn test_sat_add_2_sided_negative() {
+        assert_eq!(sat_add_2_sided(-6, 3), -3);
+    }
 }
