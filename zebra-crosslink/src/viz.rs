@@ -412,6 +412,11 @@ struct VizCtx {
     nodes: Vec<Node>,
 }
 
+fn push_node(nodes: &mut Vec<Node>, node: Node) -> NodeRef {
+    nodes.push(node);
+    Some(nodes.len()-1)
+}
+
 fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
     let diff: i32 = d.try_into().unwrap();
     if val >= diff || val < 0 {
@@ -796,6 +801,7 @@ async fn viz_main(
         });
 
         if new_bc_hi {
+            // TODO: extract common code
             for (i, hash) in g.state.hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
 
@@ -823,7 +829,7 @@ async fn viz_main(
                         );
                     }
 
-                    nodes.push(Node {
+                    bc_hi = push_node(nodes, Node {
                         parent: bc_hi, // TODO: can be implicit...
                         link: None,
 
@@ -841,7 +847,7 @@ async fn viz_main(
                         // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
                         rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                     });
-                    bc_hi = Some(nodes.len() - 1);
+
                     if bc_lo.is_none() {
                         bc_lo = bc_hi;
                     }
@@ -867,7 +873,7 @@ async fn viz_main(
 
                     let height = g.state.lo_height.0 + i as u32;
 
-                    nodes.push(Node {
+                    let new_lo = push_node(nodes, Node {
                         parent: None, // new lowest
                         link: None,
 
@@ -894,9 +900,9 @@ async fn viz_main(
                             nodes[child].height,
                             height
                         );
-                        nodes[child].parent = Some(nodes.len() - 1);
+                        nodes[child].parent = new_lo;
                     }
-                    bc_lo = Some(nodes.len() - 1)
+                    bc_lo = new_lo;
 
                     if bc_hi.is_none() {
                         bc_hi = bc_lo;
@@ -911,7 +917,7 @@ async fn viz_main(
         let strings = &g.state.bft_block_strings;
         for i in new_bft_height..strings.len() {
             let s: Vec<&str> = strings[i].split(":").collect();
-            nodes.push(Node {
+            bft_parent = push_node(nodes, Node {
                 // TODO: distance should be proportional to difficulty of newer block
                 parent: bft_parent,
                 hash: None,
@@ -936,7 +942,6 @@ async fn viz_main(
                 pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
                 rad: 10.,
             });
-            bft_parent = Some(nodes.len() - 1);
         }
 
         end_zone(z_cache_blocks);
