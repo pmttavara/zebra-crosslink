@@ -789,7 +789,7 @@ async fn viz_main(
         // TODO: handle non-contiguous chunks
         let z_cache_blocks = begin_zone("cache blocks");
         // TODO: safer access
-        let new_bc_hi = bc_lo.map_or(true, |i| {
+        let new_bc_hi = bc_lo.map_or(false, |i| {
             let lo_height = g.state.lo_height.0;
             let lo_node = &nodes[i];
             lo_node.height <= lo_height
@@ -897,6 +897,10 @@ async fn viz_main(
                         nodes[child].parent = Some(nodes.len() - 1);
                     }
                     bc_lo = Some(nodes.len() - 1)
+
+                    if bc_hi.is_none() {
+                        bc_hi = bc_lo;
+                    }
                 }
             }
         }
