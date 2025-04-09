@@ -9,6 +9,7 @@ use macroquad::{
     shapes::{self, draw_triangle},
     telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard},
     text::{self, TextDimensions, TextParams},
+    texture::{self, Texture2D},
     time,
     ui::{self, hash, root_ui, widgets},
     window,
@@ -403,6 +404,9 @@ struct VizCtx {
     nodes: Vec<Node>,
 }
 
+fn draw_texture(tex: &Texture2D, pt: Vec2, col: color::Color) {
+    texture::draw_texture(tex, pt.x, pt.y, col)
+}
 fn draw_line(pt0: Vec2, pt1: Vec2, stroke_thickness: f32, col: color::Color) {
     shapes::draw_line(pt0.x, pt0.y, pt1.x, pt1.y, stroke_thickness, col)
 }
@@ -430,6 +434,20 @@ fn draw_ring(circle: Circle, thick: f32, thick_ratio: f32, col: color::Color) {
     let sides_n = 30; // TODO: base on radius
     let r = circle.r - thick_ratio * thick;
     shapes::draw_arc(circle.x, circle.y, sides_n, r, 0., thick, 360.0, col)
+}
+
+fn draw_arc(
+    pt: Vec2,
+    rad: f32,
+    rot_deg: f32,
+    arc_deg: f32,
+    thick: f32,
+    thick_ratio: f32,
+    col: color::Color,
+) {
+    let sides_n = 30; // TODO: base on radius
+    let r = rad - thick_ratio * thick;
+    shapes::draw_arc(pt.x, pt.y, sides_n, r, rot_deg, thick, arc_deg, col)
 }
 
 fn draw_arrow(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color::Color) {
@@ -580,6 +598,7 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
 
 /// Viz implementation root
 async fn viz_main(
+    png: image::DynamicImage,
     tokio_root_thread_handle: JoinHandle<()>,
 ) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
@@ -596,11 +615,39 @@ async fn viz_main(
     };
 
     let nodes = &mut ctx.nodes;
+    let bg_col = DARKBLUE;
 
     // wait for servicing thread to init
-    while VIZ_G.lock().unwrap().is_none() {
-        // TODO: more efficient spin
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    let mut rot_deg = 0.;
+    loop {
+        // draw loading/splash screen
+        let pt = vec2(0.5 * window::screen_width(), 0.5 * window::screen_height());
+
+        window::clear_background(bg_col);
+        let tex = Texture2D::from_rgba8(
+            png.width().try_into().unwrap(),
+            png.height().try_into().unwrap(),
+            png.as_bytes(),
+        );
+        let tex_size = tex.size();
+        draw_texture(&tex, pt - vec2(0.5 * tex_size.x, 1.2 * tex_size.y), WHITE);
+
+        draw_text_align(
+            "Waiting for zebra to start up...",
+            pt,
+            40.,
+            WHITE,
+            vec2(0.5, 0.5),
+        );
+
+        draw_arc(pt + vec2(0., 90.), 30., rot_deg, 60., 3., 0., WHITE);
+        let dt = 1. / 60.;
+        rot_deg += 360. / 1.25 * dt; // 1 rotation per 1.25 seconds
+
+        if VIZ_G.lock().unwrap().is_some() {
+            break;
+        }
+        window::next_frame().await;
     }
 
     let mut hover_circle_start = Circle::_0;
@@ -630,7 +677,6 @@ async fn viz_main(
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
-    let bg_col = DARKBLUE;
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
@@ -1359,15 +1405,15 @@ async fn viz_main(
 
 /// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)
 pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
+    let png_bytes = include_bytes!("../../book/theme/favicon.png");
+    let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
+
     let config = window::Conf {
         window_title: "Zcash blocks".to_owned(),
         fullscreen: false,
         window_width: 1200,
         window_height: 800,
         icon: Some({
-            let png_bytes = include_bytes!("../../book/theme/favicon.png");
-            let png =
-                image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
             let icon16 = png.thumbnail_exact(16, 16);
             let icon32 = png.thumbnail_exact(32, 32);
             let icon64 = png.thumbnail_exact(64, 64);
@@ -1380,7 +1426,7 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
         ..Default::default()
     };
     macroquad::Window::from_config(config, async {
-        if let Err(err) = viz_main(tokio_root_thread_handle).await {
+        if let Err(err) = viz_main(png, tokio_root_thread_handle).await {
             macroquad::logging::error!("Error: {:?}", err);
         }
     });
