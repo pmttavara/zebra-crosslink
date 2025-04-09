@@ -676,8 +676,7 @@ async fn viz_main(
         window::next_frame().await;
     }
 
-    let mut hover_circle_start = Circle::_0;
-    let mut hover_circle = Circle::_0;
+    let mut hover_circle_rad = 0.;
     let mut old_hover_node_i: NodeRef = None;
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
@@ -1170,32 +1169,29 @@ async fn viz_main(
                 }
             }
 
-            let rad_mul = if let Some(node_i) = hover_node_i {
-                let hover_node = &nodes[node_i];
-                if hover_node_i != old_hover_node_i {
-                    hover_circle = hover_node.circle();
-                    hover_circle_start = hover_circle;
-                }
-                old_hover_node_i = hover_node_i;
+            hover_node_i
+        };
 
-                std::f32::consts::SQRT_2
-            } else {
-                0.9
-            };
+        let rad_mul = if let Some(node_i) = hover_node_i {
+            old_hover_node_i = hover_node_i;
+            std::f32::consts::SQRT_2
+        } else {
+            0.9
+        };
 
-            let target_rad = hover_circle_start.r * rad_mul;
-            hover_circle.r = hover_circle.r.lerp(target_rad, 0.1);
-            if hover_circle.r > hover_circle_start.r {
+        if let Some(old_hover_node_i) = old_hover_node_i {
+            let old_hover_node = &nodes[old_hover_node_i];
+            let target_rad = old_hover_node.rad * rad_mul;
+            hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
+            if hover_circle_rad > old_hover_node.rad {
                 let col = if mouse_l_is_world_down {
                     YELLOW
                 } else {
                     SKYBLUE
                 };
-                draw_ring(hover_circle, 2., 1., col);
+                draw_ring(make_circle(old_hover_node.pt, hover_circle_rad), 2., 1., col);
             }
-
-            hover_node_i
-        };
+        }
 
         // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
         if mouse_l_is_world_pressed {
