@@ -1385,9 +1385,9 @@ async fn viz_main(
                     let intended_height = nodes[node_i].work.map_or(100., |work| {
                         150. * work.as_u128() as f32 / bc_work_max as f32
                     });
-                    let wanted_y = parent.pt.y - intended_height;
-                    let d_y = a_pt.y - wanted_y;
-                    let force = vec2(0., -0.5 * spring_stiffness * d_y);
+                    let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
+                    let v = (a_pt - target_pt);
+                    let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
                     nodes[node_i].acc += force;
 
                     dbg.new_force(node_i, force);
@@ -1406,7 +1406,8 @@ async fn viz_main(
                         // fallback to push coincident nodes apart horizontally
                         let dir = b_to_a.normalize_or(vec2(1., 0.));
                         let target_pt = node_b.pt + dir * target_dist;
-                        let force = -spring_stiffness * (a_pt - target_pt);
+                        let v = (a_pt - target_pt);
+                        let force = -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
                         nodes[node_i].acc += force;
 
                         dbg.new_force(node_i, force);
