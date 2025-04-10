@@ -516,11 +516,6 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                 nodes[parent.expect("Need at least 1 of parent or height")].height + 1
             };
 
-            // let dy = work.map_or(100., |work| {
-            //     150. * work.as_u128() as f32 / bc_work_max as f32
-            // });
-
-
             (
                 Node {
                     parent,
@@ -581,7 +576,7 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
 
     if needs_fixup {
         if let Some(parent) = new_node.parent {
-            new_node.pt = nodes[parent].pt - vec2(0., 100.);
+            new_node.pt = nodes[parent].pt - vec2(0., nodes[parent].rad + new_node.rad + 10.);
         }
     }
 
@@ -1377,16 +1372,20 @@ async fn viz_main(
         //     move or just child)
         // - cross-chain links aim for horizontal(?)
         // - all other nodes try to enforce a certain distance
+        // - move perpendicularly/horizontally away from non-coincident edges
 
         // calculate forces
-        let spring_stiffness = 60.;
+        let spring_stiffness = 120.;
         for node_i in 0..nodes.len() {
             // parent-child height - O(n) //////////////////////////////
             let a_pt =
                 nodes[node_i].pt + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
             if let Some(parent_i) = nodes[node_i].parent {
                 if let Some(parent) = nodes.get(parent_i) {
-                    let wanted_y = parent.pt.y - 100.;
+                    let intended_height = nodes[node_i].work.map_or(100., |work| {
+                        150. * work.as_u128() as f32 / bc_work_max as f32
+                    });
+                    let wanted_y = parent.pt.y - intended_height;
                     let d_y = a_pt.y - wanted_y;
                     let force = vec2(0., -0.5 * spring_stiffness * d_y);
                     nodes[node_i].acc += force;
