@@ -14,6 +14,7 @@ use macroquad::{
     ui::{self, hash, root_ui, widgets},
     window,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use zebra_chain::work::difficulty::Work;
@@ -142,6 +143,24 @@ struct VizState {
 
     internal_proposed_bft_string: Option<String>,
     bft_block_strings: Vec<String>,
+}
+
+/// self-debug info
+struct VizDbg {
+    nodes_forces: HashMap<usize, Vec<Vec2>>,
+}
+
+impl VizDbg {
+    fn new_force(&mut self, node_i: usize, force: Vec2) {
+        if dev(true) {
+            let mut forces = self.nodes_forces.get_mut(&node_i);
+            if let Some(forces) = forces.as_mut() {
+                forces.push(force);
+            } else {
+                self.nodes_forces.insert(node_i, vec![force]);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -325,6 +344,8 @@ struct Node {
 
     // presentation
     pt: Vec2,
+    vel: Vec2,
+    acc: Vec2,
     rad: f32,
 }
 
@@ -476,6 +497,8 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     },
 
                     pt: Vec2::_0,
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
                 },
                 true
             )
@@ -514,6 +537,8 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     rad,
 
                     pt: Vec2::_0,
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
                 },
                 true
             )
@@ -545,6 +570,8 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     is_real,
 
                     pt: vec2(100., 0.),
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
                     rad,
                 },
                 true
@@ -633,6 +660,15 @@ fn draw_arrow(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color
     let perp = dir.perp() * 0.5 * head_size;
     draw_line(bgn_pt, line_end_pt, thick, col);
     draw_triangle(end_pt, line_end_pt + perp, line_end_pt - perp, col);
+}
+
+fn draw_arrow_lines(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color::Color) {
+    let dir = (end_pt - bgn_pt).normalize_or_zero();
+    let line_end_pt = end_pt - dir * head_size;
+    let perp = dir.perp() * 0.5 * head_size;
+    draw_line(bgn_pt, end_pt, thick, col);
+    draw_line(end_pt, line_end_pt + perp, thick, col);
+    draw_line(end_pt, line_end_pt - perp, thick, col);
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
@@ -858,8 +894,15 @@ async fn viz_main(
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
     let mut bc_work_max: u128 = 0;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+
+    let mut dbg = VizDbg {
+        nodes_forces: HashMap::new(),
+    };
 
     loop {
+        dbg.nodes_forces.clear();
+
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
 
         // TFL DATA ////////////////////////////////////////
@@ -1012,45 +1055,45 @@ async fn viz_main(
                         nodes[new_lo.unwrap()].pt = nodes[child].pt + vec2(0., 100.);
 
                         assert!(nodes[child].parent.is_none());
-                        assert!(
-                            nodes[child].height == height + 1,
-                            "child: {}, new: {}",
-                            nodes[child].height,
-                            height
-                        );
-                        nodes[child].parent = new_lo;
-                    }
-                    bc_lo = new_lo;
+                            assert!(
+                                nodes[child].height == height + 1,
+                                "child: {}, new: {}",
+                                nodes[child].height,
+                                height
+                            );
+                            nodes[child].parent = new_lo;
+                        }
+                        bc_lo = new_lo;
 
-                    if bc_hi.is_none() {
-                        bc_hi = bc_lo;
+                        if bc_hi.is_none() {
+                            bc_hi = bc_lo;
+                        }
                     }
                 }
             }
-        }
 
-        let new_bft_height = bft_parent
-            .and_then(|i| nodes.get(i))
-            .map_or(0, |parent| parent.height + 1) as usize;
-        let strings = &g.state.bft_block_strings;
-        for i in new_bft_height..strings.len() {
-            let s: Vec<&str> = strings[i].split(":").collect();
-            bft_parent = push_node(nodes, NodeInit::BFT {
-                // TODO: distance should be proportional to difficulty of newer block
-                parent: bft_parent,
-                is_real: false,
+            let new_bft_height = bft_parent
+                .and_then(|i| nodes.get(i))
+                .map_or(0, |parent| parent.height + 1) as usize;
+            let strings = &g.state.bft_block_strings;
+            for i in new_bft_height..strings.len() {
+                let s: Vec<&str> = strings[i].split(":").collect();
+                bft_parent = push_node(nodes, NodeInit::BFT {
+                    // TODO: distance should be proportional to difficulty of newer block
+                    parent: bft_parent,
+                    is_real: false,
 
-                text: s[0].to_owned(),
-                link: {
-                    let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
-                    if let Some(bc_i) = bc {
-                        find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
-                    } else {
-                        None
-                    }
-                },
+                    text: s[0].to_owned(),
+                    link: {
+                        let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
+                        if let Some(bc_i) = bc {
+                            find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                        } else {
+                            None
+                        }
+                    },
                     height: bft_parent.map_or(Some(0), |_| None),
-            });
+                });
         }
 
         end_zone(z_cache_blocks);
@@ -1202,6 +1245,7 @@ async fn viz_main(
             );
         }
 
+        // DEBUG NODE/BFT INPUTS ////////////////////////////////////////////////////////////
         let text_size = vec2(32. * ch_w, 1.2 * font_size);
         let bc_i_size = vec2(15. * ch_w, text_size.y);
         // TODO: is there a nicer way of sizing windows to multiple items?
@@ -1260,6 +1304,8 @@ async fn viz_main(
             },
         );
 
+
+        // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
         let hover_node_i: NodeRef = if mouse_is_over_ui {
             None
         } else {
@@ -1324,6 +1370,64 @@ async fn viz_main(
             }
         }
 
+        // APPLY SPRING FORCES ////////////////////////////////////////////////////////////
+        // TODO:
+        // - parent-child nodes should be a certain *height* apart (x-distance unimportant)
+        //   - TODO: is this a symmetrical/asymmetrical/one-way force? (e.g. both parent & child
+        //     move or just child)
+        // - cross-chain links aim for horizontal(?)
+        // - all other nodes try to enforce a certain distance
+
+        // calculate forces
+        let spring_stiffness = 60.;
+        for node_i in 0..nodes.len() {
+            // parent-child height - O(n) //////////////////////////////
+            let a_pt =
+                nodes[node_i].pt + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
+            if let Some(parent_i) = nodes[node_i].parent {
+                if let Some(parent) = nodes.get(parent_i) {
+                    let wanted_y = parent.pt.y - 100.;
+                    let d_y = a_pt.y - wanted_y;
+                    let force = vec2(0., -0.5 * spring_stiffness * d_y);
+                    nodes[node_i].acc += force;
+
+                    dbg.new_force(node_i, force);
+                }
+            }
+
+            // any-node distance - O(n^2) //////////////////////////////
+            // TODO: spatial partitioning
+            for node_i2 in 0..nodes.len() {
+                let node_b = &nodes[node_i2];
+                if node_i2 != node_i {
+                    let b_to_a = a_pt - node_b.pt;
+                    let dist_sq = b_to_a.length_squared();
+                    let target_dist = 50.;
+                    if dist_sq < (target_dist * target_dist) {
+                        // fallback to push coincident nodes apart horizontally
+                        let dir = b_to_a.normalize_or(vec2(1., 0.));
+                        let target_pt = node_b.pt + dir * target_dist;
+                        let force = -spring_stiffness * (a_pt - target_pt);
+                        nodes[node_i].acc += force;
+
+                        dbg.new_force(node_i, force);
+                    }
+                }
+            }
+        }
+
+        let dt = 1. / 60.;
+        if true {
+            // apply forces
+            for node in &mut *nodes {
+                node.vel += node.acc * dt;
+                node.pt += node.vel * dt;
+
+                node.acc = -0.5 * spring_stiffness * node.vel; // TODO: or slight drag?
+            }
+        }
+
+        // DRAW NODES & SELECTED-NODE UI ////////////////////////////////////////////////////////////
         let unique_chars_n = block_hash_unique_chars_n(nodes);
 
         if let Some(click_node_i) = click_node_i {
@@ -1369,6 +1473,7 @@ async fn viz_main(
                 },
             );
         }
+
 
         // ALT: EoA
         let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
@@ -1467,6 +1572,26 @@ async fn viz_main(
             }
         }
         end_zone(z_draw_nodes);
+
+        if dev(true) {
+            // draw forces
+            // draw resultant force
+            for node in &mut *nodes {
+                if node.acc != Vec2::_0 {
+                    draw_arrow_lines(node.pt, node.pt + node.acc * dt, 1., 9., PURPLE);
+                }
+            }
+
+            // draw component forces
+            for (node_i, forces) in dbg.nodes_forces.iter() {
+                let node = &nodes[*node_i];
+                for force in forces {
+                    if *force != Vec2::_0 {
+                        draw_arrow_lines(node.pt, node.pt + *force * dt, 1., 9., ORANGE);
+                    };
+                }
+            }
+        }
 
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
