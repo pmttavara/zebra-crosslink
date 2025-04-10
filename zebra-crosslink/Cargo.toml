@@ -42,23 +42,23 @@ serde_json = "1.0"
 sha3 = "0.10"
 
 [dependencies.malachitebft-app-channel]
-tag = "v0.0.1"
+version = "0.1.0"
 # This adds the `informalsystems-malachitebft-app-channel` as a dependency, but exposes it
 # under `malachitebft_app_channel` instead of its full package name.
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-app-channel"
 
 [dependencies.malachitebft-config]
-tag = "v0.0.1"
+version = "0.1.0"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-config"
 
 [dependencies.malachitebft-test]
-tag = "v0.0.1"
+version = "0.1.0"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-test"
 
 [dependencies.malachitebft-test-cli]
-tag = "v0.0.1"
+version = "0.1.0"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-test-cli"
