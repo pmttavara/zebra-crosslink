@@ -328,6 +328,44 @@ struct Node {
     rad: f32,
 }
 
+enum NodeInit {
+    Node(Node),
+
+    Dyn {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+
+        // data
+        kind: NodeKind,
+        text: String,
+        hash: Option<[u8; 32]>,
+        height: u32,
+        work: Option<Work>,
+        txs_n: u32, // N.B. includes coinbase
+
+        is_real: bool,
+    },
+
+    BC {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+        hash: Option<[u8; 32]>,
+        height: Option<u32>, // if None, works out from parent
+        work: Option<Work>,
+        txs_n: u32, // N.B. includes coinbase
+        is_real: bool,
+    },
+
+    BFT {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+        text: String,
+        height: Option<u32>, // if None, works out from parent
+        is_real: bool,
+    },
+}
+
+
 impl Node {
     fn circle(&self) -> Circle {
         Circle::new(self.pt.x, self.pt.y, self.rad)
@@ -412,8 +450,116 @@ struct VizCtx {
     nodes: Vec<Node>,
 }
 
-fn push_node(nodes: &mut Vec<Node>, node: Node) -> NodeRef {
-    nodes.push(node);
+
+fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
+    // TODO: dynamically update length & rad
+    // TODO: could overlay internal circle/rings for shielded/transparent
+
+    let (mut new_node, needs_fixup): (Node, bool) = match node {
+        NodeInit::Node(node) => (node, false),
+
+        NodeInit::Dyn{ parent, link, kind, text, hash, height, work, txs_n, is_real } => {
+            (
+                Node {
+                    parent,
+                    link,
+                    kind,
+                    text,
+                    hash,
+                    height, // TODO: this should be exclusively determined by parent for Dyn
+                    work,
+                    txs_n,
+                    is_real,
+                    rad: match kind {
+                        NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
+                        NodeKind::BFT => 10.,
+                    },
+
+                    pt: Vec2::_0,
+                },
+                true
+            )
+        },
+
+        NodeInit::BC {parent, link, hash, height, work, txs_n, is_real} => {
+            // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+            let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
+
+            // DUP
+            let height = if let Some(height) = height {
+                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                height
+            } else {
+                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+            };
+
+            // let dy = work.map_or(100., |work| {
+            //     150. * work.as_u128() as f32 / bc_work_max as f32
+            // });
+
+
+            (
+                Node {
+                    parent,
+                    link,
+
+                    kind: NodeKind::BC,
+                    hash,
+                    height,
+                    work,
+                    txs_n,
+                    is_real,
+
+                    text: "".to_string(),
+                    rad,
+
+                    pt: Vec2::_0,
+                },
+                true
+            )
+        }
+
+        NodeInit::BFT {parent, link, height, text, is_real} => {
+            let rad = 10.;
+            // DUP
+            let height = if let Some(height) = height {
+                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                height
+            } else {
+                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+            };
+
+            (
+                Node {
+                    parent,
+                    link,
+
+                    hash: None,
+                    work: None,
+                    txs_n: 0,
+
+                    kind: NodeKind::BFT,
+                    height,
+                    text,
+
+                    is_real,
+
+                    pt: vec2(100., 0.),
+                    rad,
+                },
+                true
+            )
+        }
+    };
+
+    if needs_fixup {
+        if let Some(parent) = new_node.parent {
+            new_node.pt = nodes[parent].pt - vec2(0., 100.);
+        }
+    }
+
+    nodes.push(new_node);
+
     Some(nodes.len()-1)
 }
 
@@ -813,39 +959,19 @@ async fn viz_main(
                         )
                     });
 
-                    let dy = work.map_or(100., |work| {
+                    if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-
-                        150. * work.as_u128() as f32 / bc_work_max as f32
-                    });
-
-                    let height = g.state.lo_height.0 + i as u32;
-                    if let Some(parent) = bc_hi {
-                        assert!(
-                            nodes[parent].height == height - 1,
-                            "new height should be 1 greater than parent; parent height: {}, new height: {}",
-                            nodes[parent].height,
-                            height
-                        );
                     }
 
-                    bc_hi = push_node(nodes, Node {
+                    bc_hi = push_node(nodes, NodeInit::BC {
                         parent: bc_hi, // TODO: can be implicit...
                         link: None,
 
-                        text: "".to_string(),
-                        kind: NodeKind::BC,
                         hash: Some(hash.0),
-                        height,
+                        height: Some(g.state.lo_height.0 + i as u32),
                         work,
                         txs_n,
                         is_real: true,
-
-                        // TODO: dynamically update length & rad
-                        pt: bc_hi.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
-                        // TODO: could overlay internal circle/rings for shielded/transparent
-                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                     });
 
                     if bc_lo.is_none() {
@@ -865,34 +991,26 @@ async fn viz_main(
                         )
                     });
 
-                    let dy = work.map_or(100., |work| {
+                    if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-
-                        150. * work.as_u128() as f32 / bc_work_max as f32
-                    });
+                    }
 
                     let height = g.state.lo_height.0 + i as u32;
 
-                    let new_lo = push_node(nodes, Node {
+                    let new_lo = push_node(nodes, NodeInit::BC {
                         parent: None, // new lowest
                         link: None,
 
-                        text: "".to_string(),
-                        kind: NodeKind::BC,
                         hash: Some(hash.0),
-                        height,
+                        height: Some(height), // TODO: -?
                         work,
                         txs_n,
                         is_real: true,
-
-                        // TODO: dynamically update length & rad
-                        pt: bc_lo.map_or(Vec2::_0, |i| nodes[i].pt + vec2(0., dy)),
-                        // TODO: could overlay internal circle/rings for shielded/transparent
-                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                     });
 
                     if let Some(child) = bc_lo {
+                        nodes[new_lo.unwrap()].pt = nodes[child].pt + vec2(0., 100.);
+
                         assert!(nodes[child].parent.is_none());
                         assert!(
                             nodes[child].height == height + 1,
@@ -917,15 +1035,11 @@ async fn viz_main(
         let strings = &g.state.bft_block_strings;
         for i in new_bft_height..strings.len() {
             let s: Vec<&str> = strings[i].split(":").collect();
-            bft_parent = push_node(nodes, Node {
+            bft_parent = push_node(nodes, NodeInit::BFT {
                 // TODO: distance should be proportional to difficulty of newer block
                 parent: bft_parent,
-                hash: None,
-                work: None,
-                txs_n: 0,
                 is_real: false,
 
-                kind: NodeKind::BFT,
                 text: s[0].to_owned(),
                 link: {
                     let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
@@ -935,12 +1049,7 @@ async fn viz_main(
                         None
                     }
                 },
-                height: bft_parent
-                    .and_then(|i| nodes.get(i))
-                    .map_or(0, |parent| parent.height + 1),
-
-                pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
-                rad: 10.,
+                    height: bft_parent.map_or(Some(0), |_| None),
             });
         }
 
@@ -1121,15 +1230,10 @@ async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    nodes.push(Node {
-                        // TODO: distance should be proportional to difficulty of newer block
+                    bft_parent = push_node(nodes, NodeInit::BFT {
                         parent: bft_parent,
-                        hash: None,
-                        work: None,
-                        txs_n: 0,
                         is_real: false,
 
-                        kind: NodeKind::BFT,
                         text: node_str.clone(),
                         link: {
                             let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -1139,17 +1243,8 @@ async fn viz_main(
                                 None
                             }
                         },
-                        height: bft_parent
-                            .and_then(|i| nodes.get(i))
-                            .map_or(0, |parent| parent.height + 1),
-
-                        // TODO: base rad on num transactions?
-                        // could overlay internal circle/rings for shielded/transparent
-                        // min distance = 2 radii (avoid overlap if at all possible)
-                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 20.)),
-                        rad: 10.,
+                        height: bft_parent.map_or(Some(0), |_| None),
                     });
-                    bft_parent = Some(nodes.len() - 1);
 
                     node_str = "".to_string();
                     target_bc_str = "".to_string();
@@ -1211,7 +1306,7 @@ async fn viz_main(
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 let hover_node = &nodes[hover_node_i.unwrap()];
-                nodes.push(Node {
+                push_node(nodes, NodeInit::Dyn {
                     parent: hover_node_i,
                     link: None,
 
@@ -1223,9 +1318,6 @@ async fn viz_main(
                     is_real: false,
                     work: None,
                     txs_n: 0,
-
-                    pt: vec2(hover_node.pt.x, hover_node.pt.y - 100.),
-                    rad: 10.,
                 });
             } else {
                 click_node_i = hover_node_i;
