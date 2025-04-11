@@ -1355,7 +1355,7 @@ async fn viz_main(
                     height: hover_node.height + 1,
 
                     text: "".to_string(),
-                    hash: None,
+                    hash: if hover_node.kind == NodeKind::BC  { Some([0;32])  } else { None },
                     is_real: false,
                     work: None,
                     txs_n: 0,
@@ -1375,7 +1375,7 @@ async fn viz_main(
         // - move perpendicularly/horizontally away from non-coincident edges
 
         // calculate forces
-        let spring_stiffness = 120.;
+        let spring_stiffness = 160.;
         for node_i in 0..nodes.len() {
             // parent-child height - O(n) //////////////////////////////
             let a_pt =
@@ -1386,7 +1386,7 @@ async fn viz_main(
                         150. * work.as_u128() as f32 / bc_work_max as f32
                     });
                     let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
-                    let v = (a_pt - target_pt);
+                    let v = a_pt - target_pt;
                     let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
                     nodes[node_i].acc += force;
 
@@ -1406,7 +1406,7 @@ async fn viz_main(
                         // fallback to push coincident nodes apart horizontally
                         let dir = b_to_a.normalize_or(vec2(1., 0.));
                         let target_pt = node_b.pt + dir * target_dist;
-                        let v = (a_pt - target_pt);
+                        let v = a_pt - target_pt;
                         let force = -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
                         nodes[node_i].acc += force;
 
