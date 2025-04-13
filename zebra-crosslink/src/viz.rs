@@ -1686,7 +1686,7 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
 
     #[test]
