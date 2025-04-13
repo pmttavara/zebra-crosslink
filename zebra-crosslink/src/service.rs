@@ -200,7 +200,7 @@ mod tests {
             call: TFLServiceCalls {
                 read_state: read_state_service,
             },
-            config: Default::default(),
+            config: crate::config::Config::default(),
         }
     }
 
