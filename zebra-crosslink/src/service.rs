@@ -188,6 +188,8 @@ mod tests {
             tfl_is_activated: false, // dup of Some/None(latest_final_block)?
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
+            bft_block_strings: Vec::new(),
+            proposed_bft_string: None,
         }));
 
         let read_state_service: ReadStateServiceProcedure =
@@ -198,6 +200,7 @@ mod tests {
             call: TFLServiceCalls {
                 read_state: read_state_service,
             },
+            config: Default::default(),
         }
     }
 

@@ -9,10 +9,12 @@ use macroquad::{
     shapes::{self, draw_triangle},
     telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard},
     text::{self, TextDimensions, TextParams},
+    texture::{self, Texture2D},
     time,
     ui::{self, hash, root_ui, widgets},
     window,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use zebra_chain::work::difficulty::Work;
@@ -143,6 +145,24 @@ struct VizState {
     bft_block_strings: Vec<String>,
 }
 
+/// self-debug info
+struct VizDbg {
+    nodes_forces: HashMap<usize, Vec<Vec2>>,
+}
+
+impl VizDbg {
+    fn new_force(&mut self, node_i: usize, force: Vec2) {
+        if dev(true) {
+            let mut forces = self.nodes_forces.get_mut(&node_i);
+            if let Some(forces) = forces.as_mut() {
+                forces.push(force);
+            } else {
+                self.nodes_forces.insert(node_i, vec![force]);
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct VizGlobals {
     state: std::sync::Arc<VizState>,
@@ -153,6 +173,22 @@ struct VizGlobals {
     proposed_bft_string: Option<String>,
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+
+const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
+
+fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> BlockHeight {
+    if height >= 0 {
+        BlockHeight(height.try_into().unwrap())
+    } else if let Some(tip) = tip {
+        tip.0.sat_sub(-height)
+    } else {
+        BlockHeight(0)
+    }
+}
+
+fn abs_block_heights(heights: (i32, i32), tip: Option<(BlockHeight, BlockHash)>) -> (BlockHeight, BlockHeight) {
+    (abs_block_height(heights.0, tip), abs_block_height(heights.1, tip))
+}
 
 /// Bridge between tokio & viz code
 pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
@@ -170,7 +206,11 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             internal_proposed_bft_string: None,
             bft_block_strings: Vec::new(),
         }),
-        bc_req_h: (-1 - zebra_state::MAX_BLOCK_REORG_HEIGHT as i32, -1),
+
+        // NOTE: bitwise not of x (!x in rust) is the same as -1 - x
+        // (in 2s complement, which is how Rust's signed ints are represented)
+        // i.e. it's accessing in reverse order from the tip
+        bc_req_h: (!VIZ_REQ_N as i32, !0),
         proposed_bft_string: None,
         consumed: true,
     });
@@ -212,20 +252,8 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             };
 
             let (h_lo, h_hi) = (
-                {
-                    if lo >= 0 {
-                        BlockHeight(lo.try_into().unwrap())
-                    } else {
-                        tip_height_hash.0.sat_sub(-lo)
-                    }
-                },
-                {
-                    if hi >= 0 {
-                        BlockHeight(hi.try_into().unwrap())
-                    } else {
-                        tip_height_hash.0.sat_sub(-hi)
-                    }
-                },
+                std::cmp::min(tip_height_hash.0, abs_block_height(lo, Some(tip_height_hash))),
+                std::cmp::min(tip_height_hash.0, abs_block_height(hi, Some(tip_height_hash))),
             );
             // temp
             //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
@@ -316,8 +344,48 @@ struct Node {
 
     // presentation
     pt: Vec2,
+    vel: Vec2,
+    acc: Vec2,
     rad: f32,
 }
+
+enum NodeInit {
+    Node(Node),
+
+    Dyn {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+
+        // data
+        kind: NodeKind,
+        text: String,
+        hash: Option<[u8; 32]>,
+        height: u32,
+        work: Option<Work>,
+        txs_n: u32, // N.B. includes coinbase
+
+        is_real: bool,
+    },
+
+    BC {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+        hash: Option<[u8; 32]>,
+        height: Option<u32>, // if None, works out from parent
+        work: Option<Work>,
+        txs_n: u32, // N.B. includes coinbase
+        is_real: bool,
+    },
+
+    BFT {
+        parent: NodeRef, // TODO: do we need explicit edges?
+        link: NodeRef,
+        text: String,
+        height: Option<u32>, // if None, works out from parent
+        is_real: bool,
+    },
+}
+
 
 impl Node {
     fn circle(&self) -> Circle {
@@ -403,6 +471,141 @@ struct VizCtx {
     nodes: Vec<Node>,
 }
 
+
+fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
+    // TODO: dynamically update length & rad
+    // TODO: could overlay internal circle/rings for shielded/transparent
+
+    let (mut new_node, needs_fixup): (Node, bool) = match node {
+        NodeInit::Node(node) => (node, false),
+
+        NodeInit::Dyn{ parent, link, kind, text, hash, height, work, txs_n, is_real } => {
+            (
+                Node {
+                    parent,
+                    link,
+                    kind,
+                    text,
+                    hash,
+                    height, // TODO: this should be exclusively determined by parent for Dyn
+                    work,
+                    txs_n,
+                    is_real,
+                    rad: match kind {
+                        NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
+                        NodeKind::BFT => 10.,
+                    },
+
+                    pt: Vec2::_0,
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
+                },
+                true
+            )
+        },
+
+        NodeInit::BC {parent, link, hash, height, work, txs_n, is_real} => {
+            // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+            let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
+
+            // DUP
+            let height = if let Some(height) = height {
+                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                height
+            } else {
+                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+            };
+
+            (
+                Node {
+                    parent,
+                    link,
+
+                    kind: NodeKind::BC,
+                    hash,
+                    height,
+                    work,
+                    txs_n,
+                    is_real,
+
+                    text: "".to_string(),
+                    rad,
+
+                    pt: Vec2::_0,
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
+                },
+                true
+            )
+        }
+
+        NodeInit::BFT {parent, link, height, text, is_real} => {
+            let rad = 10.;
+            // DUP
+            let height = if let Some(height) = height {
+                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                height
+            } else {
+                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+            };
+
+            (
+                Node {
+                    parent,
+                    link,
+
+                    hash: None,
+                    work: None,
+                    txs_n: 0,
+
+                    kind: NodeKind::BFT,
+                    height,
+                    text,
+
+                    is_real,
+
+                    pt: vec2(100., 0.),
+                    vel: Vec2::_0,
+                    acc: Vec2::_0,
+                    rad,
+                },
+                true
+            )
+        }
+    };
+
+    if needs_fixup {
+        if let Some(parent) = new_node.parent {
+            new_node.pt = nodes[parent].pt - vec2(0., nodes[parent].rad + new_node.rad + 10.);
+        }
+    }
+
+    nodes.push(new_node);
+
+    Some(nodes.len()-1)
+}
+
+fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
+    let diff: i32 = d.try_into().unwrap();
+    if val >= diff || val < 0 {
+        val - diff
+    } else {
+        0
+    }
+}
+
+fn sat_add_2_sided(val: i32, d: u32) -> i32 {
+    let diff: i32 = d.try_into().unwrap();
+    if val <= -1 - diff || val > 0 {
+        val + diff
+    } else {
+        -1
+    }
+}
+
+fn draw_texture(tex: &Texture2D, pt: Vec2, col: color::Color) {
+    texture::draw_texture(tex, pt.x, pt.y, col)
+}
 fn draw_line(pt0: Vec2, pt1: Vec2, stroke_thickness: f32, col: color::Color) {
     shapes::draw_line(pt0.x, pt0.y, pt1.x, pt1.y, stroke_thickness, col)
 }
@@ -432,12 +635,35 @@ fn draw_ring(circle: Circle, thick: f32, thick_ratio: f32, col: color::Color) {
     shapes::draw_arc(circle.x, circle.y, sides_n, r, 0., thick, 360.0, col)
 }
 
+fn draw_arc(
+    pt: Vec2,
+    rad: f32,
+    rot_deg: f32,
+    arc_deg: f32,
+    thick: f32,
+    thick_ratio: f32,
+    col: color::Color,
+) {
+    let sides_n = 30; // TODO: base on radius
+    let r = rad - thick_ratio * thick;
+    shapes::draw_arc(pt.x, pt.y, sides_n, r, rot_deg, thick, arc_deg, col)
+}
+
 fn draw_arrow(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color::Color) {
     let dir = (end_pt - bgn_pt).normalize_or_zero();
     let line_end_pt = end_pt - dir * head_size;
     let perp = dir.perp() * 0.5 * head_size;
     draw_line(bgn_pt, line_end_pt, thick, col);
     draw_triangle(end_pt, line_end_pt + perp, line_end_pt - perp, col);
+}
+
+fn draw_arrow_lines(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col: color::Color) {
+    let dir = (end_pt - bgn_pt).normalize_or_zero();
+    let line_end_pt = end_pt - dir * head_size;
+    let perp = dir.perp() * 0.5 * head_size;
+    draw_line(bgn_pt, end_pt, thick, col);
+    draw_line(end_pt, line_end_pt + perp, thick, col);
+    draw_line(end_pt, line_end_pt - perp, thick, col);
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
@@ -580,6 +806,7 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
 
 /// Viz implementation root
 async fn viz_main(
+    png: image::DynamicImage,
     tokio_root_thread_handle: JoinHandle<()>,
 ) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
@@ -596,15 +823,42 @@ async fn viz_main(
     };
 
     let nodes = &mut ctx.nodes;
+    let bg_col = DARKBLUE;
 
     // wait for servicing thread to init
-    while VIZ_G.lock().unwrap().is_none() {
-        // TODO: more efficient spin
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    let mut rot_deg = 0.;
+    loop {
+        // draw loading/splash screen
+        let pt = vec2(0.5 * window::screen_width(), 0.5 * window::screen_height());
+
+        window::clear_background(bg_col);
+        let tex = Texture2D::from_rgba8(
+            png.width().try_into().unwrap(),
+            png.height().try_into().unwrap(),
+            png.as_bytes(),
+        );
+        let tex_size = tex.size();
+        draw_texture(&tex, pt - vec2(0.5 * tex_size.x, 1.2 * tex_size.y), WHITE);
+
+        draw_text_align(
+            "Waiting for zebra to start up...",
+            pt,
+            40.,
+            WHITE,
+            vec2(0.5, 0.5),
+        );
+
+        draw_arc(pt + vec2(0., 90.), 30., rot_deg, 60., 3., 0., WHITE);
+        let dt = 1. / 60.;
+        rot_deg += 360. / 1.25 * dt; // 1 rotation per 1.25 seconds
+
+        if VIZ_G.lock().unwrap().is_some() {
+            break;
+        }
+        window::next_frame().await;
     }
 
-    let mut hover_circle_start = Circle::_0;
-    let mut hover_circle = Circle::_0;
+    let mut hover_circle_rad = 0.;
     let mut old_hover_node_i: NodeRef = None;
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
@@ -630,14 +884,20 @@ async fn viz_main(
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
-    let bg_col = DARKBLUE;
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
     let mut bc_work_max: u128 = 0;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+
+    let mut dbg = VizDbg {
+        nodes_forces: HashMap::new(),
+    };
 
     loop {
+        dbg.nodes_forces.clear();
+
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
 
         // TFL DATA ////////////////////////////////////////
@@ -653,49 +913,51 @@ async fn viz_main(
 
             // TODO: do outside mutex
             let bc_req_h: (i32, i32) = {
-                let (lo, hi) = g.bc_req_h;
-                let (h_lo, h_hi) = (
-                    if lo >= 0 {
-                        BlockHeight(lo.try_into().unwrap())
-                    } else if let Some(tip) = g.state.bc_tip {
-                        tip.0.sat_sub(-lo)
-                    } else {
-                        BlockHeight(0)
-                    },
-                    if hi >= 0 {
-                        BlockHeight(hi.try_into().unwrap())
-                    } else if let Some(tip) = g.state.bc_tip {
-                        tip.0.sat_sub(-hi)
-                    } else {
-                        BlockHeight(0)
-                    },
-                );
+                // Hard requirements:
+                // - when starting on mainnet, we want to be at the tip (!0/-1)
+                // - if we're moving smoothly, we should add directly above or below the current
+                //   lo/hi range to maintain a continuous chain
+                // - handle being at the start of the chain
+                // - handle being at the end of the chain
+                // - handle the entire chain being smaller than the request range
+                // Soft requirements:
+                // - there should be no visible wait for loading new items on screen when scrolling
+                // - minimize the number of repeated requests
+                // - the request range shouldn't ping-pong between 2 values
+                let (h_lo, h_hi) = abs_block_heights(g.bc_req_h, g.state.bc_tip);
 
-                let mut bc_req_h = (h_lo.0 as i32, h_hi.0 as i32);
-                let mut is_set = false;
-                if let Some(on_screen_hi) = bc_h_hi_prev {
-                    if on_screen_hi + 5 >= h_hi.0 {
-                        is_set = true;
-                        bc_req_h.0 += 30;
-                        bc_req_h.1 += 30;
+                // TODO: track cached bc lo/hi and reference off that
+                let mut bids_c = 0;
+                let mut bids = [0u32; 2];
+
+                let req_o = std::cmp::min(5, h_hi.0 - h_lo.0);
+
+                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, bc_lo) {
+                    if on_screen_lo <= nodes[bc_lo].height + req_o {
+                        bids[bids_c] = nodes[bc_lo].height;
+                        bids_c += 1;
+                    }
+                }
+                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, bc_hi) {
+                    if on_screen_hi + req_o >= nodes[bc_hi].height {
+                        bids[bids_c] = nodes[bc_hi].height + VIZ_REQ_N;
+                        bids_c += 1;
                     }
                 }
 
-                if let Some(on_screen_lo) = bc_h_lo_prev {
-                    if on_screen_lo <= h_lo.0 + 5 {
-                        bc_req_h.0 -= 30;
-                        bc_req_h.1 -= 30;
-                    }
-                }
+                let mut new_hi = match bids_c {
+                    1 => bids[0],
+                    2 => (bids[0] + bids[1]) / 2,
+                    _ => h_hi.0,
+                } as i32;
 
                 if let Some(tip) = g.state.bc_tip {
-                    if bc_req_h.1 >= 0 && bc_req_h.1 as u32 >= tip.0 .0 {
-                        bc_req_h.1 = -1; // tip may have moved
+                    if new_hi + req_o as i32 >= tip.0 .0 as i32 {
+                        new_hi = !0; // tip may have moved; track it
                     }
-                }
-                // temp
-                bc_req_h.1 = -1; // tip may have moved
-                bc_req_h
+                };
+
+                (sat_sub_2_sided(new_hi, VIZ_REQ_N), new_hi)
             };
 
             if bc_req_h != g.bc_req_h {
@@ -716,13 +978,14 @@ async fn viz_main(
         // TODO: handle non-contiguous chunks
         let z_cache_blocks = begin_zone("cache blocks");
         // TODO: safer access
-        let new_bc_hi = bc_lo.map_or(true, |i| {
+        let new_bc_hi = bc_lo.map_or(false, |i| {
             let lo_height = g.state.lo_height.0;
             let lo_node = &nodes[i];
             lo_node.height <= lo_height
         });
 
         if new_bc_hi {
+            // TODO: extract common code
             for (i, hash) in g.state.hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
 
@@ -734,41 +997,21 @@ async fn viz_main(
                         )
                     });
 
-                    let dy = work.map_or(100., |work| {
+                    if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-
-                        150. * work.as_u128() as f32 / bc_work_max as f32
-                    });
-
-                    let height = g.state.lo_height.0 + i as u32;
-                    if let Some(parent) = bc_hi {
-                        assert!(
-                            nodes[parent].height == height - 1,
-                            "parent: {}, new: {}",
-                            nodes[parent].height,
-                            height
-                        );
                     }
 
-                    nodes.push(Node {
+                    bc_hi = push_node(nodes, NodeInit::BC {
                         parent: bc_hi, // TODO: can be implicit...
                         link: None,
 
-                        text: "".to_string(),
-                        kind: NodeKind::BC,
                         hash: Some(hash.0),
-                        height,
+                        height: Some(g.state.lo_height.0 + i as u32),
                         work,
                         txs_n,
                         is_real: true,
-
-                        // TODO: dynamically update length & rad
-                        pt: bc_hi.map_or(Vec2::_0, |i| nodes[i].pt - vec2(0., dy)),
-                        // TODO: could overlay internal circle/rings for shielded/transparent
-                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                     });
-                    bc_hi = Some(nodes.len() - 1);
+
                     if bc_lo.is_none() {
                         bc_lo = bc_hi;
                     }
@@ -786,80 +1029,66 @@ async fn viz_main(
                         )
                     });
 
-                    let dy = work.map_or(100., |work| {
+                    if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-
-                        150. * work.as_u128() as f32 / bc_work_max as f32
-                    });
+                    }
 
                     let height = g.state.lo_height.0 + i as u32;
 
-                    nodes.push(Node {
+                    let new_lo = push_node(nodes, NodeInit::BC {
                         parent: None, // new lowest
                         link: None,
 
-                        text: "".to_string(),
-                        kind: NodeKind::BC,
                         hash: Some(hash.0),
-                        height,
+                        height: Some(height), // TODO: -?
                         work,
                         txs_n,
                         is_real: true,
-
-                        // TODO: dynamically update length & rad
-                        pt: bc_lo.map_or(Vec2::_0, |i| nodes[i].pt + vec2(0., dy)),
-                        // TODO: could overlay internal circle/rings for shielded/transparent
-                        // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-                        rad: ((txs_n as f32).sqrt() * 5.).min(50.),
                     });
 
                     if let Some(child) = bc_lo {
+                        nodes[new_lo.unwrap()].pt = nodes[child].pt + vec2(0., 100.);
+
                         assert!(nodes[child].parent.is_none());
-                        assert!(
-                            nodes[child].height == height + 1,
-                            "child: {}, new: {}",
-                            nodes[child].height,
-                            height
-                        );
-                        nodes[child].parent = Some(nodes.len() - 1);
+                            assert!(
+                                nodes[child].height == height + 1,
+                                "child: {}, new: {}",
+                                nodes[child].height,
+                                height
+                            );
+                            nodes[child].parent = new_lo;
+                        }
+                        bc_lo = new_lo;
+
+                        if bc_hi.is_none() {
+                            bc_hi = bc_lo;
+                        }
                     }
-                    bc_lo = Some(nodes.len() - 1)
                 }
             }
-        }
 
-        let new_bft_height = bft_parent
-            .and_then(|i| nodes.get(i))
-            .map_or(0, |parent| parent.height + 1) as usize;
-        let strings = &g.state.bft_block_strings;
-        for i in new_bft_height..strings.len() {
-            let s: Vec<&str> = strings[i].split(":").collect();
-            nodes.push(Node {
-                // TODO: distance should be proportional to difficulty of newer block
-                parent: bft_parent,
-                hash: None,
-                work: None,
-                txs_n: 0,
-                is_real: false,
+            let new_bft_height = bft_parent
+                .and_then(|i| nodes.get(i))
+                .map_or(0, |parent| parent.height + 1) as usize;
+            let strings = &g.state.bft_block_strings;
+            for i in new_bft_height..strings.len() {
+                let s: Vec<&str> = strings[i].split(":").collect();
+                bft_parent = push_node(nodes, NodeInit::BFT {
+                    // TODO: distance should be proportional to difficulty of newer block
+                    parent: bft_parent,
+                    is_real: false,
 
-                kind: NodeKind::BFT,
-                text: s[0].to_owned(),
-                link: {
-                    let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
-                    if let Some(bc_i) = bc {
-                        find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
-                    } else {
-                        None
-                    }
-                },
-                height: bft_parent
-                    .and_then(|i| nodes.get(i))
-                    .map_or(0, |parent| parent.height + 1),
-
-                pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 100.)),
-                rad: 10.,
-            });
-            bft_parent = Some(nodes.len() - 1);
+                    text: s[0].to_owned(),
+                    link: {
+                        let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
+                        if let Some(bc_i) = bc {
+                            find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                        } else {
+                            None
+                        }
+                    },
+                    height: bft_parent.map_or(Some(0), |_| None),
+                });
         }
 
         end_zone(z_cache_blocks);
@@ -1011,6 +1240,7 @@ async fn viz_main(
             );
         }
 
+        // DEBUG NODE/BFT INPUTS ////////////////////////////////////////////////////////////
         let text_size = vec2(32. * ch_w, 1.2 * font_size);
         let bc_i_size = vec2(15. * ch_w, text_size.y);
         // TODO: is there a nicer way of sizing windows to multiple items?
@@ -1039,15 +1269,10 @@ async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    nodes.push(Node {
-                        // TODO: distance should be proportional to difficulty of newer block
+                    bft_parent = push_node(nodes, NodeInit::BFT {
                         parent: bft_parent,
-                        hash: None,
-                        work: None,
-                        txs_n: 0,
                         is_real: false,
 
-                        kind: NodeKind::BFT,
                         text: node_str.clone(),
                         link: {
                             let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -1057,17 +1282,8 @@ async fn viz_main(
                                 None
                             }
                         },
-                        height: bft_parent
-                            .and_then(|i| nodes.get(i))
-                            .map_or(0, |parent| parent.height + 1),
-
-                        // TODO: base rad on num transactions?
-                        // could overlay internal circle/rings for shielded/transparent
-                        // min distance = 2 radii (avoid overlap if at all possible)
-                        pt: bft_parent.map_or(vec2(100., 0.), |i| nodes[i].pt - vec2(0., 20.)),
-                        rad: 10.,
+                        height: bft_parent.map_or(Some(0), |_| None),
                     });
-                    bft_parent = Some(nodes.len() - 1);
 
                     node_str = "".to_string();
                     target_bc_str = "".to_string();
@@ -1083,6 +1299,8 @@ async fn viz_main(
             },
         );
 
+
+        // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
         let hover_node_i: NodeRef = if mouse_is_over_ui {
             None
         } else {
@@ -1096,32 +1314,29 @@ async fn viz_main(
                 }
             }
 
-            let rad_mul = if let Some(node_i) = hover_node_i {
-                let hover_node = &nodes[node_i];
-                if hover_node_i != old_hover_node_i {
-                    hover_circle = hover_node.circle();
-                    hover_circle_start = hover_circle;
-                }
-                old_hover_node_i = hover_node_i;
+            hover_node_i
+        };
 
-                std::f32::consts::SQRT_2
-            } else {
-                0.9
-            };
+        let rad_mul = if let Some(node_i) = hover_node_i {
+            old_hover_node_i = hover_node_i;
+            std::f32::consts::SQRT_2
+        } else {
+            0.9
+        };
 
-            let target_rad = hover_circle_start.r * rad_mul;
-            hover_circle.r = hover_circle.r.lerp(target_rad, 0.1);
-            if hover_circle.r > hover_circle_start.r {
+        if let Some(old_hover_node_i) = old_hover_node_i {
+            let old_hover_node = &nodes[old_hover_node_i];
+            let target_rad = old_hover_node.rad * rad_mul;
+            hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
+            if hover_circle_rad > old_hover_node.rad {
                 let col = if mouse_l_is_world_down {
                     YELLOW
                 } else {
                     SKYBLUE
                 };
-                draw_ring(hover_circle, 2., 1., col);
+                draw_ring(make_circle(old_hover_node.pt, hover_circle_rad), 2., 1., col);
             }
-
-            hover_node_i
-        };
+        }
 
         // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
         if mouse_l_is_world_pressed {
@@ -1132,7 +1347,7 @@ async fn viz_main(
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 let hover_node = &nodes[hover_node_i.unwrap()];
-                nodes.push(Node {
+                push_node(nodes, NodeInit::Dyn {
                     parent: hover_node_i,
                     link: None,
 
@@ -1140,19 +1355,79 @@ async fn viz_main(
                     height: hover_node.height + 1,
 
                     text: "".to_string(),
-                    hash: None,
+                    hash: if hover_node.kind == NodeKind::BC  { Some([0;32])  } else { None },
                     is_real: false,
                     work: None,
                     txs_n: 0,
-
-                    pt: vec2(hover_node.pt.x, hover_node.pt.y - 100.),
-                    rad: 10.,
                 });
             } else {
                 click_node_i = hover_node_i;
             }
         }
 
+        // APPLY SPRING FORCES ////////////////////////////////////////////////////////////
+        // TODO:
+        // - parent-child nodes should be a certain *height* apart (x-distance unimportant)
+        //   - TODO: is this a symmetrical/asymmetrical/one-way force? (e.g. both parent & child
+        //     move or just child)
+        // - cross-chain links aim for horizontal(?)
+        // - all other nodes try to enforce a certain distance
+        // - move perpendicularly/horizontally away from non-coincident edges
+
+        // calculate forces
+        let spring_stiffness = 160.;
+        for node_i in 0..nodes.len() {
+            // parent-child height - O(n) //////////////////////////////
+            let a_pt =
+                nodes[node_i].pt + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
+            if let Some(parent_i) = nodes[node_i].parent {
+                if let Some(parent) = nodes.get(parent_i) {
+                    let intended_height = nodes[node_i].work.map_or(100., |work| {
+                        150. * work.as_u128() as f32 / bc_work_max as f32
+                    });
+                    let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
+                    let v = a_pt - target_pt;
+                    let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
+                    nodes[node_i].acc += force;
+
+                    dbg.new_force(node_i, force);
+                }
+            }
+
+            // any-node distance - O(n^2) //////////////////////////////
+            // TODO: spatial partitioning
+            for node_i2 in 0..nodes.len() {
+                let node_b = &nodes[node_i2];
+                if node_i2 != node_i {
+                    let b_to_a = a_pt - node_b.pt;
+                    let dist_sq = b_to_a.length_squared();
+                    let target_dist = 50.;
+                    if dist_sq < (target_dist * target_dist) {
+                        // fallback to push coincident nodes apart horizontally
+                        let dir = b_to_a.normalize_or(vec2(1., 0.));
+                        let target_pt = node_b.pt + dir * target_dist;
+                        let v = a_pt - target_pt;
+                        let force = -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
+                        nodes[node_i].acc += force;
+
+                        dbg.new_force(node_i, force);
+                    }
+                }
+            }
+        }
+
+        let dt = 1. / 60.;
+        if true {
+            // apply forces
+            for node in &mut *nodes {
+                node.vel += node.acc * dt;
+                node.pt += node.vel * dt;
+
+                node.acc = -0.5 * spring_stiffness * node.vel; // TODO: or slight drag?
+            }
+        }
+
+        // DRAW NODES & SELECTED-NODE UI ////////////////////////////////////////////////////////////
         let unique_chars_n = block_hash_unique_chars_n(nodes);
 
         if let Some(click_node_i) = click_node_i {
@@ -1198,6 +1473,7 @@ async fn viz_main(
                 },
             );
         }
+
 
         // ALT: EoA
         let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
@@ -1297,6 +1573,26 @@ async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
+        if dev(true) {
+            // draw forces
+            // draw resultant force
+            for node in &mut *nodes {
+                if node.acc != Vec2::_0 {
+                    draw_arrow_lines(node.pt, node.pt + node.acc * dt, 1., 9., PURPLE);
+                }
+            }
+
+            // draw component forces
+            for (node_i, forces) in dbg.nodes_forces.iter() {
+                let node = &nodes[*node_i];
+                for force in forces {
+                    if *force != Vec2::_0 {
+                        draw_arrow_lines(node.pt, node.pt + *force * dt, 1., 9., ORANGE);
+                    };
+                }
+            }
+        }
+
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
 
@@ -1311,7 +1607,7 @@ async fn viz_main(
                 screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
                 {} hashes\n\
                 Node height range: [{:?}, {:?}]\n\
-                req: {:?}\n\
+                req: {:?} == {:?}\n\
                 Proposed BFT: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
@@ -1324,6 +1620,7 @@ async fn viz_main(
                 bc_h_lo,
                 bc_h_hi,
                 g.bc_req_h,
+                abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
             );
             draw_multiline_text(
@@ -1359,15 +1656,15 @@ async fn viz_main(
 
 /// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)
 pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
+    let png_bytes = include_bytes!("../../book/theme/favicon.png");
+    let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
+
     let config = window::Conf {
         window_title: "Zcash blocks".to_owned(),
         fullscreen: false,
         window_width: 1200,
         window_height: 800,
         icon: Some({
-            let png_bytes = include_bytes!("../../book/theme/favicon.png");
-            let png =
-                image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
             let icon16 = png.thumbnail_exact(16, 16);
             let icon32 = png.thumbnail_exact(32, 32);
             let icon64 = png.thumbnail_exact(64, 64);
@@ -1380,10 +1677,45 @@ pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
         ..Default::default()
     };
     macroquad::Window::from_config(config, async {
-        if let Err(err) = viz_main(tokio_root_thread_handle).await {
+        if let Err(err) = viz_main(png, tokio_root_thread_handle).await {
             macroquad::logging::error!("Error: {:?}", err);
         }
     });
 
     // tokio_root_thread_handle.join();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sat_sub_2_sided_normal() {
+        assert_eq!(sat_sub_2_sided(12, 6), 6);
+    }
+    #[test]
+    fn test_sat_sub_2_sided_saturate_on_0() {
+        assert_eq!(sat_sub_2_sided(3, 6), 0);
+    }
+    #[test]
+    fn test_sat_sub_2_sided_negative() {
+        assert_eq!(sat_sub_2_sided(-6, 3), -9);
+    }
+
+    #[test]
+    fn test_sat_add_2_sided_normal() {
+        assert_eq!(sat_add_2_sided(12, 6), 18);
+    }
+    #[test]
+    fn test_sat_add_2_sided_saturate_on_neg1_exact() {
+        assert_eq!(sat_add_2_sided(-3, 3), -1);
+    }
+    #[test]
+    fn test_sat_add_2_sided_saturate_on_neg1() {
+        assert_eq!(sat_add_2_sided(-3, 6), -1);
+    }
+    #[test]
+    fn test_sat_add_2_sided_negative() {
+        assert_eq!(sat_add_2_sided(-6, 3), -3);
+    }
 }
