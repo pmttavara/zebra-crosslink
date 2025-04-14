@@ -1,5 +1,12 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
+#![allow(clippy::print_stdout)]
+
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::broadcast;
+use tokio::time::Instant;
+use tracing::{error, info, warn};
 use crate::core::Round as BFTRound;
 use async_trait::async_trait;
 use malachitebft_app_channel::app::config as mconfig;
@@ -22,13 +29,8 @@ use rand::{Rng, SeedableRng};
 use sha3::Digest;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
 use sync::RawDecidedValue;
 use tempdir::TempDir;
-use tokio::sync::broadcast;
-use tokio::time::Instant;
-use tracing::{error, info, warn};
 
 pub mod service;
 pub mod config {
@@ -146,7 +148,7 @@ async fn block_height_hash_from_hash(
     }
 }
 
-async fn block_header_from_hash(
+async fn _block_header_from_hash(
     call: &TFLServiceCalls,
     hash: BlockHash,
 ) -> Option<Arc<BlockHeader>> {
@@ -159,7 +161,7 @@ async fn block_header_from_hash(
     }
 }
 
-async fn block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHash> {
+async fn _block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHash> {
     if let Ok(ReadStateResponse::BlockHeader { header, .. }) =
         (call.read_state)(ReadStateRequest::BlockHeader(hash.into())).await
     {
@@ -320,7 +322,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             let public_key = private_key.public_key();
             array.push(Validator::new(public_key, 1));
         }
-        if config.node_2_ip_endpoint.is_some() {
+        if config.node_2_ip_endpoint.is_some() || array.len() == 0 {
             let mut rng = rand::rngs::StdRng::seed_from_u64(2);
             let private_key = PrivateKey::generate(&mut rng);
             let public_key = private_key.public_key();
@@ -1311,7 +1313,7 @@ async fn tfl_block_sequence(
     let mut c = 0;
     loop {
         if chunk_i >= chunk.len() {
-            let chunk_start_hash = if chunk.len() == 0 {
+            let chunk_start_hash = if chunk.is_empty() {
                 &init_hash
             } else {
                 // NOTE: as the new first element, this won't be repeated
@@ -1325,7 +1327,7 @@ async fn tfl_block_sequence(
             .await;
 
             if let Ok(ReadStateResponse::BlockHashes(chunk_hashes)) = res {
-                if c == 0 && include_start_hash && chunk_hashes.len() > 0 {
+                if c == 0 && include_start_hash && !chunk_hashes.is_empty() {
                     assert_eq!(
                         chunk_hashes[0], start_hash,
                         "first hash is not the one requested"
@@ -1474,7 +1476,7 @@ fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
     }
 }
 
-async fn tfl_dump_block_sequence(
+async fn _tfl_dump_block_sequence(
     call: &TFLServiceCalls,
     start_hash: BlockHash,
     final_height_hash: Option<(BlockHeight, BlockHash)>,

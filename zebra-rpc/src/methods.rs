@@ -176,12 +176,7 @@ pub trait Rpc {
     ///
     /// # Notes
     ///
-    /// Zebra previously partially supported verbosity=1 by returning only the
-    /// fields required by lightwalletd ([`lightwalletd` only reads the `tx`
-    /// field of the result](https://github.com/zcash/lightwalletd/blob/dfac02093d85fb31fb9a8475b884dd6abca966c7/common/common.go#L152)).
-    /// That verbosity level was migrated to "3"; so while lightwalletd will
-    /// still work by using verbosity=1, it will sync faster if it is changed to
-    /// use verbosity=3.
+    /// The `size` field is only returned with verbosity=2.
     ///
     /// The undocumented `chainwork` field is not returned.
     #[method(name = "getblock")]
@@ -1131,11 +1126,11 @@ where
             None
         };
 
-        let hash_or_height: HashOrHeight = hash_or_height
-            .parse()
-            // Reference for the legacy error code:
-            // <https://github.com/zcash/zcash/blob/99ad6fdc3a549ab510422820eea5e5ce9f60a5fd/src/rpc/blockchain.cpp#L629>
-            .map_error(server::error::LegacyCode::InvalidParameter)?;
+        let hash_or_height =
+            HashOrHeight::new(&hash_or_height, self.latest_chain_tip.best_tip_height())
+                // Reference for the legacy error code:
+                // <https://github.com/zcash/zcash/blob/99ad6fdc3a549ab510422820eea5e5ce9f60a5fd/src/rpc/blockchain.cpp#L629>
+                .map_error(server::error::LegacyCode::InvalidParameter)?;
 
         if verbosity == 0 {
             let request = zebra_state::ReadRequest::Block(hash_or_height);
@@ -1179,7 +1174,7 @@ where
 
             let transactions_request = match verbosity {
                 1 => zebra_state::ReadRequest::TransactionIdsForBlock(hash_or_height),
-                2 => zebra_state::ReadRequest::Block(hash_or_height),
+                2 => zebra_state::ReadRequest::BlockAndSize(hash_or_height),
                 _other => panic!("get_block_header_fut should be none"),
             };
 
@@ -1208,28 +1203,34 @@ where
             }
 
             let tx_ids_response = futs.next().await.expect("`futs` should not be empty");
-            let tx: Vec<_> = match tx_ids_response.map_misc_error()? {
-                zebra_state::ReadResponse::TransactionIdsForBlock(tx_ids) => tx_ids
-                    .ok_or_misc_error("block not found")?
-                    .iter()
-                    .map(|tx_id| GetBlockTransaction::Hash(*tx_id))
-                    .collect(),
-                zebra_state::ReadResponse::Block(block) => block
-                    .ok_or_misc_error("Block not found")?
-                    .transactions
-                    .iter()
-                    .map(|tx| {
-                        GetBlockTransaction::Object(TransactionObject::from_transaction(
-                            tx.clone(),
-                            Some(height),
-                            Some(
-                                confirmations
-                                    .try_into()
-                                    .expect("should be less than max block height, i32::MAX"),
-                            ),
-                        ))
-                    })
-                    .collect(),
+            let (tx, size): (Vec<_>, Option<usize>) = match tx_ids_response.map_misc_error()? {
+                zebra_state::ReadResponse::TransactionIdsForBlock(tx_ids) => (
+                    tx_ids
+                        .ok_or_misc_error("block not found")?
+                        .iter()
+                        .map(|tx_id| GetBlockTransaction::Hash(*tx_id))
+                        .collect(),
+                    None,
+                ),
+                zebra_state::ReadResponse::BlockAndSize(block_and_size) => {
+                    let (block, size) = block_and_size.ok_or_misc_error("Block not found")?;
+                    let transactions = block
+                        .transactions
+                        .iter()
+                        .map(|tx| {
+                            GetBlockTransaction::Object(TransactionObject::from_transaction(
+                                tx.clone(),
+                                Some(height),
+                                Some(
+                                    confirmations
+                                        .try_into()
+                                        .expect("should be less than max block height, i32::MAX"),
+                                ),
+                            ))
+                        })
+                        .collect();
+                    (transactions, Some(size))
+                }
                 _ => unreachable!("unmatched response to a transaction_ids_for_block request"),
             };
 
@@ -1276,7 +1277,7 @@ where
                 difficulty: Some(difficulty),
                 tx,
                 trees,
-                size: None,
+                size: size.map(|size| size as i64),
                 block_commitments: Some(block_commitments),
                 final_sapling_root: Some(final_sapling_root),
                 final_orchard_root,
@@ -1475,7 +1476,9 @@ where
             if let Ok(sink) = sink.accept().await {
                 // let stream = futures::stream::iter(["one", "two", "three"]);
                 // sink.pipe_from_stream(stream).await;
-                let _ = sink.send(jsonrpsee::SubscriptionMessage::from("RPC: hi".to_string()));
+                let _ = sink
+                    .send(jsonrpsee::SubscriptionMessage::from("RPC: hi".to_string()))
+                    .await;
                 // TODO: await/poll
                 this.stream_tfl_new_final_block_hash().await;
             }
@@ -1666,9 +1669,11 @@ where
         let verbose = verbose.unwrap_or(true);
         let network = self.network.clone();
 
-        let hash_or_height: HashOrHeight = hash_or_height
-            .parse()
-            .map_error(server::error::LegacyCode::InvalidAddressOrKey)?;
+        let hash_or_height =
+            HashOrHeight::new(&hash_or_height, self.latest_chain_tip.best_tip_height())
+                // Reference for the legacy error code:
+                // <https://github.com/zcash/zcash/blob/99ad6fdc3a549ab510422820eea5e5ce9f60a5fd/src/rpc/blockchain.cpp#L629>
+                .map_error(server::error::LegacyCode::InvalidParameter)?;
         let zebra_state::ReadResponse::BlockHeader {
             header,
             hash,
@@ -1961,11 +1966,11 @@ where
         let mut state = self.state.clone();
         let network = self.network.clone();
 
-        // Reference for the legacy error code:
-        // <https://github.com/zcash/zcash/blob/99ad6fdc3a549ab510422820eea5e5ce9f60a5fd/src/rpc/blockchain.cpp#L629>
-        let hash_or_height = hash_or_height
-            .parse()
-            .map_error(server::error::LegacyCode::InvalidParameter)?;
+        let hash_or_height =
+            HashOrHeight::new(&hash_or_height, self.latest_chain_tip.best_tip_height())
+                // Reference for the legacy error code:
+                // <https://github.com/zcash/zcash/blob/99ad6fdc3a549ab510422820eea5e5ce9f60a5fd/src/rpc/blockchain.cpp#L629>
+                .map_error(server::error::LegacyCode::InvalidParameter)?;
 
         // Fetch the block referenced by [`hash_or_height`] from the state.
         //
