@@ -28,6 +28,7 @@ use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
 use sha3::Digest;
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hasher};
 use std::str::FromStr;
 use sync::RawDecidedValue;
 use tempdir::TempDir;
@@ -40,18 +41,16 @@ pub mod config {
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     #[serde(deny_unknown_fields, default)]
     pub struct Config {
-        pub node_id: Option<u64>,
-        pub node_0_ip_endpoint: Option<String>,
-        pub node_1_ip_endpoint: Option<String>,
-        pub node_2_ip_endpoint: Option<String>,
+        pub listen_address: Option<String>,
+        pub public_address: Option<String>,
+        pub malachite_peers: Vec<String>,
     }
     impl Default for Config {
         fn default() -> Self {
             Self {
-                node_id: None,
-                node_0_ip_endpoint: None,
-                node_1_ip_endpoint: None,
-                node_2_ip_endpoint: None,
+                listen_address: None,
+                public_address: None,
+                malachite_peers: Vec::new(),
             }
         }
     }
@@ -307,41 +306,42 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
     }
 
-    let initial_validator_set = {
-        let mut array = Vec::new();
+    fn rng_private_public_key_from_address(addr: &str) -> (rand::rngs::StdRng, PrivateKey, PublicKey) {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(addr.as_bytes());
+        let seed = hasher.finish();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let private_key = PrivateKey::generate(&mut rng);
+        let public_key = private_key.public_key();
+        (rng, private_key, public_key)
+    }
 
-        if config.node_0_ip_endpoint.is_some() {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-            let private_key = PrivateKey::generate(&mut rng);
-            let public_key = private_key.public_key();
+    let (mut rng, my_private_key, my_public_key) = if let Some(ref address) = config.public_address {
+        rng_private_public_key_from_address(&address)
+    } else {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+        let private_key = PrivateKey::generate(&mut rng);
+        let public_key = private_key.public_key();
+        (rng, private_key, public_key)
+    };
+
+    let initial_validator_set = {
+        let mut array = Vec::with_capacity(config.public_address.is_some() as usize + config.malachite_peers.len());
+
+        if config.public_address.is_some() {
+            array.push(Validator::new(my_public_key, 1));
+        }
+
+        for peer in config.malachite_peers.iter() {
+            let (_, _, public_key) = rng_private_public_key_from_address(&peer);
             array.push(Validator::new(public_key, 1));
         }
-        if config.node_1_ip_endpoint.is_some() {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-            let private_key = PrivateKey::generate(&mut rng);
-            let public_key = private_key.public_key();
-            array.push(Validator::new(public_key, 1));
-        }
-        if config.node_2_ip_endpoint.is_some() || array.len() == 0 {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(2);
-            let private_key = PrivateKey::generate(&mut rng);
-            let public_key = private_key.public_key();
-            array.push(Validator::new(public_key, 1));
-        }
+
         ValidatorSet::new(array)
     };
 
-    let temp_peer_id: u64 = if let Some(id) = config.node_id {
-        id
-    } else {
-        rand::random::<u64>() % 100 + 100
-    };
-
-    let mut rng = rand::rngs::StdRng::seed_from_u64(temp_peer_id);
-    let private_key = PrivateKey::generate(&mut rng);
-    let public_key = private_key.public_key();
-    let my_address = Address::from_public_key(&public_key);
-    let my_signing_provider = Ed25519Provider::new(private_key.clone());
+    let my_address = Address::from_public_key(&my_public_key);
+    let my_signing_provider = Ed25519Provider::new(my_private_key.clone());
     let ctx = TestContext::new();
 
     let genesis = Genesis {
@@ -352,40 +352,34 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let init_bft_height = BFTHeight::new(1);
     let bft_node_handle = BFTNode {
-        private_key: private_key.clone(),
+        private_key: my_private_key.clone(),
     };
 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
     let mut bft_config: BFTConfig = Default::default(); // TODO: read from file?
 
-    if let Some(addr_str) = config.node_0_ip_endpoint.as_ref() {
+
+    if let Some(address) = config.public_address {
         bft_config
             .consensus
             .p2p
             .persistent_peers
-            .push(Multiaddr::from_str(addr_str).unwrap());
+            .push(Multiaddr::from_str(&address).unwrap());
     }
-    if let Some(addr_str) = config.node_1_ip_endpoint.as_ref() {
+
+    for peer in config.malachite_peers.iter() {
         bft_config
             .consensus
             .p2p
             .persistent_peers
-            .push(Multiaddr::from_str(addr_str).unwrap());
+            .push(Multiaddr::from_str(&peer).unwrap());
     }
-    if let Some(addr_str) = config.node_2_ip_endpoint.as_ref() {
-        bft_config
-            .consensus
-            .p2p
-            .persistent_peers
-            .push(Multiaddr::from_str(addr_str).unwrap());
-    }
+
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
-    bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
-        "/ip4/0.0.0.0/udp/{}/quic-v1",
-        24834 + temp_peer_id
-    ))
-    .unwrap();
+    if let Some(listen_addr) = config.listen_address {
+        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
+    }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
         bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
@@ -779,23 +773,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             };
 
                                             // TEMP get the proposers key
-                                            let mut pindex = 0;
-                                            loop {
-                                                let mut rng = rand::rngs::StdRng::seed_from_u64(pindex);
-                                                let private_key = PrivateKey::generate(&mut rng);
-                                                let public_key = private_key.public_key();
-                                                let my_address = Address::from_public_key(&public_key);
-                                                if my_address == parts.proposer {
+                                            let mut proposer_public_key = None;
+                                            for peer in config.malachite_peers.iter() {
+                                                let (_, _, public_key) =
+                                                    rng_private_public_key_from_address(&peer);
+                                                let address = Address::from_public_key(&public_key);
+                                                if address == parts.proposer {
+                                                    proposer_public_key = Some(public_key);
                                                     break;
                                                 }
-                                                pindex += 1;
-                                                assert!(pindex < 150); // proposer not found
                                             }
-                                            let mut rng = rand::rngs::StdRng::seed_from_u64(pindex);
-                                            let proposer_private_key = PrivateKey::generate(&mut rng);
 
                                             // Verify the signature
-                                            assert!(my_signing_provider.verify(&hash, &fin.signature, &proposer_private_key.public_key()));
+                                            assert!(my_signing_provider.verify(&hash, &fin.signature, &proposer_public_key.expect("proposer not found")));
                                         }
 
                                         // Re-assemble the proposal from its parts
