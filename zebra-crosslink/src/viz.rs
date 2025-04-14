@@ -131,6 +131,7 @@ fn end_zone(active_depth: u32) {
 //     txs_n: u32,
 // }
 
+#[derive(Debug)]
 pub struct VizState {
     // general chain info
     pub latest_final_block: Option<(BlockHeight, BlockHash)>,
@@ -143,6 +144,123 @@ pub struct VizState {
 
     pub internal_proposed_bft_string: Option<String>,
     pub bft_block_strings: Vec<String>,
+}
+
+pub mod serialization {
+    use chrono::Utc;
+    use serde::{Deserialize, Serialize};
+    use std::fs;
+    use super::*;
+    use zebra_chain::{
+        block::merkle::Root,
+        block::{Block, Header as BlockHeader, Hash as BlockHash, Height as BlockHeight},
+        fmt::HexDebug,
+        work::{difficulty::CompactDifficulty, equihash::Solution},
+    };
+
+
+    #[derive(Serialize, Deserialize)]
+    struct MinimalBlockExport {
+        difficulty: u32,
+        txs_n: u32,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct MinimalVizStateExport {
+        latest_final_block: Option<(u32, [u8; 32])>,
+        bc_tip: Option<(u32, [u8; 32])>,
+        lo_height: u32,
+        hashes: Vec<[u8; 32]>,
+        blocks: Vec<Option<MinimalBlockExport>>,
+        bft_block_strings: Vec<String>,
+    }
+
+    impl From<&VizState> for MinimalVizStateExport {
+        fn from(state: &VizState) -> Self {
+            Self {
+                latest_final_block: state.latest_final_block.map(|(h, hash)| (h.0, hash.0)),
+                bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
+                lo_height: state.lo_height.0,
+                hashes: state.hashes.iter().map(|h| h.0).collect(),
+                blocks: state.blocks.iter().map(|opt| {
+                    opt.as_ref().map(|b| MinimalBlockExport {
+                        difficulty: u32::from_be_bytes(b.header.difficulty_threshold.bytes_in_display_order()),
+                        txs_n: b.transactions.len() as u32,
+                    })
+                }).collect(),
+                bft_block_strings: state.bft_block_strings.clone(),
+            }
+        }
+    }
+
+
+
+    impl From<MinimalVizStateExport> for VizGlobals {
+        fn from(export: MinimalVizStateExport) -> Self {
+            let state = Arc::new(VizState {
+                latest_final_block: export
+                    .latest_final_block
+                    .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
+                bc_tip: export
+                    .bc_tip
+                    .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
+                lo_height: BlockHeight(export.lo_height),
+                hashes: export.hashes.into_iter().map(BlockHash).collect(),
+                blocks: export.blocks.into_iter().map(|opt| {
+                    opt.map(|b| {
+                        Arc::new(Block {
+                            header: Arc::new(BlockHeader {
+                                version: 0,
+                                previous_block_hash: BlockHash([0; 32]),
+                                merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
+                                commitment_bytes: HexDebug([0u8; 32]),
+                                time: Utc::now(),
+                                difficulty_threshold:
+                                    CompactDifficulty::from_bytes_in_display_order(
+                                        &b.difficulty.to_be_bytes(),
+                                    )
+                                    .expect("valid difficulty"),
+                                nonce: HexDebug([0u8; 32]),
+                                solution: Solution::for_proposal(),
+                            }),
+                            transactions: vec![].into(),
+                        })
+                    })
+                }).collect(),
+                internal_proposed_bft_string: Some("From Export".into()),
+                bft_block_strings: export.bft_block_strings,
+            });
+
+            VizGlobals {
+                state,
+                bc_req_h: (0, 0),
+                consumed: true,
+                proposed_bft_string: None,
+            }
+        }
+    }
+
+    pub fn read_from_file(path: &str) -> VizGlobals  {
+        let raw = fs::read_to_string(path).expect(&format!("{} exists", path));
+        let export: MinimalVizStateExport = serde_json::from_str(&raw).expect("valid export JSON");
+        let globals: VizGlobals = export.into();
+        globals
+    }
+
+    pub fn init_from_file(path: &str) {
+        let globals = read_from_file(path);
+        *VIZ_G.lock().unwrap() = Some(globals);
+    }
+
+    pub fn write_to_file(path: &str, state: &VizState)  {
+            use serde_json::to_string_pretty;
+            use std::fs;
+
+            let viz_export = MinimalVizStateExport::from(&*state);
+            // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
+            let json = to_string_pretty(&viz_export).expect("serialization success");
+            fs::write(path, json).expect("write success");
+    }
 }
 
 /// self-debug info
@@ -172,7 +290,7 @@ pub struct VizGlobals {
     // TODO: bft_req_h: (i32, i32),
     pub proposed_bft_string: Option<String>,
 }
-pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -1152,6 +1270,11 @@ pub async fn viz_main(
             ctx.mouse_drag_d = Vec2::_0;
             ctx.mouse_drag = MouseDrag::Nil;
         }
+
+        if is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::E) {
+            serialization::write_to_file("./zebra-crosslink/viz_state.json", &g.state);
+        }
+
 
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
 
