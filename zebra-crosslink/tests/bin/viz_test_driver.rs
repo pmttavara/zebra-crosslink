@@ -1,7 +1,6 @@
 //! The visualizer needs to be on the main thread, so we need to run it in a separate process.
 
-#[macroquad::main("Crosslink Viz")]
-async fn main() {
+fn main() {
     use std::fs;
     use std::sync::Arc;
 
@@ -84,12 +83,5 @@ async fn main() {
     let globals: VizGlobals = export.into();
     *VIZ_G.lock().unwrap() = Some(globals);
 
-    let join_handle = std::thread::Builder::new()
-        .name("noop".into())
-        .spawn(|| ())
-        .expect("dummy thread");
-
-    let png_bytes = include_bytes!("../../../book/theme/favicon.png");
-    let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
-    let _ = zebra_crosslink::viz::viz_main(png, join_handle).await;
+    let _ = zebra_crosslink::viz::main(None);
 }

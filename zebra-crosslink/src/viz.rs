@@ -807,7 +807,7 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
-    tokio_root_thread_handle: JoinHandle<()>,
+    tokio_root_thread_handle: Option<JoinHandle<()>>,
 ) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
         fix_screen_o: Vec2::_0,
@@ -901,9 +901,11 @@ pub async fn viz_main(
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
 
         // TFL DATA ////////////////////////////////////////
-        // if tokio_root_thread_handle.is_finished() {
-        //     break Ok(());
-        // }
+        if let Some(ref thread_handle) = tokio_root_thread_handle {
+            if thread_handle.is_finished() {
+                break Ok(());
+            }
+        }
 
         // TODO: should we move/copy this to the end so that we can overlap frame rendering with
         // gathering data?
@@ -1655,7 +1657,7 @@ pub async fn viz_main(
 }
 
 /// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)
-pub fn main(tokio_root_thread_handle: JoinHandle<()>) {
+pub fn main(tokio_root_thread_handle: Option<JoinHandle<()>>) {
     let png_bytes = include_bytes!("../../book/theme/favicon.png");
     let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
 
