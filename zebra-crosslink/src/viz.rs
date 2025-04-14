@@ -131,18 +131,18 @@ fn end_zone(active_depth: u32) {
 //     txs_n: u32,
 // }
 
-struct VizState {
+pub struct VizState {
     // general chain info
-    latest_final_block: Option<(BlockHeight, BlockHash)>,
-    bc_tip: Option<(BlockHeight, BlockHash)>,
+    pub latest_final_block: Option<(BlockHeight, BlockHash)>,
+    pub bc_tip: Option<(BlockHeight, BlockHash)>,
 
     // requested info
-    lo_height: BlockHeight,
-    hashes: Vec<BlockHash>,
-    blocks: Vec<Option<Arc<Block>>>,
+    pub lo_height: BlockHeight,
+    pub hashes: Vec<BlockHash>,
+    pub blocks: Vec<Option<Arc<Block>>>,
 
-    internal_proposed_bft_string: Option<String>,
-    bft_block_strings: Vec<String>,
+    pub internal_proposed_bft_string: Option<String>,
+    pub bft_block_strings: Vec<String>,
 }
 
 /// self-debug info
@@ -164,15 +164,15 @@ impl VizDbg {
 }
 
 #[derive(Clone)]
-struct VizGlobals {
-    state: std::sync::Arc<VizState>,
+pub struct VizGlobals {
+    pub state: std::sync::Arc<VizState>,
     // wanted_height_rng: (u32, u32),
-    consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
-    bc_req_h: (i32, i32), // negative implies relative to tip
+    pub consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
+    pub bc_req_h: (i32, i32), // negative implies relative to tip
     // TODO: bft_req_h: (i32, i32),
-    proposed_bft_string: Option<String>,
+    pub proposed_bft_string: Option<String>,
 }
-static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -805,7 +805,7 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
 }
 
 /// Viz implementation root
-async fn viz_main(
+pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: JoinHandle<()>,
 ) -> Result<(), crate::service::TFLServiceError> {
@@ -901,9 +901,9 @@ async fn viz_main(
         let ch_w = root_ui().calc_size("#").x; // only meaningful if monospace
 
         // TFL DATA ////////////////////////////////////////
-        if tokio_root_thread_handle.is_finished() {
-            break Ok(());
-        }
+        // if tokio_root_thread_handle.is_finished() {
+        //     break Ok(());
+        // }
 
         // TODO: should we move/copy this to the end so that we can overlap frame rendering with
         // gathering data?
