@@ -306,7 +306,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
     }
 
-    fn rng_private_public_key_from_address(addr: &str) -> (rand::rngs::StdRng, PrivateKey, PublicKey) {
+    fn rng_private_public_key_from_address(
+        addr: &str,
+    ) -> (rand::rngs::StdRng, PrivateKey, PublicKey) {
         let mut hasher = DefaultHasher::new();
         hasher.write(addr.as_bytes());
         let seed = hasher.finish();
@@ -316,7 +318,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         (rng, private_key, public_key)
     }
 
-    let (mut rng, my_private_key, my_public_key) = if let Some(ref address) = config.public_address {
+    let (mut rng, my_private_key, my_public_key) = if let Some(ref address) = config.public_address
+    {
         rng_private_public_key_from_address(&address)
     } else {
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
@@ -326,7 +329,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     };
 
     let initial_validator_set = {
-        let mut array = Vec::with_capacity(config.public_address.is_some() as usize + config.malachite_peers.len());
+        let mut array = Vec::with_capacity(
+            config.public_address.is_some() as usize + config.malachite_peers.len(),
+        );
 
         if config.public_address.is_some() {
             array.push(Validator::new(my_public_key, 1));
@@ -358,7 +363,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
     let mut bft_config: BFTConfig = Default::default(); // TODO: read from file?
-
 
     if let Some(address) = config.public_address {
         bft_config

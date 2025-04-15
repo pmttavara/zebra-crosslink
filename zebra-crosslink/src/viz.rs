@@ -147,17 +147,16 @@ pub struct VizState {
 }
 
 pub mod serialization {
+    use super::*;
     use chrono::Utc;
     use serde::{Deserialize, Serialize};
     use std::fs;
-    use super::*;
     use zebra_chain::{
         block::merkle::Root,
-        block::{Block, Header as BlockHeader, Hash as BlockHash, Height as BlockHeight},
+        block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight},
         fmt::HexDebug,
         work::{difficulty::CompactDifficulty, equihash::Solution},
     };
-
 
     #[derive(Serialize, Deserialize)]
     struct MinimalBlockExport {
@@ -182,18 +181,22 @@ pub mod serialization {
                 bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
                 lo_height: state.lo_height.0,
                 hashes: state.hashes.iter().map(|h| h.0).collect(),
-                blocks: state.blocks.iter().map(|opt| {
-                    opt.as_ref().map(|b| MinimalBlockExport {
-                        difficulty: u32::from_be_bytes(b.header.difficulty_threshold.bytes_in_display_order()),
-                        txs_n: b.transactions.len() as u32,
+                blocks: state
+                    .blocks
+                    .iter()
+                    .map(|opt| {
+                        opt.as_ref().map(|b| MinimalBlockExport {
+                            difficulty: u32::from_be_bytes(
+                                b.header.difficulty_threshold.bytes_in_display_order(),
+                            ),
+                            txs_n: b.transactions.len() as u32,
+                        })
                     })
-                }).collect(),
+                    .collect(),
                 bft_block_strings: state.bft_block_strings.clone(),
             }
         }
     }
-
-
 
     impl From<MinimalVizStateExport> for VizGlobals {
         fn from(export: MinimalVizStateExport) -> Self {
@@ -206,27 +209,31 @@ pub mod serialization {
                     .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
                 lo_height: BlockHeight(export.lo_height),
                 hashes: export.hashes.into_iter().map(BlockHash).collect(),
-                blocks: export.blocks.into_iter().map(|opt| {
-                    opt.map(|b| {
-                        Arc::new(Block {
-                            header: Arc::new(BlockHeader {
-                                version: 0,
-                                previous_block_hash: BlockHash([0; 32]),
-                                merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
-                                commitment_bytes: HexDebug([0u8; 32]),
-                                time: Utc::now(),
-                                difficulty_threshold:
-                                    CompactDifficulty::from_bytes_in_display_order(
-                                        &b.difficulty.to_be_bytes(),
-                                    )
-                                    .expect("valid difficulty"),
-                                nonce: HexDebug([0u8; 32]),
-                                solution: Solution::for_proposal(),
-                            }),
-                            transactions: vec![].into(),
+                blocks: export
+                    .blocks
+                    .into_iter()
+                    .map(|opt| {
+                        opt.map(|b| {
+                            Arc::new(Block {
+                                header: Arc::new(BlockHeader {
+                                    version: 0,
+                                    previous_block_hash: BlockHash([0; 32]),
+                                    merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
+                                    commitment_bytes: HexDebug([0u8; 32]),
+                                    time: Utc::now(),
+                                    difficulty_threshold:
+                                        CompactDifficulty::from_bytes_in_display_order(
+                                            &b.difficulty.to_be_bytes(),
+                                        )
+                                        .expect("valid difficulty"),
+                                    nonce: HexDebug([0u8; 32]),
+                                    solution: Solution::for_proposal(),
+                                }),
+                                transactions: vec![].into(),
+                            })
                         })
                     })
-                }).collect(),
+                    .collect(),
                 internal_proposed_bft_string: Some("From Export".into()),
                 bft_block_strings: export.bft_block_strings,
             });
@@ -240,7 +247,7 @@ pub mod serialization {
         }
     }
 
-    pub fn read_from_file(path: &str) -> VizGlobals  {
+    pub fn read_from_file(path: &str) -> VizGlobals {
         let raw = fs::read_to_string(path).expect(&format!("{} exists", path));
         let export: MinimalVizStateExport = serde_json::from_str(&raw).expect("valid export JSON");
         let globals: VizGlobals = export.into();
@@ -252,14 +259,14 @@ pub mod serialization {
         *VIZ_G.lock().unwrap() = Some(globals);
     }
 
-    pub fn write_to_file(path: &str, state: &VizState)  {
-            use serde_json::to_string_pretty;
-            use std::fs;
+    pub fn write_to_file(path: &str, state: &VizState) {
+        use serde_json::to_string_pretty;
+        use std::fs;
 
-            let viz_export = MinimalVizStateExport::from(&*state);
-            // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
-            let json = to_string_pretty(&viz_export).expect("serialization success");
-            fs::write(path, json).expect("write success");
+        let viz_export = MinimalVizStateExport::from(&*state);
+        // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
+        let json = to_string_pretty(&viz_export).expect("serialization success");
+        fs::write(path, json).expect("write success");
     }
 }
 
@@ -304,8 +311,14 @@ fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> Block
     }
 }
 
-fn abs_block_heights(heights: (i32, i32), tip: Option<(BlockHeight, BlockHash)>) -> (BlockHeight, BlockHeight) {
-    (abs_block_height(heights.0, tip), abs_block_height(heights.1, tip))
+fn abs_block_heights(
+    heights: (i32, i32),
+    tip: Option<(BlockHeight, BlockHash)>,
+) -> (BlockHeight, BlockHeight) {
+    (
+        abs_block_height(heights.0, tip),
+        abs_block_height(heights.1, tip),
+    )
 }
 
 /// Bridge between tokio & viz code
@@ -370,8 +383,14 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             };
 
             let (h_lo, h_hi) = (
-                std::cmp::min(tip_height_hash.0, abs_block_height(lo, Some(tip_height_hash))),
-                std::cmp::min(tip_height_hash.0, abs_block_height(hi, Some(tip_height_hash))),
+                std::cmp::min(
+                    tip_height_hash.0,
+                    abs_block_height(lo, Some(tip_height_hash)),
+                ),
+                std::cmp::min(
+                    tip_height_hash.0,
+                    abs_block_height(hi, Some(tip_height_hash)),
+                ),
             );
             // temp
             //assert!(h_lo.0 <= h_hi.0, "lo ({}) should be below hi ({})", h_lo.0, h_hi.0);
@@ -504,7 +523,6 @@ enum NodeInit {
     },
 }
 
-
 impl Node {
     fn circle(&self) -> Circle {
         Circle::new(self.pt.x, self.pt.y, self.rad)
@@ -589,7 +607,6 @@ struct VizCtx {
     nodes: Vec<Node>,
 }
 
-
 fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
     // TODO: dynamically update length & rad
     // TODO: could overlay internal circle/rings for shielded/transparent
@@ -597,7 +614,17 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
     let (mut new_node, needs_fixup): (Node, bool) = match node {
         NodeInit::Node(node) => (node, false),
 
-        NodeInit::Dyn{ parent, link, kind, text, hash, height, work, txs_n, is_real } => {
+        NodeInit::Dyn {
+            parent,
+            link,
+            kind,
+            text,
+            hash,
+            height,
+            work,
+            txs_n,
+            is_real,
+        } => {
             (
                 Node {
                     parent,
@@ -618,11 +645,19 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     vel: Vec2::_0,
                     acc: Vec2::_0,
                 },
-                true
+                true,
             )
-        },
+        }
 
-        NodeInit::BC {parent, link, hash, height, work, txs_n, is_real} => {
+        NodeInit::BC {
+            parent,
+            link,
+            hash,
+            height,
+            work,
+            txs_n,
+            is_real,
+        } => {
             // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
             let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
 
@@ -653,11 +688,17 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     vel: Vec2::_0,
                     acc: Vec2::_0,
                 },
-                true
+                true,
             )
         }
 
-        NodeInit::BFT {parent, link, height, text, is_real} => {
+        NodeInit::BFT {
+            parent,
+            link,
+            height,
+            text,
+            is_real,
+        } => {
             let rad = 10.;
             // DUP
             let height = if let Some(height) = height {
@@ -687,7 +728,7 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
                     acc: Vec2::_0,
                     rad,
                 },
-                true
+                true,
             )
         }
     };
@@ -700,7 +741,7 @@ fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
 
     nodes.push(new_node);
 
-    Some(nodes.len()-1)
+    Some(nodes.len() - 1)
 }
 
 fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
@@ -1121,16 +1162,19 @@ pub async fn viz_main(
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
                     }
 
-                    bc_hi = push_node(nodes, NodeInit::BC {
-                        parent: bc_hi, // TODO: can be implicit...
-                        link: None,
+                    bc_hi = push_node(
+                        nodes,
+                        NodeInit::BC {
+                            parent: bc_hi, // TODO: can be implicit...
+                            link: None,
 
-                        hash: Some(hash.0),
-                        height: Some(g.state.lo_height.0 + i as u32),
-                        work,
-                        txs_n,
-                        is_real: true,
-                    });
+                            hash: Some(hash.0),
+                            height: Some(g.state.lo_height.0 + i as u32),
+                            work,
+                            txs_n,
+                            is_real: true,
+                        },
+                    );
 
                     if bc_lo.is_none() {
                         bc_lo = bc_hi;
@@ -1155,45 +1199,50 @@ pub async fn viz_main(
 
                     let height = g.state.lo_height.0 + i as u32;
 
-                    let new_lo = push_node(nodes, NodeInit::BC {
-                        parent: None, // new lowest
-                        link: None,
+                    let new_lo = push_node(
+                        nodes,
+                        NodeInit::BC {
+                            parent: None, // new lowest
+                            link: None,
 
-                        hash: Some(hash.0),
-                        height: Some(height), // TODO: -?
-                        work,
-                        txs_n,
-                        is_real: true,
-                    });
+                            hash: Some(hash.0),
+                            height: Some(height), // TODO: -?
+                            work,
+                            txs_n,
+                            is_real: true,
+                        },
+                    );
 
                     if let Some(child) = bc_lo {
                         nodes[new_lo.unwrap()].pt = nodes[child].pt + vec2(0., 100.);
 
                         assert!(nodes[child].parent.is_none());
-                            assert!(
-                                nodes[child].height == height + 1,
-                                "child: {}, new: {}",
-                                nodes[child].height,
-                                height
-                            );
-                            nodes[child].parent = new_lo;
-                        }
-                        bc_lo = new_lo;
+                        assert!(
+                            nodes[child].height == height + 1,
+                            "child: {}, new: {}",
+                            nodes[child].height,
+                            height
+                        );
+                        nodes[child].parent = new_lo;
+                    }
+                    bc_lo = new_lo;
 
-                        if bc_hi.is_none() {
-                            bc_hi = bc_lo;
-                        }
+                    if bc_hi.is_none() {
+                        bc_hi = bc_lo;
                     }
                 }
             }
+        }
 
-            let new_bft_height = bft_parent
-                .and_then(|i| nodes.get(i))
-                .map_or(0, |parent| parent.height + 1) as usize;
-            let strings = &g.state.bft_block_strings;
-            for i in new_bft_height..strings.len() {
-                let s: Vec<&str> = strings[i].split(":").collect();
-                bft_parent = push_node(nodes, NodeInit::BFT {
+        let new_bft_height = bft_parent
+            .and_then(|i| nodes.get(i))
+            .map_or(0, |parent| parent.height + 1) as usize;
+        let strings = &g.state.bft_block_strings;
+        for i in new_bft_height..strings.len() {
+            let s: Vec<&str> = strings[i].split(":").collect();
+            bft_parent = push_node(
+                nodes,
+                NodeInit::BFT {
                     // TODO: distance should be proportional to difficulty of newer block
                     parent: bft_parent,
                     is_real: false,
@@ -1208,7 +1257,8 @@ pub async fn viz_main(
                         }
                     },
                     height: bft_parent.map_or(Some(0), |_| None),
-                });
+                },
+            );
         }
 
         end_zone(z_cache_blocks);
@@ -1274,7 +1324,6 @@ pub async fn viz_main(
         if is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::E) {
             serialization::write_to_file("./zebra-crosslink/viz_state.json", &g.state);
         }
-
 
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
 
@@ -1394,21 +1443,24 @@ pub async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    bft_parent = push_node(nodes, NodeInit::BFT {
-                        parent: bft_parent,
-                        is_real: false,
+                    bft_parent = push_node(
+                        nodes,
+                        NodeInit::BFT {
+                            parent: bft_parent,
+                            is_real: false,
 
-                        text: node_str.clone(),
-                        link: {
-                            let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                            if let Some(bc_i) = bc {
-                                find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
-                            } else {
-                                None
-                            }
+                            text: node_str.clone(),
+                            link: {
+                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                if let Some(bc_i) = bc {
+                                    find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                                } else {
+                                    None
+                                }
+                            },
+                            height: bft_parent.map_or(Some(0), |_| None),
                         },
-                        height: bft_parent.map_or(Some(0), |_| None),
-                    });
+                    );
 
                     node_str = "".to_string();
                     target_bc_str = "".to_string();
@@ -1423,7 +1475,6 @@ pub async fn viz_main(
                 }
             },
         );
-
 
         // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
         let hover_node_i: NodeRef = if mouse_is_over_ui {
@@ -1459,7 +1510,12 @@ pub async fn viz_main(
                 } else {
                     SKYBLUE
                 };
-                draw_ring(make_circle(old_hover_node.pt, hover_circle_rad), 2., 1., col);
+                draw_ring(
+                    make_circle(old_hover_node.pt, hover_circle_rad),
+                    2.,
+                    1.,
+                    col,
+                );
             }
         }
 
@@ -1472,19 +1528,26 @@ pub async fn viz_main(
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 let hover_node = &nodes[hover_node_i.unwrap()];
-                push_node(nodes, NodeInit::Dyn {
-                    parent: hover_node_i,
-                    link: None,
+                push_node(
+                    nodes,
+                    NodeInit::Dyn {
+                        parent: hover_node_i,
+                        link: None,
 
-                    kind: hover_node.kind,
-                    height: hover_node.height + 1,
+                        kind: hover_node.kind,
+                        height: hover_node.height + 1,
 
-                    text: "".to_string(),
-                    hash: if hover_node.kind == NodeKind::BC  { Some([0;32])  } else { None },
-                    is_real: false,
-                    work: None,
-                    txs_n: 0,
-                });
+                        text: "".to_string(),
+                        hash: if hover_node.kind == NodeKind::BC {
+                            Some([0; 32])
+                        } else {
+                            None
+                        },
+                        is_real: false,
+                        work: None,
+                        txs_n: 0,
+                    },
+                );
             } else {
                 click_node_i = hover_node_i;
             }
@@ -1532,7 +1595,8 @@ pub async fn viz_main(
                         let dir = b_to_a.normalize_or(vec2(1., 0.));
                         let target_pt = node_b.pt + dir * target_dist;
                         let v = a_pt - target_pt;
-                        let force = -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
+                        let force =
+                            -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
                         nodes[node_i].acc += force;
 
                         dbg.new_force(node_i, force);
@@ -1598,7 +1662,6 @@ pub async fn viz_main(
                 },
             );
         }
-
 
         // ALT: EoA
         let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
