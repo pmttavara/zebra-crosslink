@@ -131,21 +131,34 @@ fn end_zone(active_depth: u32) {
 //     txs_n: u32,
 // }
 
+/// TFL state communicated to the visualizer
 #[derive(Debug)]
 pub struct VizState {
     // general chain info
+    /// Height & hash of the TFL finality point
     pub latest_final_block: Option<(BlockHeight, BlockHash)>,
+    /// Height & hash of the best-chain tip
     pub bc_tip: Option<(BlockHeight, BlockHash)>,
 
     // requested info
+    /// The height of the first hash in `hashes` & `blocks`,
+    /// should correspond to the low end of the requested block range
+    /// (`bc_req_h` in [`VizGlobals`]).
     pub lo_height: BlockHeight,
+    /// A range of hashes from the PoW chain, as requested by the visualizer.
+    /// Ascending in height from `lo_height`. Parallel to `blocks`.
     pub hashes: Vec<BlockHash>,
+    /// A range of blocks from the PoW chain, as requested by the visualizer.
+    /// Ascending in height from `lo_height`. Parallel to `hashes`.
     pub blocks: Vec<Option<Arc<Block>>>,
 
+    /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
+    /// Vector of all decided BFT block payloads, indexed by height.
     pub bft_block_strings: Vec<String>,
 }
 
+/// Functions & structures for serializing visualizer state to/from disk.
 pub mod serialization {
     use super::*;
     use chrono::Utc;
@@ -247,6 +260,7 @@ pub mod serialization {
         }
     }
 
+    /// Read a global state struct from the data in a file
     pub fn read_from_file(path: &str) -> VizGlobals {
         let raw = fs::read_to_string(path).expect(&format!("{} exists", path));
         let export: MinimalVizStateExport = serde_json::from_str(&raw).expect("valid export JSON");
@@ -254,11 +268,13 @@ pub mod serialization {
         globals
     }
 
+    /// Read a global state struct from the data in a file and apply it to the current global state
     pub fn init_from_file(path: &str) {
         let globals = read_from_file(path);
         *VIZ_G.lock().unwrap() = Some(globals);
     }
 
+    /// Write the current visualizer state to a file
     pub fn write_to_file(path: &str, state: &VizState) {
         use serde_json::to_string_pretty;
         use std::fs;
@@ -270,7 +286,7 @@ pub mod serialization {
     }
 }
 
-/// self-debug info
+/// Self-debug info
 struct VizDbg {
     nodes_forces: HashMap<usize, Vec<Vec2>>,
 }
@@ -288,13 +304,21 @@ impl VizDbg {
     }
 }
 
+/// Any global data stored for visualization.
+/// In practice this stores the data for communicating between TFL (in tokio-land)
+/// and the viz thread.
 #[derive(Clone)]
 pub struct VizGlobals {
+    /// TFL state communicated from TFL to Viz
     pub state: std::sync::Arc<VizState>,
     // wanted_height_rng: (u32, u32),
-    pub consumed: bool, // adds one-way syncing so service_viz_requests doesn't run too quickly
+    /// Allows for one-way syncing so service_viz_requests doesn't run too quickly
+    pub consumed: bool,
+    /// The range of PoW blocks requested from Viz to TFL.
+    /// Translates to `hashes`, `blocks`, & `lo_height` in `VizState`
     pub bc_req_h: (i32, i32), // negative implies relative to tip
     // TODO: bft_req_h: (i32, i32),
+    /// Value for this finalizer node to propose for the next BFT block.
     pub proposed_bft_string: Option<String>,
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);

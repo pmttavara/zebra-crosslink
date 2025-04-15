@@ -34,6 +34,7 @@ use tokio::time::Instant;
 use tracing::{error, info, warn};
 
 pub mod service;
+/// Configuration for the state service.
 pub mod config {
     use serde::{Deserialize, Serialize};
 
@@ -41,8 +42,12 @@ pub mod config {
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     #[serde(deny_unknown_fields, default)]
     pub struct Config {
+        /// Local address, e.g. "/ip4/0.0.0.0/udp/24834/quic-v1"
         pub listen_address: Option<String>,
+        /// Public address for this node, e.g. "/ip4/127.0.0.1/udp/24834/quic-v1" if testing
+        /// internally, or the public IP address if using externally.
         pub public_address: Option<String>,
+        /// List of public IP addresses for peers, in the same format as `public_address`.
         pub malachite_peers: Vec<String>,
     }
     impl Default for Config {

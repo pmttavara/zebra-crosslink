@@ -140,7 +140,7 @@ pub fn spawn_new_tfl_service(
         call: TFLServiceCalls {
             read_state: read_state_service_call,
         },
-        config: config,
+        config,
     };
     let handle2 = handle1.clone();
 
@@ -166,8 +166,11 @@ impl fmt::Debug for TFLServiceCalls {
 /// the internal state of the TFLService and the service calls that can be made to it.
 #[derive(Clone, Debug)]
 pub struct TFLServiceHandle {
+    /// A threadsafe wrapper around the stored internal data
     pub(crate) internal: Arc<Mutex<TFLServiceInternal>>,
+    /// The collection of service calls available
     pub(crate) call: TFLServiceCalls,
+    /// The file-generated config data
     pub config: crate::config::Config,
 }
 
