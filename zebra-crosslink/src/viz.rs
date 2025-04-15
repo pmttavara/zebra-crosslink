@@ -511,7 +511,10 @@ struct Node {
 }
 
 enum NodeInit {
-    Node(Node),
+    Node {
+        node: Node,
+        needs_fixup: bool,
+    },
 
     Dyn {
         parent: NodeRef, // TODO: do we need explicit edges?
@@ -587,11 +590,11 @@ impl ByHandle<Node, NodeRef> for [Node] {
 }
 
 // TODO: extract impl Eq for Node?
-fn find_bc_node_by_hash<'a>(nodes: &'a [Node], hash: &BlockHash) -> Option<&'a Node> {
+fn find_bc_node_by_hash(nodes: &[Node], hash: &BlockHash) -> NodeRef {
     let _z = ZoneGuard::new("find_bc_node_by_hash");
     nodes
         .iter()
-        .find(|node| node.kind == NodeKind::BC && node.hash.as_ref() == Some(&hash.0))
+        .position(|node| node.kind == NodeKind::BC && node.hash.as_ref() == Some(&hash.0))
 }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
@@ -629,143 +632,205 @@ struct VizCtx {
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
+    bc_lo: NodeRef,
+    bc_hi: NodeRef,
+
+    missing_bc_parents: HashMap<[u8; 32], NodeRef>,
 }
 
-fn push_node(nodes: &mut Vec<Node>, node: NodeInit) -> NodeRef {
-    // TODO: dynamically update length & rad
-    // TODO: could overlay internal circle/rings for shielded/transparent
+impl VizCtx {
+    fn push_node(&mut self, node: NodeInit, parent_hash: Option<[u8; 32]>) -> NodeRef {
+        // TODO: dynamically update length & rad
+        // TODO: could overlay internal circle/rings for shielded/transparent
+        // TODO: track unfilled parents
+        let nodes = &mut self.nodes;
 
-    let (mut new_node, needs_fixup): (Node, bool) = match node {
-        NodeInit::Node(node) => (node, false),
+        let (mut new_node, needs_fixup): (Node, bool) = match node {
+            NodeInit::Node { node, needs_fixup } => (node, needs_fixup),
 
-        NodeInit::Dyn {
-            parent,
-            link,
-            kind,
-            text,
-            hash,
-            height,
-            work,
-            txs_n,
-            is_real,
-        } => {
-            (
-                Node {
-                    parent,
-                    link,
-                    kind,
-                    text,
-                    hash,
-                    height, // TODO: this should be exclusively determined by parent for Dyn
-                    work,
-                    txs_n,
-                    is_real,
-                    rad: match kind {
-                        NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
-                        NodeKind::BFT => 10.,
+            NodeInit::Dyn {
+                parent,
+                link,
+                kind,
+                text,
+                hash,
+                height,
+                work,
+                txs_n,
+                is_real,
+            } => {
+                (
+                    Node {
+                        parent,
+                        link,
+                        kind,
+                        text,
+                        hash,
+                        height, // TODO: this should be exclusively determined by parent for Dyn
+                        work,
+                        txs_n,
+                        is_real,
+                        rad: match kind {
+                            NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
+                            NodeKind::BFT => 10.,
+                        },
+
+                        pt: Vec2::_0,
+                        vel: Vec2::_0,
+                        acc: Vec2::_0,
                     },
+                    true,
+                )
+            }
 
-                    pt: Vec2::_0,
-                    vel: Vec2::_0,
-                    acc: Vec2::_0,
-                },
-                true,
-            )
+            NodeInit::BC {
+                parent,
+                link,
+                hash,
+                height,
+                work,
+                txs_n,
+                is_real,
+            } => {
+                // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
+                let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
+
+                // DUP
+                let height = if let Some(height) = height {
+                    assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                    height
+                } else {
+                    nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+                };
+
+                (
+                    Node {
+                        parent,
+                        link,
+
+                        kind: NodeKind::BC,
+                        hash,
+                        height,
+                        work,
+                        txs_n,
+                        is_real,
+
+                        text: "".to_string(),
+                        rad,
+
+                        pt: Vec2::_0,
+                        vel: Vec2::_0,
+                        acc: Vec2::_0,
+                    },
+                    true,
+                )
+            }
+
+            NodeInit::BFT {
+                parent,
+                link,
+                height,
+                text,
+                is_real,
+            } => {
+                let rad = 10.;
+                // DUP
+                let height = if let Some(height) = height {
+                    assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                    height
+                } else {
+                    nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+                };
+
+                (
+                    Node {
+                        parent,
+                        link,
+
+                        hash: None,
+                        work: None,
+                        txs_n: 0,
+
+                        kind: NodeKind::BFT,
+                        height,
+                        text,
+
+                        is_real,
+
+                        pt: vec2(100., 0.),
+                        vel: Vec2::_0,
+                        acc: Vec2::_0,
+                        rad,
+                    },
+                    true,
+                )
+            }
+        };
+
+        let i = nodes.len();
+        let node_ref = Some(i);
+
+        if new_node.kind == NodeKind::BC {
+            // find & link possible parent
+            if let Some(parent_hash) = parent_hash {
+                let parent = find_bc_node_by_hash(nodes, &BlockHash(parent_hash));
+                if let Some(parent_i) = parent {
+                    assert!(new_node.parent.is_none() || new_node.parent.unwrap() == parent_i);
+                    assert!(
+                        nodes[parent_i].height + 1 == new_node.height,
+                        "parent height: {}, new height: {}",
+                        nodes[parent_i].height,
+                        new_node.height
+                    );
+
+                    new_node.parent = parent;
+                } else {
+                    self.missing_bc_parents.insert(parent_hash, node_ref);
+                }
+            }
+
+            // find & link possible child
+            if let Some(node_hash) = new_node.hash {
+                if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
+                    self.missing_bc_parents.remove(&node_hash);
+                    new_node.pt = nodes[child].pt + vec2(0., nodes[child].rad + new_node.rad + 90.); // TODO: handle positioning when both parent & child are set
+
+                    assert!(nodes[child].parent.is_none());
+                    assert!(
+                        nodes[child].height == new_node.height + 1,
+                        "child height: {}, new height: {}",
+                        nodes[child].height,
+                        new_node.height
+                    );
+                    nodes[child].parent = node_ref;
+                }
+            }
         }
 
-        NodeInit::BC {
-            parent,
-            link,
-            hash,
-            height,
-            work,
-            txs_n,
-            is_real,
-        } => {
-            // sqrt(txs_n) for radius means that the *area* is proportional to txs_n
-            let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
-
-            // DUP
-            let height = if let Some(height) = height {
-                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
-                height
-            } else {
-                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
-            };
-
-            (
-                Node {
-                    parent,
-                    link,
-
-                    kind: NodeKind::BC,
-                    hash,
-                    height,
-                    work,
-                    txs_n,
-                    is_real,
-
-                    text: "".to_string(),
-                    rad,
-
-                    pt: Vec2::_0,
-                    vel: Vec2::_0,
-                    acc: Vec2::_0,
-                },
-                true,
-            )
+        if needs_fixup {
+            if let Some(parent) = new_node.parent {
+                new_node.pt = nodes[parent].pt - vec2(0., nodes[parent].rad + new_node.rad + 90.);
+            }
         }
 
-        NodeInit::BFT {
-            parent,
-            link,
-            height,
-            text,
-            is_real,
-        } => {
-            let rad = 10.;
-            // DUP
-            let height = if let Some(height) = height {
-                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
-                height
-            } else {
-                nodes[parent.expect("Need at least 1 of parent or height")].height + 1
-            };
+        match new_node.kind {
+            NodeKind::BC => {
+                if self.bc_lo.is_none() || new_node.height < nodes[self.bc_lo.unwrap()].height {
+                    self.bc_lo = node_ref;
+                }
 
-            (
-                Node {
-                    parent,
-                    link,
+                if self.bc_hi.is_none() || new_node.height > nodes[self.bc_hi.unwrap()].height {
+                    self.bc_hi = node_ref;
+                }
+            }
 
-                    hash: None,
-                    work: None,
-                    txs_n: 0,
-
-                    kind: NodeKind::BFT,
-                    height,
-                    text,
-
-                    is_real,
-
-                    pt: vec2(100., 0.),
-                    vel: Vec2::_0,
-                    acc: Vec2::_0,
-                    rad,
-                },
-                true,
-            )
+            NodeKind::BFT => {}
         }
-    };
 
-    if needs_fixup {
-        if let Some(parent) = new_node.parent {
-            new_node.pt = nodes[parent].pt - vec2(0., nodes[parent].rad + new_node.rad + 10.);
-        }
+
+        nodes.push(new_node);
+        node_ref
     }
-
-    nodes.push(new_node);
-
-    Some(nodes.len() - 1)
 }
 
 fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
@@ -1003,6 +1068,9 @@ pub async fn viz_main(
             Vec2 { x, y }
         },
         nodes: Vec::with_capacity(512),
+        bc_hi: None,
+        bc_lo: None,
+        missing_bc_parents: HashMap::new(),
     };
 
     let nodes = &mut ctx.nodes;
@@ -1047,8 +1115,6 @@ pub async fn viz_main(
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
     let mut bft_parent: NodeRef = None;
-    let mut bc_hi: NodeRef = None;
-    let mut bc_lo: NodeRef = None;
     let font_size = 30.;
 
     let base_style = root_ui()
@@ -1117,15 +1183,15 @@ pub async fn viz_main(
 
                 let req_o = std::cmp::min(5, h_hi.0 - h_lo.0);
 
-                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, bc_lo) {
-                    if on_screen_lo <= nodes[bc_lo].height + req_o {
-                        bids[bids_c] = nodes[bc_lo].height;
+                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, ctx.bc_lo) {
+                    if on_screen_lo <= ctx.nodes[bc_lo].height + req_o {
+                        bids[bids_c] = ctx.nodes[bc_lo].height;
                         bids_c += 1;
                     }
                 }
-                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, bc_hi) {
-                    if on_screen_hi + req_o >= nodes[bc_hi].height {
-                        bids[bids_c] = nodes[bc_hi].height + VIZ_REQ_N;
+                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, ctx.bc_hi) {
+                    if on_screen_hi + req_o >= ctx.nodes[bc_hi].height {
+                        bids[bids_c] = ctx.nodes[bc_hi].height + VIZ_REQ_N;
                         bids_c += 1;
                     }
                 }
@@ -1163,33 +1229,37 @@ pub async fn viz_main(
         // TODO: handle non-contiguous chunks
         let z_cache_blocks = begin_zone("cache blocks");
         // TODO: safer access
-        let new_bc_hi = bc_lo.map_or(false, |i| {
+        let is_new_bc_hi = ctx.bc_lo.map_or(false, |i| {
             let lo_height = g.state.lo_height.0;
-            let lo_node = &nodes[i];
+            let lo_node = &ctx.nodes[i];
             lo_node.height <= lo_height
         });
 
-        if new_bc_hi {
+        if is_new_bc_hi {
             // TODO: extract common code
             for (i, hash) in g.state.hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
 
-                if find_bc_node_by_hash(nodes, hash).is_none() {
-                    let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
-                        (
-                            block.header.difficulty_threshold.to_work(),
-                            block.transactions.len() as u32,
-                        )
-                    });
+                if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
+                    let (work, txs_n, parent_hash) =
+                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                            (
+                                block
+                                    .header
+                                    .difficulty_threshold
+                                    .to_work(),
+                                block.transactions.len() as u32,
+                                Some(block.header.previous_block_hash.0),
+                            )
+                        });
 
                     if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
                     }
 
-                    bc_hi = push_node(
-                        nodes,
+                    ctx.push_node(
                         NodeInit::BC {
-                            parent: bc_hi, // TODO: can be implicit...
+                            parent: ctx.bc_hi, // TODO: can be implicit...
                             link: None,
 
                             hash: Some(hash.0),
@@ -1198,24 +1268,26 @@ pub async fn viz_main(
                             txs_n,
                             is_real: true,
                         },
+                        parent_hash,
                     );
-
-                    if bc_lo.is_none() {
-                        bc_lo = bc_hi;
-                    }
                 }
             }
         } else {
             for (i, hash) in g.state.hashes.iter().enumerate().rev() {
                 let _z = ZoneGuard::new("cache block");
 
-                if find_bc_node_by_hash(nodes, hash).is_none() {
-                    let (work, txs_n) = g.state.blocks[i].as_ref().map_or((None, 0), |block| {
-                        (
-                            block.header.difficulty_threshold.to_work(),
-                            block.transactions.len() as u32,
-                        )
-                    });
+                if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
+                    let (work, txs_n, parent_hash) =
+                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                            (
+                                block
+                                    .header
+                                    .difficulty_threshold
+                                    .to_work(),
+                                block.transactions.len() as u32,
+                                Some(block.header.previous_block_hash.0),
+                            )
+                        });
 
                     if let Some(work) = work {
                         bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
@@ -1223,8 +1295,7 @@ pub async fn viz_main(
 
                     let height = g.state.lo_height.0 + i as u32;
 
-                    let new_lo = push_node(
-                        nodes,
+                    ctx.push_node(
                         NodeInit::BC {
                             parent: None, // new lowest
                             link: None,
@@ -1235,37 +1306,19 @@ pub async fn viz_main(
                             txs_n,
                             is_real: true,
                         },
+                        parent_hash,
                     );
-
-                    if let Some(child) = bc_lo {
-                        nodes[new_lo.unwrap()].pt = nodes[child].pt + vec2(0., 100.);
-
-                        assert!(nodes[child].parent.is_none());
-                        assert!(
-                            nodes[child].height == height + 1,
-                            "child: {}, new: {}",
-                            nodes[child].height,
-                            height
-                        );
-                        nodes[child].parent = new_lo;
-                    }
-                    bc_lo = new_lo;
-
-                    if bc_hi.is_none() {
-                        bc_hi = bc_lo;
-                    }
                 }
             }
         }
 
         let new_bft_height = bft_parent
-            .and_then(|i| nodes.get(i))
+            .and_then(|i| ctx.nodes.get(i))
             .map_or(0, |parent| parent.height + 1) as usize;
         let strings = &g.state.bft_block_strings;
         for i in new_bft_height..strings.len() {
             let s: Vec<&str> = strings[i].split(":").collect();
-            bft_parent = push_node(
-                nodes,
+            bft_parent = ctx.push_node(
                 NodeInit::BFT {
                     // TODO: distance should be proportional to difficulty of newer block
                     parent: bft_parent,
@@ -1275,13 +1328,14 @@ pub async fn viz_main(
                     link: {
                         let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
                         if let Some(bc_i) = bc {
-                            find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                            find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
                         } else {
                             None
                         }
                     },
                     height: bft_parent.map_or(Some(0), |_| None),
                 },
+                None,
             );
         }
 
@@ -1467,8 +1521,7 @@ pub async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    bft_parent = push_node(
-                        nodes,
+                    bft_parent = ctx.push_node(
                         NodeInit::BFT {
                             parent: bft_parent,
                             is_real: false,
@@ -1477,13 +1530,14 @@ pub async fn viz_main(
                             link: {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
                                 if let Some(bc_i) = bc {
-                                    find_bc_node_i_by_height(nodes, BlockHeight(bc_i))
+                                    find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
                                 } else {
                                     None
                                 }
                             },
                             height: bft_parent.map_or(Some(0), |_| None),
                         },
+                        None,
                     );
 
                     node_str = "".to_string();
@@ -1506,7 +1560,7 @@ pub async fn viz_main(
         } else {
             // Selection ring (behind node circle)
             let mut hover_node_i: NodeRef = None;
-            for (i, node) in nodes.iter().enumerate() {
+            for (i, node) in ctx.nodes.iter().enumerate() {
                 let circle = node.circle();
                 if circle.contains(&world_mouse_pt) {
                     hover_node_i = Some(i);
@@ -1525,7 +1579,7 @@ pub async fn viz_main(
         };
 
         if let Some(old_hover_node_i) = old_hover_node_i {
-            let old_hover_node = &nodes[old_hover_node_i];
+            let old_hover_node = &ctx.nodes[old_hover_node_i];
             let target_rad = old_hover_node.rad * rad_mul;
             hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
             if hover_circle_rad > old_hover_node.rad {
@@ -1551,27 +1605,24 @@ pub async fn viz_main(
             if hover_node_i.is_some()
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
-                let hover_node = &nodes[hover_node_i.unwrap()];
-                push_node(
-                    nodes,
-                    NodeInit::Dyn {
-                        parent: hover_node_i,
-                        link: None,
+                let hover_node = &ctx.nodes[hover_node_i.unwrap()];
+                ctx.push_node(NodeInit::Dyn {
+                    parent: hover_node_i,
+                    link: None,
 
-                        kind: hover_node.kind,
-                        height: hover_node.height + 1,
+                    kind: hover_node.kind,
+                    height: hover_node.height + 1,
 
-                        text: "".to_string(),
-                        hash: if hover_node.kind == NodeKind::BC {
-                            Some([0; 32])
-                        } else {
-                            None
-                        },
-                        is_real: false,
-                        work: None,
-                        txs_n: 0,
+                    text: "".to_string(),
+                    hash: if hover_node.kind == NodeKind::BC {
+                        Some([0; 32])
+                    } else {
+                        None
                     },
-                );
+                    is_real: false,
+                    work: None,
+                    txs_n: 0,
+                }, None);
             } else {
                 click_node_i = hover_node_i;
             }
@@ -1588,19 +1639,19 @@ pub async fn viz_main(
 
         // calculate forces
         let spring_stiffness = 160.;
-        for node_i in 0..nodes.len() {
+        for node_i in 0..ctx.nodes.len() {
             // parent-child height - O(n) //////////////////////////////
-            let a_pt =
-                nodes[node_i].pt + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
-            if let Some(parent_i) = nodes[node_i].parent {
-                if let Some(parent) = nodes.get(parent_i) {
-                    let intended_height = nodes[node_i].work.map_or(100., |work| {
-                        150. * work.as_u128() as f32 / bc_work_max as f32
-                    });
+            let a_pt = ctx.nodes[node_i].pt
+                + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
+            if let Some(parent_i) = ctx.nodes[node_i].parent {
+                if let Some(parent) = ctx.nodes.get(parent_i) {
+                    let intended_height = ctx.nodes[node_i]
+                        .work
+                        .map_or(100., |work| 150. * work.as_u128() as f32 / bc_work_max as f32);
                     let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
                     let v = a_pt - target_pt;
                     let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
-                    nodes[node_i].acc += force;
+                    ctx.nodes[node_i].acc += force;
 
                     dbg.new_force(node_i, force);
                 }
@@ -1608,8 +1659,8 @@ pub async fn viz_main(
 
             // any-node distance - O(n^2) //////////////////////////////
             // TODO: spatial partitioning
-            for node_i2 in 0..nodes.len() {
-                let node_b = &nodes[node_i2];
+            for node_i2 in 0..ctx.nodes.len() {
+                let node_b = &ctx.nodes[node_i2];
                 if node_i2 != node_i {
                     let b_to_a = a_pt - node_b.pt;
                     let dist_sq = b_to_a.length_squared();
@@ -1621,7 +1672,7 @@ pub async fn viz_main(
                         let v = a_pt - target_pt;
                         let force =
                             -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y);
-                        nodes[node_i].acc += force;
+                        ctx.nodes[node_i].acc += force;
 
                         dbg.new_force(node_i, force);
                     }
@@ -1632,7 +1683,7 @@ pub async fn viz_main(
         let dt = 1. / 60.;
         if true {
             // apply forces
-            for node in &mut *nodes {
+            for node in &mut *ctx.nodes {
                 node.vel += node.acc * dt;
                 node.pt += node.vel * dt;
 
@@ -1641,12 +1692,12 @@ pub async fn viz_main(
         }
 
         // DRAW NODES & SELECTED-NODE UI ////////////////////////////////////////////////////////////
-        let unique_chars_n = block_hash_unique_chars_n(nodes);
+        let unique_chars_n = block_hash_unique_chars_n(&ctx.nodes);
 
         if let Some(click_node_i) = click_node_i {
             let _z = ZoneGuard::new("click node UI");
 
-            let click_node = &mut nodes[click_node_i];
+            let click_node = &mut ctx.nodes[click_node_i];
             ui_camera_window(
                 hash!(),
                 &world_camera,
@@ -1690,7 +1741,7 @@ pub async fn viz_main(
         // ALT: EoA
         let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
         let z_draw_nodes = begin_zone("draw nodes");
-        for (i, node) in nodes.iter().enumerate() {
+        for (i, node) in ctx.nodes.iter().enumerate() {
             // draw nodes that are on-screen
             let _z = ZoneGuard::new("draw node");
             // NOTE: grows *upwards*
@@ -1700,10 +1751,10 @@ pub async fn viz_main(
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent_i) = node.parent {
-                    draw_arrow_between_circles(circle, nodes[parent_i].circle(), 2., 9., GRAY);
+                    draw_arrow_between_circles(circle, ctx.nodes[parent_i].circle(), 2., 9., GRAY);
                 };
                 if let Some(link) = node.link {
-                    draw_arrow_between_circles(circle, nodes[link].circle(), 2., 9., PINK);
+                    draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
             }
 
@@ -1788,7 +1839,7 @@ pub async fn viz_main(
         if dev(true) {
             // draw forces
             // draw resultant force
-            for node in &mut *nodes {
+            for node in &mut *ctx.nodes {
                 if node.acc != Vec2::_0 {
                     draw_arrow_lines(node.pt, node.pt + node.acc * dt, 1., 9., PURPLE);
                 }
@@ -1796,7 +1847,7 @@ pub async fn viz_main(
 
             // draw component forces
             for (node_i, forces) in dbg.nodes_forces.iter() {
-                let node = &nodes[*node_i];
+                let node = &ctx.nodes[*node_i];
                 for force in forces {
                     if *force != Vec2::_0 {
                         draw_arrow_lines(node.pt, node.pt + *force * dt, 1., 9., ORANGE);
