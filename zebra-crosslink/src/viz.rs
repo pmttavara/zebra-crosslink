@@ -17,7 +17,7 @@ use macroquad::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use zebra_chain::work::difficulty::Work;
+use zebra_chain::work::difficulty::CompactDifficulty;
 
 const IS_DEV: bool = true;
 fn dev(show_in_dev: bool) -> bool {
@@ -168,7 +168,7 @@ pub mod serialization {
         block::merkle::Root,
         block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight},
         fmt::HexDebug,
-        work::{difficulty::CompactDifficulty, equihash::Solution},
+        work::equihash::Solution,
     };
 
     #[derive(Serialize, Deserialize)]
@@ -487,6 +487,9 @@ enum NodeKind {
 }
 
 type NodeRef = Option<usize>; // TODO: generational handle
+
+/// A node on the graph/network diagram.
+/// Contains a bundle of attributes that can represent PoW or BFT blocks.
 #[derive(Clone, Debug)]
 struct Node {
     // structure
@@ -498,7 +501,7 @@ struct Node {
     text: String,
     hash: Option<[u8; 32]>,
     height: u32,
-    work: Option<Work>,
+    difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
 
     is_real: bool,
@@ -525,7 +528,7 @@ enum NodeInit {
         text: String,
         hash: Option<[u8; 32]>,
         height: u32,
-        work: Option<Work>,
+        difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
 
         is_real: bool,
@@ -536,7 +539,7 @@ enum NodeInit {
         link: NodeRef,
         hash: Option<[u8; 32]>,
         height: Option<u32>, // if None, works out from parent
-        work: Option<Work>,
+        difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
     },
@@ -634,6 +637,7 @@ struct VizCtx {
     nodes: Vec<Node>,
     bc_lo: NodeRef,
     bc_hi: NodeRef,
+    bc_work_max: u128,
 
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
 }
@@ -655,7 +659,7 @@ impl VizCtx {
                 text,
                 hash,
                 height,
-                work,
+                difficulty,
                 txs_n,
                 is_real,
             } => {
@@ -667,7 +671,7 @@ impl VizCtx {
                         text,
                         hash,
                         height, // TODO: this should be exclusively determined by parent for Dyn
-                        work,
+                        difficulty,
                         txs_n,
                         is_real,
                         rad: match kind {
@@ -688,7 +692,7 @@ impl VizCtx {
                 link,
                 hash,
                 height,
-                work,
+                difficulty,
                 txs_n,
                 is_real,
             } => {
@@ -711,7 +715,7 @@ impl VizCtx {
                         kind: NodeKind::BC,
                         hash,
                         height,
-                        work,
+                        difficulty,
                         txs_n,
                         is_real,
 
@@ -748,7 +752,7 @@ impl VizCtx {
                         link,
 
                         hash: None,
-                        work: None,
+                        difficulty: None,
                         txs_n: 0,
 
                         kind: NodeKind::BFT,
@@ -815,6 +819,10 @@ impl VizCtx {
 
         match new_node.kind {
             NodeKind::BC => {
+                if let Some(work) = new_node.difficulty.and_then(|difficulty| difficulty.to_work()) {
+                    self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
+                }
+
                 if self.bc_lo.is_none() || new_node.height < nodes[self.bc_lo.unwrap()].height {
                     self.bc_lo = node_ref;
                 }
@@ -1070,6 +1078,7 @@ pub async fn viz_main(
         nodes: Vec::with_capacity(512),
         bc_hi: None,
         bc_lo: None,
+        bc_work_max: 0,
         missing_bc_parents: HashMap::new(),
     };
 
@@ -1137,7 +1146,6 @@ pub async fn viz_main(
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
-    let mut bc_work_max: u128 = 0;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
     let mut dbg = VizDbg {
@@ -1241,21 +1249,14 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (work, txs_n, parent_hash) =
+                    let (difficulty, txs_n, parent_hash) =
                         g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
                             (
-                                block
-                                    .header
-                                    .difficulty_threshold
-                                    .to_work(),
+                                Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
                             )
                         });
-
-                    if let Some(work) = work {
-                        bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-                    }
 
                     ctx.push_node(
                         NodeInit::BC {
@@ -1264,7 +1265,7 @@ pub async fn viz_main(
 
                             hash: Some(hash.0),
                             height: Some(g.state.lo_height.0 + i as u32),
-                            work,
+                            difficulty,
                             txs_n,
                             is_real: true,
                         },
@@ -1277,21 +1278,14 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (work, txs_n, parent_hash) =
+                    let (difficulty, txs_n, parent_hash) =
                         g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
                             (
-                                block
-                                    .header
-                                    .difficulty_threshold
-                                    .to_work(),
+                                Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
                             )
                         });
-
-                    if let Some(work) = work {
-                        bc_work_max = std::cmp::max(bc_work_max, work.as_u128());
-                    }
 
                     let height = g.state.lo_height.0 + i as u32;
 
@@ -1302,7 +1296,7 @@ pub async fn viz_main(
 
                             hash: Some(hash.0),
                             height: Some(height), // TODO: -?
-                            work,
+                            difficulty,
                             txs_n,
                             is_real: true,
                         },
@@ -1620,7 +1614,7 @@ pub async fn viz_main(
                         None
                     },
                     is_real: false,
-                    work: None,
+                    difficulty: None,
                     txs_n: 0,
                 }, None);
             } else {
@@ -1646,8 +1640,9 @@ pub async fn viz_main(
             if let Some(parent_i) = ctx.nodes[node_i].parent {
                 if let Some(parent) = ctx.nodes.get(parent_i) {
                     let intended_height = ctx.nodes[node_i]
-                        .work
-                        .map_or(100., |work| 150. * work.as_u128() as f32 / bc_work_max as f32);
+                        .difficulty
+                        .and_then(|difficulty| difficulty.to_work())
+                        .map_or(100., |work| 150. * work.as_u128() as f32 / ctx.bc_work_max as f32);
                     let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
                     let v = a_pt - target_pt;
                     let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
