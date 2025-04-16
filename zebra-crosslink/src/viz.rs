@@ -17,7 +17,7 @@ use macroquad::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use zebra_chain::work::difficulty::CompactDifficulty;
+use zebra_chain::work::difficulty::{INVALID_COMPACT_DIFFICULTY, CompactDifficulty};
 
 const IS_DEV: bool = true;
 fn dev(show_in_dev: bool) -> bool {
@@ -171,6 +171,7 @@ pub mod serialization {
     struct MinimalBlockExport {
         difficulty: u32,
         txs_n: u32,
+        previous_block_hash: [u8; 32],
     }
 
     #[derive(Serialize, Deserialize)]
@@ -182,25 +183,71 @@ pub mod serialization {
         bft_block_strings: Vec<String>,
     }
 
-    impl From<&VizState> for MinimalVizStateExport {
-        fn from(state: &VizState) -> Self {
+    impl From<(&VizState, &VizCtx)> for MinimalVizStateExport {
+        fn from(data: (&VizState, &VizCtx)) -> Self {
+            let (state, ctx) = data;
+            let nodes = &ctx.nodes;
+
+            fn u32_from_compact_difficulty(difficulty: CompactDifficulty) -> u32 {
+                u32::from_be_bytes(difficulty.bytes_in_display_order())
+            }
+
+            let mut height_hashes: Vec<(u32, [u8; 32])> = state.height_hashes.iter().map(|h| (h.0.0, h.1.0)).collect();
+            let mut blocks: Vec<Option<MinimalBlockExport>> = state
+                .blocks
+                .iter()
+                .map(|opt| {
+                    opt.as_ref().map(|b| MinimalBlockExport {
+                        difficulty: u32_from_compact_difficulty(b.header.difficulty_threshold),
+                        txs_n: b.transactions.len() as u32,
+                        previous_block_hash: b.header.previous_block_hash.0,
+                    })
+                })
+                .collect();
+
+            let mut bft_block_strings = state.bft_block_strings.clone();
+
+            for (i, node) in nodes.into_iter().enumerate() {
+                match node.kind {
+                    NodeKind::BC => {
+                        height_hashes.push((node.height, node.hash.expect("PoW nodes should have hashes")));
+                        blocks.push(Some(MinimalBlockExport {
+                            difficulty: u32_from_compact_difficulty(
+                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| {
+                                    CompactDifficulty::from(d)
+                                }),
+                            ),
+                            txs_n: node.txs_n,
+                            previous_block_hash: if let Some(parent) = node.parent {
+                                let parent = &nodes[parent];
+                                assert!(parent.height + 1 == node.height);
+                                parent.hash.expect("PoW nodes should have hashes")
+                            } else {
+                                let mut hash = [0u8; 32];
+                                // for (k, v) in &ctx.missing_bc_parents {
+                                //     if *v == Some(i) {
+                                //         hash = *k;
+                                //     }
+                                // }
+                                hash
+                            },
+                        }));
+                    }
+
+                    NodeKind::BFT => {
+                        bft_block_strings.push(node.link.map_or(node.text.clone(), |link| {
+                            format!("{}:{}", node.text, nodes[link].height)
+                        }));
+                    }
+                }
+            }
+
             Self {
                 latest_final_block: state.latest_final_block.map(|(h, hash)| (h.0, hash.0)),
                 bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
-                height_hashes: state.height_hashes.iter().map(|h| (h.0.0, h.1.0)).collect(),
-                blocks: state
-                    .blocks
-                    .iter()
-                    .map(|opt| {
-                        opt.as_ref().map(|b| MinimalBlockExport {
-                            difficulty: u32::from_be_bytes(
-                                b.header.difficulty_threshold.bytes_in_display_order(),
-                            ),
-                            txs_n: b.transactions.len() as u32,
-                        })
-                    })
-                    .collect(),
-                bft_block_strings: state.bft_block_strings.clone(),
+                height_hashes,
+                blocks,
+                bft_block_strings,
             }
         }
     }
@@ -223,7 +270,7 @@ pub mod serialization {
                             Arc::new(Block {
                                 header: Arc::new(BlockHeader {
                                     version: 0,
-                                    previous_block_hash: BlockHash([0; 32]),
+                                    previous_block_hash: BlockHash(b.previous_block_hash),
                                     merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
                                     commitment_bytes: HexDebug([0u8; 32]),
                                     time: Utc::now(),
@@ -268,14 +315,19 @@ pub mod serialization {
     }
 
     /// Write the current visualizer state to a file
-    pub fn write_to_file(path: &str, state: &VizState) {
+    pub(crate) fn write_to_file_internal(path: &str, state: &VizState, ctx: &VizCtx) {
         use serde_json::to_string_pretty;
         use std::fs;
 
-        let viz_export = MinimalVizStateExport::from(&*state);
+        let viz_export = MinimalVizStateExport::from((&*state, ctx));
         // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
         let json = to_string_pretty(&viz_export).expect("serialization success");
         fs::write(path, json).expect("write success");
+    }
+
+    /// Write the current visualizer state to a file
+    pub fn write_to_file(path: &str, state: &VizState) {
+        write_to_file_internal(path, state, &VizCtx::default())
     }
 }
 
@@ -535,7 +587,7 @@ enum NodeInit {
         parent: NodeRef, // TODO: do we need explicit edges?
         link: NodeRef,
         hash: Option<[u8; 32]>,
-        height: Option<u32>, // if None, works out from parent
+        height: u32,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
@@ -623,7 +675,7 @@ enum MouseDrag {
 
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
-struct VizCtx {
+pub(crate) struct VizCtx {
     // h: BlockHeight,
     screen_o: Vec2,
     screen_vel: Vec2,
@@ -697,12 +749,7 @@ impl VizCtx {
                 let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
 
                 // DUP
-                let height = if let Some(height) = height {
-                    assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
-                    height
-                } else {
-                    nodes[parent.expect("Need at least 1 of parent or height")].height + 1
-                };
+                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
 
                 (
                     Node {
@@ -1269,11 +1316,11 @@ pub async fn viz_main(
 
                     ctx.push_node(
                         NodeInit::BC {
-                            parent: ctx.bc_hi, // TODO: can be implicit...
+                            parent: None,
                             link: None,
 
                             hash: Some(hash.0),
-                            height: Some(height.0),
+                            height: height.0,
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1302,7 +1349,7 @@ pub async fn viz_main(
                             link: None,
 
                             hash: Some(hash.0),
-                            height: Some(height.0),
+                            height: height.0,
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1401,7 +1448,7 @@ pub async fn viz_main(
         }
 
         if is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::E) {
-            serialization::write_to_file("./zebra-crosslink/viz_state.json", &g.state);
+            serialization::write_to_file_internal("./zebra-crosslink/viz_state.json", &g.state, &ctx);
         }
 
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
@@ -1608,22 +1655,22 @@ pub async fn viz_main(
             {
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 ctx.push_node(NodeInit::Dyn {
-                    parent: hover_node_i,
-                    link: None,
+                        parent: hover_node_i,
+                        link: None,
 
-                    kind: hover_node.kind,
-                    height: hover_node.height + 1,
+                        kind: hover_node.kind,
+                        height: hover_node.height + 1,
 
-                    text: "".to_string(),
-                    hash: if hover_node.kind == NodeKind::BC {
-                        Some([0; 32])
-                    } else {
-                        None
-                    },
-                    is_real: false,
-                    difficulty: None,
-                    txs_n: 0,
-                }, None);
+                        text: "".to_string(),
+                        hash: if hover_node.kind == NodeKind::BC {
+                            Some([0; 32])
+                        } else {
+                            None
+                        },
+                        is_real: false,
+                        difficulty: None,
+                        txs_n: 0,
+                    }, None);
             } else {
                 click_node_i = hover_node_i;
             }
@@ -1746,6 +1793,14 @@ pub async fn viz_main(
         for (i, node) in ctx.nodes.iter().enumerate() {
             // draw nodes that are on-screen
             let _z = ZoneGuard::new("draw node");
+
+            assert!(!node.pt.x.is_nan());
+            assert!(!node.pt.y.is_nan());
+            assert!(!node.vel.x.is_nan());
+            assert!(!node.vel.y.is_nan());
+            assert!(!node.acc.x.is_nan());
+            assert!(!node.acc.y.is_nan());
+
             // NOTE: grows *upwards*
             let circle = node.circle();
 
