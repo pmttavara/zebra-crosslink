@@ -15,21 +15,19 @@ mod integration_tests {
     #[test]
     fn crosslink_test_chain_growth_headless() {
         let blocks: Vec<Option<Arc<Block>>> = (0..5).map(|i| Some(get_test_block(i))).collect();
-        let hashes: Vec<BlockHash> = blocks.iter().map(|b| b.as_ref().unwrap().hash()).collect();
+        let height_hashes: Vec<(BlockHeight, BlockHash)> = blocks.iter().enumerate().map(|(i, b)| (BlockHeight(i as u32), b.as_ref().unwrap().hash())).collect();
 
         let state = Arc::new(VizState {
-            latest_final_block: Some((BlockHeight(2), hashes[2])),
-            bc_tip: Some((BlockHeight(4), hashes[4])),
-            lo_height: BlockHeight(0),
-            hashes: hashes.clone(),
+            latest_final_block: Some(height_hashes[2]),
+            bc_tip: Some(height_hashes[4]),
+            height_hashes: height_hashes.clone(),
             blocks: blocks.clone(),
             internal_proposed_bft_string: Some("Genesis".into()),
             bft_block_strings: vec!["A:0".into(), "B:1".into(), "C:".into()],
         });
 
         assert_eq!(blocks.len(), 5);
-        assert_eq!(state.hashes.len(), 5);
-        assert_eq!(state.lo_height, BlockHeight(0));
+        assert_eq!(state.height_hashes.len(), 5);
 
         #[cfg(feature = "viz_gui")]
         {

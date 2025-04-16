@@ -140,14 +140,10 @@ pub struct VizState {
     /// Height & hash of the best-chain tip
     pub bc_tip: Option<(BlockHeight, BlockHash)>,
 
-    // requested info
-    /// The height of the first hash in `hashes` & `blocks`,
-    /// should correspond to the low end of the requested block range
-    /// (`bc_req_h` in [`VizGlobals`]).
-    pub lo_height: BlockHeight,
+    // requested info //
     /// A range of hashes from the PoW chain, as requested by the visualizer.
     /// Ascending in height from `lo_height`. Parallel to `blocks`.
-    pub hashes: Vec<BlockHash>,
+    pub height_hashes: Vec<(BlockHeight, BlockHash)>,
     /// A range of blocks from the PoW chain, as requested by the visualizer.
     /// Ascending in height from `lo_height`. Parallel to `hashes`.
     pub blocks: Vec<Option<Arc<Block>>>,
@@ -181,8 +177,7 @@ pub mod serialization {
     struct MinimalVizStateExport {
         latest_final_block: Option<(u32, [u8; 32])>,
         bc_tip: Option<(u32, [u8; 32])>,
-        lo_height: u32,
-        hashes: Vec<[u8; 32]>,
+        height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
         bft_block_strings: Vec<String>,
     }
@@ -192,8 +187,7 @@ pub mod serialization {
             Self {
                 latest_final_block: state.latest_final_block.map(|(h, hash)| (h.0, hash.0)),
                 bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
-                lo_height: state.lo_height.0,
-                hashes: state.hashes.iter().map(|h| h.0).collect(),
+                height_hashes: state.height_hashes.iter().map(|h| (h.0.0, h.1.0)).collect(),
                 blocks: state
                     .blocks
                     .iter()
@@ -220,8 +214,7 @@ pub mod serialization {
                 bc_tip: export
                     .bc_tip
                     .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
-                lo_height: BlockHeight(export.lo_height),
-                hashes: export.hashes.into_iter().map(BlockHash).collect(),
+                height_hashes: export.height_hashes.into_iter().map(|h| (BlockHeight(h.0), BlockHash(h.1))).collect(),
                 blocks: export
                     .blocks
                     .into_iter()
@@ -315,7 +308,7 @@ pub struct VizGlobals {
     /// Allows for one-way syncing so service_viz_requests doesn't run too quickly
     pub consumed: bool,
     /// The range of PoW blocks requested from Viz to TFL.
-    /// Translates to `hashes`, `blocks`, & `lo_height` in `VizState`
+    /// Translates to `hashes`, `blocks` in `VizState`
     pub bc_req_h: (i32, i32), // negative implies relative to tip
     // TODO: bft_req_h: (i32, i32),
     /// Value for this finalizer node to propose for the next BFT block.
@@ -354,8 +347,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             latest_final_block: None,
             bc_tip: None,
 
-            lo_height: BlockHeight(0),
-            hashes: Vec::new(),
+            height_hashes: Vec::new(),
             blocks: Vec::new(),
 
             internal_proposed_bft_string: None,
@@ -465,11 +457,16 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
                 internal.proposed_bft_string.clone(),
             )
         };
+
+        let mut height_hashes = Vec::with_capacity(hashes.len());
+        for i in 0 ..hashes.len() {
+            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
+        }
+
         let new_state = VizState {
             latest_final_block: tfl_final_block_height_hash(tfl_handle.clone()).await,
             bc_tip,
-            lo_height,
-            hashes,
+            height_hashes,
             blocks,
             internal_proposed_bft_string,
             bft_block_strings,
@@ -1238,14 +1235,17 @@ pub async fn viz_main(
         let z_cache_blocks = begin_zone("cache blocks");
         // TODO: safer access
         let is_new_bc_hi = ctx.bc_lo.map_or(false, |i| {
-            let lo_height = g.state.lo_height.0;
-            let lo_node = &ctx.nodes[i];
-            lo_node.height <= lo_height
+            if let Some((lo_height, _)) = g.state.height_hashes.get(0) {
+                let lo_node = &ctx.nodes[i];
+                lo_node.height <= lo_height.0
+            } else {
+                false
+            }
         });
 
         if is_new_bc_hi {
             // TODO: extract common code
-            for (i, hash) in g.state.hashes.iter().enumerate() {
+            for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
@@ -1264,7 +1264,7 @@ pub async fn viz_main(
                             link: None,
 
                             hash: Some(hash.0),
-                            height: Some(g.state.lo_height.0 + i as u32),
+                            height: Some(height.0),
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1274,7 +1274,7 @@ pub async fn viz_main(
                 }
             }
         } else {
-            for (i, hash) in g.state.hashes.iter().enumerate().rev() {
+            for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
@@ -1287,15 +1287,13 @@ pub async fn viz_main(
                             )
                         });
 
-                    let height = g.state.lo_height.0 + i as u32;
-
                     ctx.push_node(
                         NodeInit::BC {
                             parent: None, // new lowest
                             link: None,
 
                             hash: Some(hash.0),
-                            height: Some(height), // TODO: -?
+                            height: Some(height.0),
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1874,7 +1872,7 @@ pub async fn viz_main(
                 ctx.screen_o,
                 ctx.mouse_drag_d,
                 ctx.screen_vel,
-                g.state.hashes.len(),
+                g.state.height_hashes.len(),
                 bc_h_lo,
                 bc_h_hi,
                 g.bc_req_h,
