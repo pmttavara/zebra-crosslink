@@ -17,7 +17,13 @@ use macroquad::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use zebra_chain::work::difficulty::{INVALID_COMPACT_DIFFICULTY, CompactDifficulty};
+use zebra_chain::{
+    transaction::{
+        Transaction,
+        LockTime,
+    },
+    work::difficulty::{INVALID_COMPACT_DIFFICULTY, CompactDifficulty}
+};
 
 const IS_DEV: bool = true;
 fn dev(show_in_dev: bool) -> bool {
@@ -282,7 +288,12 @@ pub mod serialization {
                                     nonce: HexDebug([0u8; 32]),
                                     solution: Solution::for_proposal(),
                                 }),
-                                transactions: vec![].into(),
+                                // dummy transactions, just so we have txs_n
+                                transactions: vec![Arc::new(Transaction::V1 {
+                                    lock_time: LockTime::Height(BlockHeight(0)),
+                                    inputs: Vec::new(),
+                                    outputs: Vec::new(),
+                                }); b.txs_n as usize].into(),
                             })
                         })
                     })
