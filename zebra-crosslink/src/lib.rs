@@ -86,7 +86,7 @@ pub(crate) struct TFLServiceInternal {
     // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 
-    bft_block_strings: Vec<String>,
+    bft_blocks: Vec<(usize, String)>,
     proposed_bft_string: Option<String>,
 }
 
@@ -670,7 +670,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
 
                                 let mut internal = internal_handle.internal.lock().await;
-                                internal.bft_block_strings.insert(certificate.height.as_u64() as usize - 1, format!("{:?}", decided_value.value.value));
+                                let insert_i = certificate.height.as_u64() as usize - 1;
+                                let parent_i = insert_i.saturating_sub(1); // just a simple chain
+                                internal.bft_blocks.insert(insert_i, (parent_i, format!("{:?}", decided_value.value.value)));
 
                                 // When that happens, we store the decided value in our store
                                 // TODO: state.commit(certificate, extensions).await?;

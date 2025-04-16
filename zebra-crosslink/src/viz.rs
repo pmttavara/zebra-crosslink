@@ -154,7 +154,7 @@ pub struct VizState {
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
     /// Vector of all decided BFT block payloads, indexed by height.
-    pub bft_block_strings: Vec<String>,
+    pub bft_blocks: Vec<(usize, String)>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -183,7 +183,7 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_block_strings: Vec<String>,
+        bft_blocks: Vec<(usize, String)>,
     }
 
     impl From<(&VizState, &VizCtx)> for MinimalVizStateExport {
@@ -212,14 +212,14 @@ pub mod serialization {
                 })
                 .collect();
 
-            let mut bft_block_strings = state.bft_block_strings.clone();
+            let mut bft_blocks = state.bft_blocks.clone();
 
             for (i, node) in nodes.into_iter().enumerate() {
                 match node.kind {
                     NodeKind::BC => {
                         height_hashes.push((
                             node.height,
-                            node.hash.expect("PoW nodes should have hashes"),
+                            node.hash().expect("PoW nodes should have hashes"),
                         ));
                         blocks.push(Some(MinimalBlockExport {
                             difficulty: u32_from_compact_difficulty(
@@ -231,7 +231,7 @@ pub mod serialization {
                             previous_block_hash: if let Some(parent) = node.parent {
                                 let parent = &nodes[parent];
                                 assert!(parent.height + 1 == node.height);
-                                parent.hash.expect("PoW nodes should have hashes")
+                                parent.hash().expect("PoW nodes should have hashes")
                             } else {
                                 let mut hash = [0u8; 32];
                                 // for (k, v) in &ctx.missing_bc_parents {
@@ -245,9 +245,22 @@ pub mod serialization {
                     }
 
                     NodeKind::BFT => {
-                        bft_block_strings.push(node.link.map_or(node.text.clone(), |link| {
-                            format!("{}:{}", node.text, nodes[link].height)
-                        }));
+                        let parent_id = if let Some(parent) = node.parent {
+                            let parent = &nodes[parent];
+                            assert!(parent.height + 1 == node.height);
+                            parent.id().expect("BFT nodes should have ids")
+                        } else {
+                            0
+                        };
+
+                        bft_blocks.push(
+                            (
+                                parent_id,
+                                node.link.map_or(node.text.clone(), |link| {
+                                    format!("{}:{}", node.text, nodes[link].height)
+                                })
+                            )
+                        );
                     }
                 }
             }
@@ -257,7 +270,7 @@ pub mod serialization {
                 bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
                 height_hashes,
                 blocks,
-                bft_block_strings,
+                bft_blocks,
             }
         }
     }
@@ -311,7 +324,7 @@ pub mod serialization {
                     })
                     .collect(),
                 internal_proposed_bft_string: Some("From Export".into()),
-                bft_block_strings: export.bft_block_strings,
+                bft_blocks: export.bft_blocks,
             });
 
             VizGlobals {
@@ -426,7 +439,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             blocks: Vec::new(),
 
             internal_proposed_bft_string: None,
-            bft_block_strings: Vec::new(),
+            bft_blocks: Vec::new(),
         }),
 
         // NOTE: bitwise not of x (!x in rust) is the same as -1 - x
@@ -525,10 +538,10 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
-        let (bft_block_strings, internal_proposed_bft_string) = {
+        let (bft_blocks, internal_proposed_bft_string) = {
             let internal = tfl_handle.internal.lock().await;
             (
-                internal.bft_block_strings.clone(),
+                internal.bft_blocks.clone(),
                 internal.proposed_bft_string.clone(),
             )
         };
@@ -544,7 +557,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
             height_hashes,
             blocks,
             internal_proposed_bft_string,
-            bft_block_strings,
+            bft_blocks,
         };
 
         new_g.state = Arc::new(new_state);
@@ -556,6 +569,13 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
 enum NodeKind {
     BC,
     BFT,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum NodeId {
+    None,
+    Hash([u8; 32]),
+    Index(usize),
 }
 
 type NodeRef = Option<usize>; // TODO: generational handle
@@ -571,7 +591,7 @@ struct Node {
     // data
     kind: NodeKind,
     text: String,
-    hash: Option<[u8; 32]>,
+    id: NodeId,
     height: u32,
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
@@ -598,7 +618,7 @@ enum NodeInit {
         // data
         kind: NodeKind,
         text: String,
-        hash: Option<[u8; 32]>,
+        id: NodeId,
         height: u32,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
@@ -609,7 +629,7 @@ enum NodeInit {
     BC {
         parent: NodeRef, // TODO: do we need explicit edges?
         link: NodeRef,
-        hash: Option<[u8; 32]>,
+        hash: [u8; 32],
         height: u32,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
@@ -618,6 +638,7 @@ enum NodeInit {
 
     BFT {
         parent: NodeRef, // TODO: do we need explicit edges?
+        id: usize,
         link: NodeRef,
         text: String,
         height: Option<u32>, // if None, works out from parent
@@ -630,17 +651,31 @@ impl Node {
         Circle::new(self.pt.x, self.pt.y, self.rad)
     }
 
+    fn id(&self) -> Option<usize> {
+        match self.id {
+            NodeId::Index(hash) => Some(hash),
+            _ => None,
+        }
+    }
+
+    fn hash(&self) -> Option<[u8; 32]> {
+        match self.id {
+            NodeId::Hash(hash) => Some(hash),
+            _ => None,
+        }
+    }
+
     fn hash_string(&self) -> Option<String> {
         let _z = ZoneGuard::new("hash_string()");
-        self.hash.map(|hash| BlockHash(hash).to_string())
+        self.hash().map(|hash| BlockHash(hash).to_string())
     }
 }
 
 impl HasBlockHash for Node {
     fn get_hash(&self) -> Option<BlockHash> {
         if self.kind == NodeKind::BC {
-            assert!(self.hash.is_some());
-            self.hash.map(BlockHash)
+            assert!(self.hash().is_some());
+            self.hash().map(BlockHash)
         } else {
             None
         }
@@ -669,7 +704,10 @@ fn find_bc_node_by_hash(nodes: &[Node], hash: &BlockHash) -> NodeRef {
     let _z = ZoneGuard::new("find_bc_node_by_hash");
     nodes
         .iter()
-        .position(|node| node.kind == NodeKind::BC && node.hash.as_ref() == Some(&hash.0))
+        .position(|node| node.kind == NodeKind::BC && match node.id {
+            NodeId::Hash(h) => h == hash.0,
+            _ => false,
+        })
 }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
@@ -678,6 +716,17 @@ fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
         .iter()
         .position(|node| node.kind == NodeKind::BC && node.height == height.0)
 }
+
+fn find_bft_node_by_id(nodes: &[Node], id: usize) -> NodeRef {
+    let _z = ZoneGuard::new("find_bft_node_by_id");
+    nodes
+        .iter()
+        .position(|node| node.kind == NodeKind::BFT && match node.id {
+            NodeId::Index(i) => i == id,
+            _ => false,
+        })
+}
+
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
     let _z = ZoneGuard::new("find_bft_node_by_height");
@@ -729,7 +778,7 @@ impl VizCtx {
                 link,
                 kind,
                 text,
-                hash,
+                id,
                 height,
                 difficulty,
                 txs_n,
@@ -741,7 +790,7 @@ impl VizCtx {
                         link,
                         kind,
                         text,
-                        hash,
+                        id,
                         height, // TODO: this should be exclusively determined by parent for Dyn
                         difficulty,
                         txs_n,
@@ -780,7 +829,7 @@ impl VizCtx {
                         link,
 
                         kind: NodeKind::BC,
-                        hash,
+                        id: NodeId::Hash(hash),
                         height,
                         difficulty,
                         txs_n,
@@ -801,6 +850,7 @@ impl VizCtx {
                 parent,
                 link,
                 height,
+                id,
                 text,
                 is_real,
             } => {
@@ -818,7 +868,7 @@ impl VizCtx {
                         parent,
                         link,
 
-                        hash: None,
+                        id: NodeId::Index(id),
                         difficulty: None,
                         txs_n: 0,
 
@@ -861,7 +911,7 @@ impl VizCtx {
             }
 
             // find & link possible child
-            if let Some(node_hash) = new_node.hash {
+            if let Some(node_hash) = new_node.hash() {
                 if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
                     self.missing_bc_parents.remove(&node_hash);
                     new_node.pt = nodes[child].pt + vec2(0., nodes[child].rad + new_node.rad + 90.); // TODO: handle positioning when both parent & child are set
@@ -1201,7 +1251,6 @@ pub async fn viz_main(
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
-    let mut bft_parent: NodeRef = None;
     let font_size = 30.;
 
     let base_style = root_ui()
@@ -1220,6 +1269,9 @@ pub async fn viz_main(
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
+    let mut bft_block_hi_i = 0;
+    let mut bft_last_added = None;
+    let mut bft_fake_id = !0;
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
@@ -1344,7 +1396,7 @@ pub async fn viz_main(
                             parent: None,
                             link: None,
 
-                            hash: Some(hash.0),
+                            hash: hash.0,
                             height: height.0,
                             difficulty,
                             txs_n,
@@ -1373,7 +1425,7 @@ pub async fn viz_main(
                             parent: None, // new lowest
                             link: None,
 
-                            hash: Some(hash.0),
+                            hash: hash.0,
                             height: height.0,
                             difficulty,
                             txs_n,
@@ -1385,32 +1437,43 @@ pub async fn viz_main(
             }
         }
 
-        let new_bft_height = bft_parent
-            .and_then(|i| ctx.nodes.get(i))
-            .map_or(0, |parent| parent.height + 1) as usize;
-        let strings = &g.state.bft_block_strings;
-        for i in new_bft_height..strings.len() {
-            let s: Vec<&str> = strings[i].split(":").collect();
-            bft_parent = ctx.push_node(
-                NodeInit::BFT {
-                    // TODO: distance should be proportional to difficulty of newer block
-                    parent: bft_parent,
-                    is_real: false,
+        let blocks = &g.state.bft_blocks;
+        for i in bft_block_hi_i..blocks.len() {
+            if find_bft_node_by_id(&ctx.nodes, i).is_none() {
+                let bft_parent_i = blocks[i].0;
+                let bft_parent = if i == 0 && bft_parent_i == 0 {
+                    None
+                } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
+                    Some(bft_parent)
+                } else {
+                    None
+                };
 
-                    text: s[0].to_owned(),
-                    link: {
-                        let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
-                        if let Some(bc_i) = bc {
-                            find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
-                        } else {
-                            None
-                        }
+                let s: Vec<&str> = blocks[i].1.split(":").collect();
+                bft_last_added = ctx.push_node(
+                    NodeInit::BFT {
+                        // TODO: distance should be proportional to difficulty of newer block
+                        parent: bft_parent,
+                        is_real: true,
+
+                        id: i,
+
+                        text: s[0].to_owned(),
+                        link: {
+                            let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
+                            if let Some(bc_i) = bc {
+                                find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
+                            } else {
+                                None
+                            }
+                        },
+                        height: bft_parent.map_or(Some(0), |_| None),
                     },
-                    height: bft_parent.map_or(Some(0), |_| None),
-                },
-                None,
-            );
+                    None,
+                );
+            }
         }
+        bft_block_hi_i = blocks.len();
 
         end_zone(z_cache_blocks);
 
@@ -1598,10 +1661,15 @@ pub async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    bft_parent = ctx.push_node(
+                    bft_last_added = ctx.push_node(
                         NodeInit::BFT {
-                            parent: bft_parent,
+                            parent: bft_last_added,
                             is_real: false,
+
+                            id: {
+                                bft_fake_id -= 1;
+                                (bft_fake_id + 1)
+                            },
 
                             text: node_str.clone(),
                             link: {
@@ -1612,7 +1680,7 @@ pub async fn viz_main(
                                     None
                                 }
                             },
-                            height: bft_parent.map_or(Some(0), |_| None),
+                            height: bft_last_added.map_or(Some(0), |_| None),
                         },
                         None,
                     );
@@ -1683,7 +1751,8 @@ pub async fn viz_main(
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
-                ctx.push_node(
+                let is_bft = hover_node.kind == NodeKind::BFT;
+                let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
                         link: None,
@@ -1692,10 +1761,12 @@ pub async fn viz_main(
                         height: hover_node.height + 1,
 
                         text: "".to_string(),
-                        hash: if hover_node.kind == NodeKind::BC {
-                            Some([0; 32])
-                        } else {
-                            None
+                        id: match hover_node.kind {
+                            NodeKind::BC => NodeId::Hash([0; 32]) ,
+                            NodeKind::BFT => {
+                                bft_fake_id -= 1;
+                                NodeId::Index(bft_fake_id + 1)
+                            },
                         },
                         is_real: false,
                         difficulty: None,
@@ -1703,6 +1774,10 @@ pub async fn viz_main(
                     },
                     None,
                 );
+
+                if is_bft {
+                    bft_last_added = node_ref;
+                }
             } else {
                 click_node_i = hover_node_i;
             }

@@ -27,7 +27,7 @@ mod integration_tests {
             height_hashes: height_hashes.clone(),
             blocks: blocks.clone(),
             internal_proposed_bft_string: Some("Genesis".into()),
-            bft_block_strings: vec!["A:0".into(), "B:1".into(), "C:".into()],
+            bft_blocks: vec![(0, "A:0".into()), (0, "B:1".into()), (1, "C:".into())],
         });
 
         assert_eq!(blocks.len(), 5);

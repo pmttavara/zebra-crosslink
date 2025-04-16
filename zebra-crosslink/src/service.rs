@@ -134,7 +134,7 @@ pub fn spawn_new_tfl_service(
             tfl_is_activated: false,
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
-            bft_block_strings: Vec::new(),
+            bft_blocks: Vec::new(),
             proposed_bft_string: None,
         })),
         call: TFLServiceCalls {
@@ -191,7 +191,7 @@ mod tests {
             tfl_is_activated: false, // dup of Some/None(latest_final_block)?
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
-            bft_block_strings: Vec::new(),
+            bft_blocks: Vec::new(),
             proposed_bft_string: None,
         }));
 
