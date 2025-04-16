@@ -15,7 +15,11 @@ mod integration_tests {
     #[test]
     fn crosslink_test_chain_growth_headless() {
         let blocks: Vec<Option<Arc<Block>>> = (0..5).map(|i| Some(get_test_block(i))).collect();
-        let height_hashes: Vec<(BlockHeight, BlockHash)> = blocks.iter().enumerate().map(|(i, b)| (BlockHeight(i as u32), b.as_ref().unwrap().hash())).collect();
+        let height_hashes: Vec<(BlockHeight, BlockHash)> = blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| (BlockHeight(i as u32), b.as_ref().unwrap().hash()))
+            .collect();
 
         let state = Arc::new(VizState {
             latest_final_block: Some(height_hashes[2]),

@@ -18,11 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use zebra_chain::{
-    transaction::{
-        Transaction,
-        LockTime,
-    },
-    work::difficulty::{INVALID_COMPACT_DIFFICULTY, CompactDifficulty}
+    transaction::{LockTime, Transaction},
+    work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
 };
 
 const IS_DEV: bool = true;
@@ -198,7 +195,11 @@ pub mod serialization {
                 u32::from_be_bytes(difficulty.bytes_in_display_order())
             }
 
-            let mut height_hashes: Vec<(u32, [u8; 32])> = state.height_hashes.iter().map(|h| (h.0.0, h.1.0)).collect();
+            let mut height_hashes: Vec<(u32, [u8; 32])> = state
+                .height_hashes
+                .iter()
+                .map(|h| (h.0 .0, h.1 .0))
+                .collect();
             let mut blocks: Vec<Option<MinimalBlockExport>> = state
                 .blocks
                 .iter()
@@ -216,7 +217,10 @@ pub mod serialization {
             for (i, node) in nodes.into_iter().enumerate() {
                 match node.kind {
                     NodeKind::BC => {
-                        height_hashes.push((node.height, node.hash.expect("PoW nodes should have hashes")));
+                        height_hashes.push((
+                            node.height,
+                            node.hash.expect("PoW nodes should have hashes"),
+                        ));
                         blocks.push(Some(MinimalBlockExport {
                             difficulty: u32_from_compact_difficulty(
                                 node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| {
@@ -267,7 +271,11 @@ pub mod serialization {
                 bc_tip: export
                     .bc_tip
                     .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
-                height_hashes: export.height_hashes.into_iter().map(|h| (BlockHeight(h.0), BlockHash(h.1))).collect(),
+                height_hashes: export
+                    .height_hashes
+                    .into_iter()
+                    .map(|h| (BlockHeight(h.0), BlockHash(h.1)))
+                    .collect(),
                 blocks: export
                     .blocks
                     .into_iter()
@@ -289,11 +297,15 @@ pub mod serialization {
                                     solution: Solution::for_proposal(),
                                 }),
                                 // dummy transactions, just so we have txs_n
-                                transactions: vec![Arc::new(Transaction::V1 {
-                                    lock_time: LockTime::Height(BlockHeight(0)),
-                                    inputs: Vec::new(),
-                                    outputs: Vec::new(),
-                                }); b.txs_n as usize].into(),
+                                transactions: vec![
+                                    Arc::new(Transaction::V1 {
+                                        lock_time: LockTime::Height(BlockHeight(0)),
+                                        inputs: Vec::new(),
+                                        outputs: Vec::new(),
+                                    });
+                                    b.txs_n as usize
+                                ]
+                                .into(),
                             })
                         })
                     })
@@ -522,7 +534,7 @@ pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
         };
 
         let mut height_hashes = Vec::with_capacity(hashes.len());
-        for i in 0 ..hashes.len() {
+        for i in 0..hashes.len() {
             height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
         }
 
@@ -874,7 +886,10 @@ impl VizCtx {
 
         match new_node.kind {
             NodeKind::BC => {
-                if let Some(work) = new_node.difficulty.and_then(|difficulty| difficulty.to_work()) {
+                if let Some(work) = new_node
+                    .difficulty
+                    .and_then(|difficulty| difficulty.to_work())
+                {
                     self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
                 }
 
@@ -889,7 +904,6 @@ impl VizCtx {
 
             NodeKind::BFT => {}
         }
-
 
         nodes.push(new_node);
         node_ref
@@ -1459,7 +1473,11 @@ pub async fn viz_main(
         }
 
         if is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::E) {
-            serialization::write_to_file_internal("./zebra-crosslink/viz_state.json", &g.state, &ctx);
+            serialization::write_to_file_internal(
+                "./zebra-crosslink/viz_state.json",
+                &g.state,
+                &ctx,
+            );
         }
 
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
@@ -1665,7 +1683,8 @@ pub async fn viz_main(
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
-                ctx.push_node(NodeInit::Dyn {
+                ctx.push_node(
+                    NodeInit::Dyn {
                         parent: hover_node_i,
                         link: None,
 
@@ -1681,7 +1700,9 @@ pub async fn viz_main(
                         is_real: false,
                         difficulty: None,
                         txs_n: 0,
-                    }, None);
+                    },
+                    None,
+                );
             } else {
                 click_node_i = hover_node_i;
             }
@@ -1707,7 +1728,9 @@ pub async fn viz_main(
                     let intended_height = ctx.nodes[node_i]
                         .difficulty
                         .and_then(|difficulty| difficulty.to_work())
-                        .map_or(100., |work| 150. * work.as_u128() as f32 / ctx.bc_work_max as f32);
+                        .map_or(100., |work| {
+                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
+                        });
                     let target_pt = vec2(parent.pt.x, parent.pt.y - intended_height);
                     let v = a_pt - target_pt;
                     let force = -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y);
