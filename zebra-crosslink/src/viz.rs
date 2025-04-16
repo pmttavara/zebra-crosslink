@@ -838,6 +838,24 @@ impl VizCtx {
     }
 }
 
+impl Default for VizCtx {
+    fn default() -> Self {
+        VizCtx {
+            fix_screen_o: Vec2::_0,
+            screen_o: Vec2::_0,
+            screen_vel: Vec2::_0,
+            mouse_drag: MouseDrag::Nil,
+            mouse_drag_d: Vec2::_0,
+            old_mouse_pt: Vec2::_0,
+            nodes: Vec::with_capacity(512),
+            bc_hi: None,
+            bc_lo: None,
+            bc_work_max: 0,
+            missing_bc_parents: HashMap::new(),
+        }
+    }
+}
+
 fn sat_sub_2_sided(val: i32, d: u32) -> i32 {
     let diff: i32 = d.try_into().unwrap();
     if val >= diff || val < 0 {
@@ -1063,20 +1081,11 @@ pub async fn viz_main(
     tokio_root_thread_handle: Option<JoinHandle<()>>,
 ) -> Result<(), crate::service::TFLServiceError> {
     let mut ctx = VizCtx {
-        fix_screen_o: Vec2::_0,
-        screen_o: Vec2::_0,
-        screen_vel: Vec2::_0,
-        mouse_drag: MouseDrag::Nil,
-        mouse_drag_d: Vec2::_0,
         old_mouse_pt: {
             let (x, y) = mouse_position();
             Vec2 { x, y }
         },
-        nodes: Vec::with_capacity(512),
-        bc_hi: None,
-        bc_lo: None,
-        bc_work_max: 0,
-        missing_bc_parents: HashMap::new(),
+        ..VizCtx::default()
     };
 
     let nodes = &mut ctx.nodes;
