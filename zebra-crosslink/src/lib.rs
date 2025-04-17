@@ -23,7 +23,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use sync::RawDecidedValue;
-use tempdir::TempDir;
+use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
@@ -941,11 +941,13 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
         let mut td = temp_dir_for_wal.lock().unwrap();
         if td.is_none() {
             *td = Some(
-                TempDir::new(&format!(
-                    "aah_very_annoying_that_the_wal_is_required_id_is_{}",
-                    rand::random::<u32>()
-                ))
-                .unwrap(),
+                tempfile::Builder::new()
+                    .prefix(&format!(
+                        "aah_very_annoying_that_the_wal_is_required_id_is_{}",
+                        rand::random::<u32>()
+                    ))
+                    .tempdir()
+                    .unwrap(),
             );
         }
         std::path::PathBuf::from(td.as_ref().unwrap().path())
