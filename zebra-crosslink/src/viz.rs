@@ -253,14 +253,12 @@ pub mod serialization {
                             0
                         };
 
-                        bft_blocks.push(
-                            (
-                                parent_id,
-                                node.link.map_or(node.text.clone(), |link| {
-                                    format!("{}:{}", node.text, nodes[link].height)
-                                })
-                            )
-                        );
+                        bft_blocks.push((
+                            parent_id,
+                            node.link.map_or(node.text.clone(), |link| {
+                                format!("{}:{}", node.text, nodes[link].height)
+                            }),
+                        ));
                     }
                 }
             }
@@ -702,12 +700,13 @@ impl ByHandle<Node, NodeRef> for [Node] {
 // TODO: extract impl Eq for Node?
 fn find_bc_node_by_hash(nodes: &[Node], hash: &BlockHash) -> NodeRef {
     let _z = ZoneGuard::new("find_bc_node_by_hash");
-    nodes
-        .iter()
-        .position(|node| node.kind == NodeKind::BC && match node.id {
-            NodeId::Hash(h) => h == hash.0,
-            _ => false,
-        })
+    nodes.iter().position(|node| {
+        node.kind == NodeKind::BC
+            && match node.id {
+                NodeId::Hash(h) => h == hash.0,
+                _ => false,
+            }
+    })
 }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
@@ -719,14 +718,14 @@ fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
 
 fn find_bft_node_by_id(nodes: &[Node], id: usize) -> NodeRef {
     let _z = ZoneGuard::new("find_bft_node_by_id");
-    nodes
-        .iter()
-        .position(|node| node.kind == NodeKind::BFT && match node.id {
-            NodeId::Index(i) => i == id,
-            _ => false,
-        })
+    nodes.iter().position(|node| {
+        node.kind == NodeKind::BFT
+            && match node.id {
+                NodeId::Index(i) => i == id,
+                _ => false,
+            }
+    })
 }
-
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
     let _z = ZoneGuard::new("find_bft_node_by_height");
@@ -1762,11 +1761,11 @@ pub async fn viz_main(
 
                         text: "".to_string(),
                         id: match hover_node.kind {
-                            NodeKind::BC => NodeId::Hash([0; 32]) ,
+                            NodeKind::BC => NodeId::Hash([0; 32]),
                             NodeKind::BFT => {
                                 bft_fake_id -= 1;
                                 NodeId::Index(bft_fake_id + 1)
-                            },
+                            }
                         },
                         is_real: false,
                         difficulty: None,

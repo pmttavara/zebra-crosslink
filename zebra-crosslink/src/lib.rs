@@ -8,11 +8,7 @@ use malachitebft_app_channel::app::config as mconfig;
 use malachitebft_app_channel::app::events::*;
 use malachitebft_app_channel::app::node::NodeConfig;
 use malachitebft_app_channel::app::types::codec::Codec;
-use malachitebft_app_channel::app::types::core::{
-    Round,
-    Validity,
-    VoteExtensions,
-};
+use malachitebft_app_channel::app::types::core::{Round, Validity, VoteExtensions};
 use malachitebft_app_channel::app::types::*;
 use malachitebft_app_channel::app::*;
 use malachitebft_app_channel::AppMsg as BFTAppMsg;
@@ -34,13 +30,9 @@ use tracing::{error, info, warn};
 
 pub mod malctx;
 use crate::malctx::{
-    Address,
-    Genesis,
-    Ed25519Provider,
-    Height as BFTHeight,
-    StreamedProposalPart, StreamedProposalInit, StreamedProposalData, StreamedProposalFin,
-    TestContext,
-    Validator, ValidatorSet,
+    Address, Ed25519Provider, Genesis, Height as BFTHeight, StreamedProposalData,
+    StreamedProposalFin, StreamedProposalInit, StreamedProposalPart, TestContext, Validator,
+    ValidatorSet,
 };
 use malachitebft_signing_ed25519::*;
 
@@ -280,34 +272,6 @@ async fn tfl_final_block_height_hash(
     }
 }
 
-/// Make up a new value to propose
-/// A real application would have a more complex logic here,
-/// typically reaping transactions from a mempool and executing them against its state,
-/// before computing the merkle root of the new app state.
-fn bft_make_value(
-    rng: &mut rand::rngs::StdRng,
-    vote_extensions: &mut std::collections::HashMap<BFTHeight, VoteExtensions<TestContext>>,
-    height: BFTHeight,
-    _round: BFTRound,
-) -> crate::malctx::Value {
-    let value = rng.gen_range(100..=100000);
-    tracing::error!("bft_make_value");
-    // TODO: Where should we verify signatures?
-    let extensions = vote_extensions
-        .remove(&height)
-        .unwrap_or_default()
-        .extensions
-        .into_iter()
-        .map(|(_, e)| e.message)
-        .fold(bytes::BytesMut::new(), |mut acc, e| {
-            acc.extend_from_slice(&e);
-            acc
-        })
-        .freeze();
-
-    crate::malctx::Value { value, extensions }
-}
-
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 
@@ -342,13 +306,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     };
 
     let initial_validator_set = {
-        let mut array = Vec::with_capacity(
-            config.public_address.is_some() as usize + config.malachite_peers.len(),
-        );
-
-        if config.public_address.is_some() {
-            array.push(Validator::new(my_public_key, 1));
-        }
+        let mut array = Vec::with_capacity(config.malachite_peers.len());
 
         for peer in config.malachite_peers.iter() {
             let (_, _, public_key) = rng_private_public_key_from_address(&peer);
@@ -356,7 +314,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         }
 
         if array.is_empty() {
-            let (_, _, public_key) = rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1");
+            let (_, _, public_key) =
+                rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1");
             array.push(Validator::new(public_key, 1));
         }
 
@@ -365,7 +324,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let my_address = Address::from_public_key(&my_public_key);
     let my_signing_provider = malctx::Ed25519Provider::new(my_private_key.clone());
-    let ctx = TestContext{};
+    let ctx = TestContext {};
 
     let genesis = Genesis {
         validator_set: initial_validator_set.clone(),
@@ -382,14 +341,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     //     .expect("Failed to load configuration file");
     let mut bft_config: BFTConfig = Default::default(); // TODO: read from file?
 
-    if let Some(address) = config.public_address {
-        bft_config
-            .consensus
-            .p2p
-            .persistent_peers
-            .push(Multiaddr::from_str(&address).unwrap());
-    }
-
     for peer in config.malachite_peers.iter() {
         bft_config
             .consensus
@@ -397,11 +348,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&peer).unwrap());
     }
-    if bft_config
-            .consensus
-            .p2p
-            .persistent_peers
-            .is_empty() {
+    if bft_config.consensus.p2p.persistent_peers.is_empty() {
         bft_config
             .consensus
             .p2p
@@ -413,7 +360,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     if let Some(listen_addr) = config.listen_address {
         bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
     } else {
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap();
+        bft_config.consensus.p2p.listen_addr =
+            Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
@@ -522,7 +470,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             round,
                                             valid_round: Round::Nil,
                                             proposer: my_address,
-                                            value: malctx::Value::new(propose_string.parse().unwrap_or(rng.gen_range(100..=100000))),
+                                            value: malctx::Value::new(propose_string),
                                             validity: Validity::Valid,
                                             // extension: None, TODO? "does not have this field"
                                         };
@@ -563,34 +511,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
                                     }
 
-            fn factor_value(value: crate::malctx::Value) -> Vec<u64> {
-                let mut factors = Vec::new();
-                let mut n = value.value;
-
-                let mut i = 2;
-                while i * i <= n {
-                    if n % i == 0 {
-                        factors.push(i);
-                        n /= i;
-                    } else {
-                        i += 1;
-                    }
-                }
-
-                if n > 1 {
-                    factors.push(n);
-                }
-
-                factors
-            }
-
                                     // Data
                                     // Include each prime factor of the value as a separate proposal part
                                     {
-                                        for factor in factor_value(proposal.value) {
+                                        for factor in proposal.value.value.chars() {
                                             parts.push(StreamedProposalPart::Data(StreamedProposalData::new(factor)));
 
-                                            hasher.update(factor.to_be_bytes().as_slice());
+                                            let mut buf = [0u8; 4];
+                                            hasher.update(factor.encode_utf8(&mut buf).as_bytes());
                                         }
                                     }
 
@@ -639,7 +567,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                             } => {
                                 info!(%height, %round, "Processing synced value");
 
-                                let value = codec.decode(value_bytes).unwrap();
+                                let value : malctx::Value = codec.decode(value_bytes).unwrap();
                                 let proposed_value = ProposedValue {
                                     height,
                                     round,
@@ -803,7 +731,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                 // The correctness of the hash computation relies on the parts being ordered by sequence
                                                 // number, which is guaranteed by the `PartStreamsMap`.
                                                 for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                                    hasher.update(part.factor.to_be_bytes());
+                                                    let mut buf = [0u8; 4];
+                                                    hasher.update(part.factor.encode_utf8(&mut buf).as_bytes());
                                                 }
 
                                                 hasher.finalize()
@@ -829,18 +758,17 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         let value : ProposedValue::<malctx::TestContext> = {
                                             let init = parts.init().unwrap();
 
-                                            let value = parts
-                                                .parts
-                                                .iter()
-                                                .filter_map(|part| part.as_data())
-                                                .fold(1, |acc, data| acc * data.factor);
+                                            let mut string_value = String::new();
+                                            for part in parts.parts.iter().filter_map(|part| part.as_data()) {
+                                                string_value.push(part.factor);
+                                            }
 
                                             ProposedValue {
                                                 height: parts.height,
                                                 round: parts.round,
                                                 valid_round: init.pol_round,
                                                 proposer: parts.proposer,
-                                                value: malctx::Value::new(value),
+                                                value: malctx::Value::new(string_value),
                                                 validity: Validity::Valid,
                                             }
                                         };
@@ -1524,10 +1452,12 @@ mod strm {
     use std::cmp::Ordering;
     use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
+    use super::{
+        Address, BFTHeight, StreamedProposalFin, StreamedProposalInit, StreamedProposalPart,
+    };
     use malachitebft_app_channel::app::consensus::PeerId;
     use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
     use malachitebft_app_channel::app::types::core::Round;
-    use super::{Address, BFTHeight, StreamedProposalPart, StreamedProposalInit, StreamedProposalFin};
 
     struct MinSeq<T>(StreamMessage<T>);
 
@@ -1595,7 +1525,10 @@ mod strm {
                 && self.buffer.len() == self.total_messages
         }
 
-        fn insert(&mut self, msg: StreamMessage<StreamedProposalPart>) -> Option<StreamedProposalParts> {
+        fn insert(
+            &mut self,
+            msg: StreamMessage<StreamedProposalPart>,
+        ) -> Option<StreamedProposalParts> {
             if msg.is_first() {
                 self.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
             }
