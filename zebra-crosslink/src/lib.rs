@@ -8,16 +8,15 @@ use malachitebft_app_channel::app::config as mconfig;
 use malachitebft_app_channel::app::events::*;
 use malachitebft_app_channel::app::node::NodeConfig;
 use malachitebft_app_channel::app::types::codec::Codec;
-use malachitebft_app_channel::app::types::core::*;
+use malachitebft_app_channel::app::types::core::{
+    Round,
+    Validity,
+    VoteExtensions,
+};
 use malachitebft_app_channel::app::types::*;
 use malachitebft_app_channel::app::*;
 use malachitebft_app_channel::AppMsg as BFTAppMsg;
 use malachitebft_app_channel::NetworkMsg;
-use malachitebft_test::codec::proto::ProtobufCodec;
-use malachitebft_test::{
-    Address, Ed25519Provider, Genesis, Height as BFTHeight, PrivateKey, ProposalData, ProposalFin,
-    ProposalInit, ProposalPart, PublicKey, TestContext, Validator, ValidatorSet,
-};
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
@@ -34,6 +33,16 @@ use tokio::time::Instant;
 use tracing::{error, info, warn};
 
 pub mod malctx;
+use crate::malctx::{
+    Address,
+    Genesis,
+    Ed25519Provider,
+    Height as BFTHeight,
+    StreamedProposalPart, StreamedProposalInit, StreamedProposalData, StreamedProposalFin,
+    TestContext,
+    Validator, ValidatorSet,
+};
+use malachitebft_signing_ed25519::*;
 
 pub mod service;
 /// Configuration for the state service.
@@ -280,7 +289,7 @@ fn bft_make_value(
     vote_extensions: &mut std::collections::HashMap<BFTHeight, VoteExtensions<TestContext>>,
     height: BFTHeight,
     _round: BFTRound,
-) -> malachitebft_test::Value {
+) -> crate::malctx::Value {
     let value = rng.gen_range(100..=100000);
     tracing::error!("bft_make_value");
     // TODO: Where should we verify signatures?
@@ -296,7 +305,7 @@ fn bft_make_value(
         })
         .freeze();
 
-    malachitebft_test::Value { value, extensions }
+    crate::malctx::Value { value, extensions }
 }
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
@@ -355,14 +364,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     };
 
     let my_address = Address::from_public_key(&my_public_key);
-    let my_signing_provider = Ed25519Provider::new(my_private_key.clone());
-    let ctx = TestContext::new();
+    let my_signing_provider = malctx::Ed25519Provider::new(my_private_key.clone());
+    let ctx = TestContext{};
 
     let genesis = Genesis {
         validator_set: initial_validator_set.clone(),
     };
 
-    let codec = ProtobufCodec;
+    let codec = malctx::ProtobufCodec;
 
     let init_bft_height = BFTHeight::new(1);
     let bft_node_handle = BFTNode {
@@ -513,14 +522,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             round,
                                             valid_round: Round::Nil,
                                             proposer: my_address,
-                                            value: malachitebft_test::Value::new(propose_string.parse().unwrap_or(rng.gen_range(100..=100000))),
+                                            value: malctx::Value::new(propose_string.parse().unwrap_or(rng.gen_range(100..=100000))),
                                             validity: Validity::Valid,
                                             // extension: None, TODO? "does not have this field"
                                         };
                                         prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
                                         val
                                     };
-                                    if reply.send(LocallyProposedValue::<TestContext>::new(
+                                    if reply.send(LocallyProposedValue::<malctx::TestContext>::new(
                                             proposal.height,
                                             proposal.round,
                                             proposal.value.clone(),
@@ -543,7 +552,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     // Init
                                     // Include metadata about the proposal
                                     {
-                                        parts.push(ProposalPart::Init(ProposalInit {
+                                        parts.push(StreamedProposalPart::Init(StreamedProposalInit {
                                             height: proposal.height,
                                             round: proposal.round,
                                             pol_round,
@@ -554,7 +563,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
                                     }
 
-            fn factor_value(value: malachitebft_test::Value) -> Vec<u64> {
+            fn factor_value(value: crate::malctx::Value) -> Vec<u64> {
                 let mut factors = Vec::new();
                 let mut n = value.value;
 
@@ -579,7 +588,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     // Include each prime factor of the value as a separate proposal part
                                     {
                                         for factor in factor_value(proposal.value) {
-                                            parts.push(ProposalPart::Data(ProposalData::new(factor)));
+                                            parts.push(StreamedProposalPart::Data(StreamedProposalData::new(factor)));
 
                                             hasher.update(factor.to_be_bytes().as_slice());
                                         }
@@ -590,7 +599,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     {
                                         let hash = hasher.finalize().to_vec();
                                         let signature = my_signing_provider.sign(&hash);
-                                        parts.push(ProposalPart::Fin(ProposalFin::new(signature)));
+                                        parts.push(StreamedProposalPart::Fin(StreamedProposalFin::new(signature)));
                                     }
 
                                     let stream_id = {
@@ -681,7 +690,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                 let raw_decided_value = RawDecidedValue {
                                     certificate: certificate.clone(),
-                                    value_bytes: ProtobufCodec.encode(&decided_value.value).unwrap(),
+                                    value_bytes: malctx::ProtobufCodec.encode(&decided_value.value).unwrap(),
                                 };
 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
@@ -817,7 +826,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         }
 
                                         // Re-assemble the proposal from its parts
-                                        let value : ProposedValue::<TestContext> = {
+                                        let value : ProposedValue::<malctx::TestContext> = {
                                             let init = parts.init().unwrap();
 
                                             let value = parts
@@ -831,7 +840,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                 round: parts.round,
                                                 valid_round: init.pol_round,
                                                 proposer: parts.proposer,
-                                                value: malachitebft_test::Value::new(value),
+                                                value: malctx::Value::new(value),
                                                 validity: Validity::Valid,
                                             }
                                         };
@@ -980,8 +989,8 @@ struct BFTNode {
 struct DummyHandle;
 
 #[async_trait]
-impl malachitebft_app_channel::app::node::NodeHandle<TestContext> for DummyHandle {
-    fn subscribe(&self) -> RxEvent<TestContext> {
+impl malachitebft_app_channel::app::node::NodeHandle<malctx::TestContext> for DummyHandle {
+    fn subscribe(&self) -> RxEvent<malctx::TestContext> {
         panic!();
     }
 
@@ -1035,7 +1044,7 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     }
 
     fn get_signing_provider(&self, private_key: PrivateKey) -> Self::SigningProvider {
-        Ed25519Provider::new(private_key)
+        malctx::Ed25519Provider::new(private_key)
     }
 
     fn load_genesis(&self) -> Result<Self::Genesis, eyre::ErrReport> {
@@ -1518,7 +1527,7 @@ mod strm {
     use malachitebft_app_channel::app::consensus::PeerId;
     use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
     use malachitebft_app_channel::app::types::core::Round;
-    use malachitebft_test::{Address, Height, ProposalFin, ProposalInit, ProposalPart};
+    use super::{Address, BFTHeight, StreamedProposalPart, StreamedProposalInit, StreamedProposalFin};
 
     struct MinSeq<T>(StreamMessage<T>);
 
@@ -1572,8 +1581,8 @@ mod strm {
 
     #[derive(Default)]
     struct StreamState {
-        buffer: MinHeap<ProposalPart>,
-        init_info: Option<ProposalInit>,
+        buffer: MinHeap<StreamedProposalPart>,
+        init_info: Option<StreamedProposalInit>,
         seen_sequences: HashSet<Sequence>,
         total_messages: usize,
         fin_received: bool,
@@ -1586,7 +1595,7 @@ mod strm {
                 && self.buffer.len() == self.total_messages
         }
 
-        fn insert(&mut self, msg: StreamMessage<ProposalPart>) -> Option<ProposalParts> {
+        fn insert(&mut self, msg: StreamMessage<StreamedProposalPart>) -> Option<StreamedProposalParts> {
             if msg.is_first() {
                 self.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
             }
@@ -1601,7 +1610,7 @@ mod strm {
             if self.is_done() {
                 let init_info = self.init_info.take()?;
 
-                Some(ProposalParts {
+                Some(StreamedProposalParts {
                     height: init_info.height,
                     round: init_info.round,
                     proposer: init_info.proposer,
@@ -1614,19 +1623,19 @@ mod strm {
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct ProposalParts {
-        pub height: Height,
+    pub struct StreamedProposalParts {
+        pub height: BFTHeight,
         pub round: Round,
         pub proposer: Address,
-        pub parts: Vec<ProposalPart>,
+        pub parts: Vec<StreamedProposalPart>,
     }
 
-    impl ProposalParts {
-        pub fn init(&self) -> Option<&ProposalInit> {
+    impl StreamedProposalParts {
+        pub fn init(&self) -> Option<&StreamedProposalInit> {
             self.parts.iter().find_map(|p| p.as_init())
         }
 
-        pub fn fin(&self) -> Option<&ProposalFin> {
+        pub fn fin(&self) -> Option<&StreamedProposalFin> {
             self.parts.iter().find_map(|p| p.as_fin())
         }
     }
@@ -1644,8 +1653,8 @@ mod strm {
         pub fn insert(
             &mut self,
             peer_id: PeerId,
-            msg: StreamMessage<ProposalPart>,
-        ) -> Option<ProposalParts> {
+            msg: StreamMessage<StreamedProposalPart>,
+        ) -> Option<StreamedProposalParts> {
             let stream_id = msg.stream_id.clone();
             let state = self
                 .streams

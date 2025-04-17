@@ -71,16 +71,6 @@ version = "0.0.1"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-config"
 
-[dependencies.malachitebft-test]
-version = "0.0.1"
-git = "https://git@github.com/informalsystems/malachite.git"
-package = "informalsystems-malachitebft-test"
-
-[dependencies.malachitebft-test-cli]
-version = "0.0.1"
-git = "https://git@github.com/informalsystems/malachite.git"
-package = "informalsystems-malachitebft-test-cli"
-
 [dependencies.malachitebft-proto]
 version = "0.0.1"
 git = "https://git@github.com/informalsystems/malachite.git"
@@ -90,6 +80,7 @@ package = "informalsystems-malachitebft-proto"
 version = "0.0.1"
 git = "https://git@github.com/informalsystems/malachite.git"
 package = "informalsystems-malachitebft-signing-ed25519"
+features = ["serde", "rand"]
 
 [dependencies.malachitebft-core-types]
 version = "0.0.1"

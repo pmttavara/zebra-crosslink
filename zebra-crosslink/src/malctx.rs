@@ -680,6 +680,11 @@ impl ValidatorSet {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Genesis {
+    pub validator_set: ValidatorSet,
+}
+
 impl malachitebft_core_types::ValidatorSet<TestContext> for ValidatorSet {
     fn count(&self) -> usize {
         self.validators.len()
