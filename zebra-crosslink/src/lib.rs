@@ -33,6 +33,8 @@ use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
 
+pub mod malctx;
+
 pub mod service;
 /// Configuration for the state service.
 pub mod config {
@@ -327,10 +329,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     {
         rng_private_public_key_from_address(&address)
     } else {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        let private_key = PrivateKey::generate(&mut rng);
-        let public_key = private_key.public_key();
-        (rng, private_key, public_key)
+        rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1")
     };
 
     let initial_validator_set = {
@@ -344,6 +343,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
         for peer in config.malachite_peers.iter() {
             let (_, _, public_key) = rng_private_public_key_from_address(&peer);
+            array.push(Validator::new(public_key, 1));
+        }
+
+        if array.is_empty() {
+            let (_, _, public_key) = rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1");
             array.push(Validator::new(public_key, 1));
         }
 
@@ -384,10 +388,23 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&peer).unwrap());
     }
+    if bft_config
+            .consensus
+            .p2p
+            .persistent_peers
+            .is_empty() {
+        bft_config
+            .consensus
+            .p2p
+            .persistent_peers
+            .push(Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+    }
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
     if let Some(listen_addr) = config.listen_address {
         bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
+    } else {
+        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
