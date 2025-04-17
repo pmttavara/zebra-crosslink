@@ -904,7 +904,7 @@ impl VizCtx {
                     );
 
                     new_node.parent = parent;
-                } else {
+                } else if parent_hash != [0; 32] {
                     self.missing_bc_parents.insert(parent_hash, node_ref);
                 }
             }
@@ -1222,6 +1222,12 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
     root_ui().window(id, vec2(0., 0.), size, f)
 }
 
+fn hash_from_u64(v: u64) -> [u8; 32] {
+    let mut hash = [0u8; 32];
+    hash[..8].copy_from_slice(&v.to_le_bytes());
+    hash
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -1296,6 +1302,7 @@ pub async fn viz_main(
     let mut bft_block_hi_i = 0;
     let mut bft_last_added = None;
     let mut bft_fake_id = !0;
+    let mut bc_fake_hash: u64 = 0;
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
@@ -1786,7 +1793,10 @@ pub async fn viz_main(
 
                         text: "".to_string(),
                         id: match hover_node.kind {
-                            NodeKind::BC => NodeId::Hash([0; 32]),
+                            NodeKind::BC => NodeId::Hash({
+                                bc_fake_hash += 1;
+                                hash_from_u64(bc_fake_hash)
+                            }),
                             NodeKind::BFT => {
                                 bft_fake_id -= 1;
                                 NodeId::Index(bft_fake_id + 1)
@@ -1794,7 +1804,7 @@ pub async fn viz_main(
                         },
                         is_real: false,
                         difficulty: None,
-                        txs_n: 0,
+                        txs_n: (hover_node.kind == NodeKind::BC) as u32,
                     },
                     None,
                 );
