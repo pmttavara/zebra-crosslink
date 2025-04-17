@@ -86,8 +86,8 @@
           # NB: we disable tests since we'll run them all via cargo-nextest
           doCheck = false;
 
-          # Use the clang stdenv:
-          inherit (pkgs.llvmPackages) stdenv;
+          # Use the clang stdenv, overriding any downstream attempt to alter it:
+          stdenv = _: pkgs.llvmPackages.stdenv;
 
           nativeBuildInputs = with pkgs; [
             pkg-config
