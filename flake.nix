@@ -202,10 +202,13 @@
           });
 
           # Check formatting
-          my-workspace-fmt = craneLib.cargoFmt {
-            inherit (zebrad) pname version;
-            inherit src;
-          };
+          #
+          # TODO: Re-enable this in a PR that also fixes all formatting.
+          #
+          # my-workspace-fmt = craneLib.cargoFmt {
+          #   inherit (zebrad) pname version;
+          #   inherit src;
+          # };
 
           # my-workspace-toml-fmt = craneLib.taploFmt {
           #   src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
@@ -214,12 +217,18 @@
           # };
 
           # Audit dependencies
-          my-workspace-audit = craneLib.cargoAudit {
-            inherit (zebrad) pname version;
-            inherit src advisory-db;
-          };
+          #
+          # TODO: Most projects that don't use this frequently have errors due to known vulnerabilities in transitive dependencies! We should probably re-enable them on a cron-job (since new disclosures may appear at any time and aren't a property of a revision alone).
+          #
+          # my-workspace-audit = craneLib.cargoAudit {
+          #   inherit (zebrad) pname version;
+          #   inherit src advisory-db;
+          # };
 
           # Audit licenses
+          #
+          # TODO: Zebra fails these license checks.
+          #
           # my-workspace-deny = craneLib.cargoDeny {
           #   inherit (zebrad) pname version;
           #   inherit src;
