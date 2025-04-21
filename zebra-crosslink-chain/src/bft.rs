@@ -42,7 +42,7 @@ use crate::params::ZcashCrosslinkParameters;
 ///
 /// The [TryFrom] impl performs internal validations and is the only way to construct a [BftPayload], whether locally generated or from an unknown source. This is the safest design, though potentially less efficient.
 ///
-/// # Refences
+/// # References
 ///
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
 #[derive(Debug)]
