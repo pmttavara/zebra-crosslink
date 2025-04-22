@@ -84,6 +84,7 @@ use tracing_futures::Instrument;
 
 use zebra_chain::block::genesis::regtest_genesis_block;
 use zebra_consensus::{router::BackgroundTaskHandles, ParameterCheckpoint};
+use zebra_crosslink_chain::params::PrototypeParameters;
 use zebra_rpc::server::RpcServer;
 
 #[cfg(feature = "getblocktemplate-rpcs")]
@@ -257,7 +258,7 @@ impl StartCmd {
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
             let read_only_state_service = read_only_state_service.clone();
-            zebra_crosslink::service::spawn_new_tfl_service(
+            zebra_crosslink::service::spawn_new_tfl_service::<PrototypeParameters>(
                 Arc::new(move |req| {
                     let read_only_state_service = read_only_state_service.clone();
                     Box::pin(async move {

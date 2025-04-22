@@ -27,6 +27,8 @@ use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
+use zebra_crosslink_chain::params::ZcashCrosslinkParameters;
+use zebra_crosslink_chain::BftPayload;
 
 pub mod malctx;
 use crate::malctx::{
@@ -72,7 +74,9 @@ use crate::service::{
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
-use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight};
+use zebra_chain::block::{
+    Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
+};
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 /// Placeholder activation height for Crosslink functionality
@@ -275,7 +279,9 @@ async fn tfl_final_block_height_hash(
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 
-async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
+async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
+    internal_handle: TFLServiceHandle,
+) -> Result<(), String> {
     let call = internal_handle.call.clone();
     let config = internal_handle.config.clone();
 
@@ -403,6 +409,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut streams_map = strm::PartStreamsMap::new();
 
     loop {
+        // Calculate this prior to message handling so that handlers can use it:
+        let new_bc_tip = if let Ok(ReadStateResponse::Tip(val)) =
+            (call.read_state)(ReadStateRequest::Tip).await
+        {
+            val
+        } else {
+            None
+        };
+
         tokio::select! {
                     // sleep if we are running ahead
                     _ = tokio::time::sleep_until(run_instant) => {
@@ -457,6 +472,42 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                 reply,
                             } => {
                                 info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
+
+                                let payload: BftPayload<ZCP> = {
+                                    // Build BftPayload in a local scope to keep the outer scope tidier:
+
+                                    // TODO: Improve error handling:
+                                    // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
+                                    let (tip_height, tip_hash) = new_bc_tip.unwrap();
+                                    let finality_candidate_height = tip_height.sat_sub(ZCP::BC_CONFIRMATION_DEPTH_SIGMA as i32);
+
+                                    let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+
+                                    let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+                                        hash
+                                    } else {
+                                        // Error or unexpected response type:
+                                        panic!("TODO: improve error handling.");
+                                    };
+
+                                    let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                        known_blocks: vec![candidate_hash],
+                                        stop: None,
+                                    })
+                                    .await;
+
+                                    let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
+
+                                        hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                    } else {
+                                        // Error or unexpected response type:
+                                        panic!("TODO: improve error handling.");
+                                    };
+
+                                    BftPayload::try_from(headers).unwrap()
+                                };
+
+                                todo!("use payload: {payload:?}");
 
                                 if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
                                     // Here it is important that, if we have previously built a value for this height and round,
@@ -793,14 +844,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         }
                     }
                 }
-
-        let new_bc_tip = if let Ok(ReadStateResponse::Tip(val)) =
-            (call.read_state)(ReadStateRequest::Tip).await
-        {
-            val
-        } else {
-            None
-        };
 
         let new_bc_final = {
             // partial dup of tfl_final_block_hash
