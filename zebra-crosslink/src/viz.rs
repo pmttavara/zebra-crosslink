@@ -1283,14 +1283,15 @@ fn hash_from_u64(v: u64) -> [u8; 32] {
 }
 
 /// technically a line *segment*
-fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> Vec2 {
+fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
     let bgn_to_end = (line.1 - line.0);
     let bgn_to_pt = pt - line.0;
     let len = bgn_to_end.length();
 
     let t = bgn_to_pt.dot(bgn_to_end) / (len * len);
     let t_clamped = t.max(0.).min(1.);
-    line.0 + t_clamped * len * bgn_to_end.normalize_or(Vec2::_0)
+    let norm = bgn_to_end.normalize_or(Vec2::_0);
+    (line.0 + t_clamped * len * norm, norm)
 }
 
 /// Viz implementation root
@@ -1306,7 +1307,6 @@ pub async fn viz_main(
         ..VizCtx::default()
     };
 
-    let nodes = &mut ctx.nodes;
     let bg_col = DARKBLUE;
 
     // wait for servicing thread to init
@@ -1932,6 +1932,8 @@ pub async fn viz_main(
                         });
                     let intended_y = parent.pt.y - intended_dy;
 
+                    // TODO: if the alignment force is ~proportional to the total amount of work
+                    // above the parent, this could make sure the best chain is the most linear
                     let force = match spring_method {
                         SpringMethod::Old => {
                             let target_pt = vec2(parent.pt.x, intended_y);
@@ -1941,7 +1943,7 @@ pub async fn viz_main(
 
                         SpringMethod::Coeff => {
                              Vec2 {
-                                x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.001, 0.1),
+                                x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
                                 y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
                             }
                         }
@@ -1954,18 +1956,18 @@ pub async fn viz_main(
                 }
             }
 
-            // any-node distance - O(n^2) //////////////////////////////
+            // any-node/any-edge distance - O(n^2) //////////////////////////////
             // TODO: spatial partitioning
             for node_i2 in 0..ctx.nodes.len() {
-                let node_b = &ctx.nodes[node_i2];
+                let b_pt = ctx.nodes[node_i2].pt;
                 if node_i2 != node_i {
-                    let b_to_a = a_pt - node_b.pt;
+                    let b_to_a = a_pt - b_pt;
                     let dist_sq = b_to_a.length_squared();
                     let target_dist = 75.;
                     if dist_sq < (target_dist * target_dist) {
                         // fallback to push coincident nodes apart horizontally
                         let dir = b_to_a.normalize_or(vec2(1., 0.));
-                        let target_pt = node_b.pt + dir * target_dist;
+                        let target_pt = b_pt + dir * target_dist;
                         let v = a_pt - target_pt;
                         let force = match spring_method {
                             SpringMethod::Old => -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y),
@@ -1975,6 +1977,44 @@ pub async fn viz_main(
                         ctx.nodes[node_i].acc += force;
 
                         dbg.new_force(node_i, force);
+                    }
+
+
+                    // apply forces perpendicular to edges
+                    let b_parent = ctx.nodes[node_i2].parent;
+                    if b_parent.is_some() && b_parent.unwrap() < ctx.nodes.len() && b_parent.unwrap() != node_i {
+                        let parent = &ctx.nodes[b_parent.unwrap()];
+
+                        // the maths here can be simplified significantly if this is a perf hit
+                        let edge = circles_closest_pts(ctx.nodes[node_i2].circle(), parent.circle());
+                        let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
+                        let line_to_node = a_pt - pt;
+                        let target_dist = 15.;
+
+                        if (pt != edge.0 && pt != edge.1 &&
+                            line_to_node.length_squared() < (target_dist * target_dist)) {
+                            let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
+                            let target_pt = if perp_line.dot(line_to_node) > 0. {
+                                pt + target_dist * perp_line
+                            } else {
+                                pt - target_dist * perp_line
+                            };
+
+                            let m = reduced_mass(1./1., 1./2.);
+
+                            let v = a_pt - target_pt;
+                            let force = match spring_method {
+                                SpringMethod::Old => -vec2(1.5 * spring_stiffness * v.x, m * spring_stiffness * v.y),
+                                SpringMethod::Coeff => perp_line * spring_force(v.length(), a_vel_mag, m, 0.01, 0.001),
+                            };
+
+                            ctx.nodes[node_i].acc += force;
+                            dbg.new_force(node_i, force);
+                            ctx.nodes[node_i2].acc -= force;
+                            dbg.new_force(node_i2, force);
+                            ctx.nodes[b_parent.unwrap()].acc -= force;
+                            dbg.new_force(b_parent.unwrap(), force);
+                        }
                     }
                 }
             }
@@ -2062,7 +2102,7 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent_i) = node.parent {
                     let line = draw_arrow_between_circles(circle, ctx.nodes[parent_i].circle(), 2., 9., GRAY);
-                    let pt = closest_pt_on_line(line, world_mouse_pt);
+                    let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = node.link {
