@@ -27,6 +27,15 @@ fn dev(show_in_dev: bool) -> bool {
     IS_DEV && show_in_dev
 }
 
+fn if_dev<F>(show_in_dev: bool, f: F)
+where
+    F: FnOnce(),
+{
+    if IS_DEV && show_in_dev {
+        f();
+    }
+}
+
 // consistent zero-initializers
 // TODO: create a derive macro
 trait _0 {
@@ -1085,6 +1094,17 @@ fn draw_arrow_lines(bgn_pt: Vec2, end_pt: Vec2, thick: f32, head_size: f32, col:
     draw_line(end_pt, line_end_pt - perp, thick, col);
 }
 
+fn draw_x(pt: Vec2, rad: f32, thick: f32, col: color::Color) {
+    let v = 0.5 * std::f32::consts::SQRT_2 * rad;
+    draw_line(pt + vec2(-v, v), pt + vec2(v, -v), thick, col);
+    draw_line(pt + vec2(v, v), pt + vec2(-v, -v), thick, col);
+}
+
+fn draw_crosshair(pt: Vec2, rad: f32, thick: f32, col: color::Color) {
+    draw_line(pt - vec2(0., rad), pt + vec2(0., rad), thick, col);
+    draw_line(pt - vec2(rad, 0.), pt + vec2(rad, 0.), thick, col);
+}
+
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
     text::draw_text(text, pt.x, pt.y, font_size, col)
 }
@@ -1098,16 +1118,23 @@ fn draw_multiline_text(
     text::draw_multiline_text(text, pt.x, pt.y, font_size, line_distance_factor, col)
 }
 
+fn circles_closest_pts(a: Circle, b: Circle) -> (Vec2, Vec2) {
+    (
+        pt_on_circle_edge(a, b.point()),
+        pt_on_circle_edge(b, a.point())
+    )
+}
+
 fn draw_arrow_between_circles(
     bgn_circle: Circle,
     end_circle: Circle,
     thick: f32,
     head_size: f32,
     col: color::Color,
-) {
-    let arrow_bgn_pt = pt_on_circle_edge(bgn_circle, end_circle.point());
-    let arrow_end_pt = pt_on_circle_edge(end_circle, bgn_circle.point());
-    draw_arrow(arrow_bgn_pt, arrow_end_pt, thick, head_size, col);
+) -> (Vec2, Vec2) {
+    let arrow_pts = circles_closest_pts(bgn_circle, end_circle);
+    draw_arrow(arrow_pts.0, arrow_pts.1, thick, head_size, col);
+    arrow_pts
 }
 
 /// `align` {0..=1, 0..=1} determines which point on the text's bounding box will be placed at `pt`
@@ -1253,6 +1280,17 @@ fn hash_from_u64(v: u64) -> [u8; 32] {
     let mut hash = [0u8; 32];
     hash[..8].copy_from_slice(&v.to_le_bytes());
     hash
+}
+
+/// technically a line *segment*
+fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> Vec2 {
+    let bgn_to_end = (line.1 - line.0);
+    let bgn_to_pt = pt - line.0;
+    let len = bgn_to_end.length();
+
+    let t = bgn_to_pt.dot(bgn_to_end) / (len * len);
+    let t_clamped = t.max(0.).min(1.);
+    line.0 + t_clamped * len * bgn_to_end.normalize_or(Vec2::_0)
 }
 
 /// Viz implementation root
@@ -2023,7 +2061,9 @@ pub async fn viz_main(
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent_i) = node.parent {
-                    draw_arrow_between_circles(circle, ctx.nodes[parent_i].circle(), 2., 9., GRAY);
+                    let line = draw_arrow_between_circles(circle, ctx.nodes[parent_i].circle(), 2., 9., GRAY);
+                    let pt = closest_pt_on_line(line, world_mouse_pt);
+                    if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = node.link {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
