@@ -777,6 +777,7 @@ enum MouseDrag {
     Nil,
     Ui,
     World(Vec2), // start point (may need a different name?)
+    Node { start_pt: Vec2, node: NodeRef, mouse_to_node: Vec2 },
 }
 
 /// Common GUI state that may need to be passed around
@@ -1576,11 +1577,24 @@ pub async fn viz_main(
 
         end_zone(z_cache_blocks);
 
+        let world_camera = Camera2D {
+            target: ctx.screen_o,
+            // this makes it so that when resizing the window, the centre of the screen stays there.
+            offset: vec2(1. / window::screen_width(), 1. / window::screen_height()),
+            zoom: vec2(
+                1. / window::screen_width() * 2.,
+                1. / window::screen_height() * 2.,
+            ),
+            ..Default::default()
+        };
+
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
             let (x, y) = mouse_position();
             Vec2 { x, y }
         };
+        let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
+        let old_world_mouse_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
         let mouse_l_is_down = is_mouse_button_down(MouseButton::Left);
         let mouse_l_is_pressed = is_mouse_button_pressed(MouseButton::Left);
         let mouse_l_is_released = is_mouse_button_released(MouseButton::Left);
@@ -1588,6 +1602,8 @@ pub async fn viz_main(
         let mouse_l_is_world_down = !mouse_is_over_ui && mouse_l_is_down;
         let mouse_l_is_world_pressed = !mouse_is_over_ui && mouse_l_is_pressed;
         let mouse_l_is_world_released = !mouse_is_over_ui && mouse_l_is_released;
+
+        let mut mouse_was_node_drag = false; // @jank: shouldn't need extra state for this
 
         // NOTE: currently if the mouse is over UI we don't let it drag the world around.
         // This means that if the user starts clicking on a button and then changes their mind,
@@ -1607,8 +1623,10 @@ pub async fn viz_main(
                 ctx.fix_screen_o -= ctx.mouse_drag_d; // follow drag preview
 
                 // used for momentum after letting go
-                if let MouseDrag::World(_) = ctx.mouse_drag {
-                    ctx.screen_vel = mouse_pt - ctx.old_mouse_pt; // ALT: average of last few frames?
+                match ctx.mouse_drag {
+                    MouseDrag::World(_) => ctx.screen_vel = mouse_pt - ctx.old_mouse_pt, // ALT: average of last few frames?
+                    MouseDrag::Node{..} => mouse_was_node_drag = true,
+                    _ => {}
                 }
                 ctx.mouse_drag = MouseDrag::Nil;
             }
@@ -1617,7 +1635,19 @@ pub async fn viz_main(
 
         if let MouseDrag::World(press_pt) = ctx.mouse_drag {
             ctx.mouse_drag_d = mouse_pt - press_pt;
-            ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
+
+            if old_hover_node_i.is_some() {
+                if ctx.mouse_drag_d.length_squared() > 2. * 2. {
+                    let start_pt = world_camera.screen_to_world(press_pt);
+                    ctx.mouse_drag = MouseDrag::Node {
+                        start_pt,
+                        node: old_hover_node_i,
+                        mouse_to_node: ctx.nodes[old_hover_node_i.unwrap()].pt - start_pt,
+                    };
+                }
+            } else {
+                ctx.screen_vel = mouse_pt - ctx.old_mouse_pt;
+            }
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
             let (scroll_x, scroll_y) = mouse_wheel();
@@ -1645,18 +1675,7 @@ pub async fn viz_main(
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
 
         // WORLD SPACE DRAWING ////////////////////////////////////////
-        let world_camera = Camera2D {
-            target: ctx.screen_o,
-            // this makes it so that when resizing the window, the centre of the screen stays there.
-            offset: vec2(1. / window::screen_width(), 1. / window::screen_height()),
-            zoom: vec2(
-                1. / window::screen_width() * 2.,
-                1. / window::screen_height() * 2.,
-            ),
-            ..Default::default()
-        };
         set_camera(&world_camera); // NOTE: can use push/pop camera state if useful
-        let world_mouse_pt = world_camera.screen_to_world(mouse_pt);
         let world_bbox = BBox {
             min: world_camera.screen_to_world(Vec2::_0),
             max: world_camera
@@ -1846,14 +1865,25 @@ pub async fn viz_main(
         }
         old_hover_node_i = hover_node_i;
 
+        let drag_node_ref = if let MouseDrag::Node { node, start_pt, mouse_to_node } = ctx.mouse_drag {
+            let drag_node = &mut ctx.nodes[node.unwrap()];
+            drag_node.vel = world_mouse_pt - old_world_mouse_pt;
+            drag_node.pt = world_mouse_pt + mouse_to_node;
+            node
+        } else {
+            None
+        };
+
         // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
+        // TODO: we're sort of duplicating handling for mouse clicks & drags; dedup
         if mouse_l_is_world_pressed {
             mouse_dn_node_i = hover_node_i;
-        } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i {
+        } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i && !mouse_was_node_drag {
             // node is clicked on
             if hover_node_i.is_some()
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
+                // create new node
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 let is_bft = hover_node.kind == NodeKind::BFT;
                 let node_ref = ctx.push_node(
@@ -1910,6 +1940,10 @@ pub async fn viz_main(
         // calculate forces
         let spring_stiffness = 160.;
         for node_i in 0..ctx.nodes.len() {
+            if Some(node_i) == drag_node_ref {
+                continue;
+            }
+
             let a_pt = ctx.nodes[node_i].pt
                 + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
             let a_vel = ctx.nodes[node_i].vel;
@@ -1922,43 +1956,51 @@ pub async fn viz_main(
 
             // parent-child height - O(n) //////////////////////////////
 
-            if let Some(parent_i) = ctx.nodes[node_i].parent {
-                if let Some(parent) = ctx.nodes.get(parent_i) {
-                    let intended_dy = ctx.nodes[node_i]
-                        .difficulty
-                        .and_then(|difficulty| difficulty.to_work())
-                        .map_or(100., |work| {
-                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
-                        });
-                    let intended_y = parent.pt.y - intended_dy;
+            let a_parent = ctx.nodes[node_i].parent;
+            if (a_parent.is_some() &&
+                a_parent != drag_node_ref &&
+                a_parent.unwrap() < ctx.nodes.len()) {
+                let parent_i = a_parent.unwrap();
+                let parent = &ctx.nodes[parent_i];
 
-                    // TODO: if the alignment force is ~proportional to the total amount of work
-                    // above the parent, this could make sure the best chain is the most linear
-                    let force = match spring_method {
-                        SpringMethod::Old => {
-                            let target_pt = vec2(parent.pt.x, intended_y);
-                            let v = a_pt - target_pt;
-                            -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y)
+                let intended_dy = ctx.nodes[node_i]
+                    .difficulty
+                    .and_then(|difficulty| difficulty.to_work())
+                    .map_or(100., |work| {
+                        150. * work.as_u128() as f32 / ctx.bc_work_max as f32
+                    });
+                let intended_y = parent.pt.y - intended_dy;
+
+                // TODO: if the alignment force is ~proportional to the total amount of work
+                // above the parent, this could make sure the best chain is the most linear
+                let force = match spring_method {
+                    SpringMethod::Old => {
+                        let target_pt = vec2(parent.pt.x, intended_y);
+                        let v = a_pt - target_pt;
+                        -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y)
+                    }
+
+                    SpringMethod::Coeff => {
+                        Vec2 {
+                            x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
+                            y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
                         }
+                    }
+                };
 
-                        SpringMethod::Coeff => {
-                             Vec2 {
-                                x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
-                                y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
-                            }
-                        }
-                    };
-
-                    ctx.nodes[node_i].acc += force;
-                    dbg.new_force(node_i, force);
-                    ctx.nodes[parent_i].acc -= force;
-                    dbg.new_force(node_i, -force);
-                }
+                ctx.nodes[node_i].acc += force;
+                dbg.new_force(node_i, force);
+                ctx.nodes[parent_i].acc -= force;
+                dbg.new_force(node_i, -force);
             }
 
             // any-node/any-edge distance - O(n^2) //////////////////////////////
             // TODO: spatial partitioning
             for node_i2 in 0..ctx.nodes.len() {
+                if Some(node_i2) == drag_node_ref {
+                    continue;
+                }
+
                 let b_pt = ctx.nodes[node_i2].pt;
                 if node_i2 != node_i {
                     let b_to_a = a_pt - b_pt;
@@ -1983,6 +2025,10 @@ pub async fn viz_main(
                     // apply forces perpendicular to edges
                     let b_parent = ctx.nodes[node_i2].parent;
                     if b_parent.is_some() && b_parent.unwrap() < ctx.nodes.len() && b_parent.unwrap() != node_i {
+                        if b_parent == drag_node_ref {
+                            continue;
+                        }
+
                         let parent = &ctx.nodes[b_parent.unwrap()];
 
                         // the maths here can be simplified significantly if this is a perf hit
@@ -2247,9 +2293,8 @@ pub async fn viz_main(
             );
 
             // draw mouse point's world location
-            let old_pt = world_camera.screen_to_world(ctx.old_mouse_pt);
             draw_multiline_text(
-                &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_pt),
+                &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_world_mouse_pt),
                 mouse_pt + vec2(5., -5.),
                 font_size,
                 None,
