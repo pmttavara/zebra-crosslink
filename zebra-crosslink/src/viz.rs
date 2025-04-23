@@ -383,6 +383,32 @@ impl VizDbg {
     }
 }
 
+enum Sound {
+    HoverNode,
+    NewNode,
+}
+#[cfg(feature = "audio")]
+const SOUNDS_N: usize = 2; // TODO: get automatically from enum?
+#[cfg(feature = "audio")]
+static G_SOUNDS: std::sync::Mutex<[Option<macroquad::audio::Sound>; SOUNDS_N]> = std::sync::Mutex::new([const{None}; SOUNDS_N]);
+
+async fn init_audio() {
+#[cfg(feature = "audio")]
+    {
+        let mut lock = G_SOUNDS.lock();
+        let sounds = lock.as_mut().unwrap();
+        sounds[Sound::HoverNode as usize] = macroquad::audio::load_sound_from_bytes(include_bytes!("../res/impactGlass_heavy_000.ogg")).await.ok();
+        sounds[Sound::NewNode as usize] = macroquad::audio::load_sound_from_bytes(include_bytes!("../res/toggle_001.ogg")).await.ok();
+    }
+}
+
+fn play_sound_once(sound: Sound) {
+#[cfg(feature = "audio")]
+    if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
+        macroquad::audio::play_sound_once(sound);
+    }
+}
+
 /// Any global data stored for visualization.
 /// In practice this stores the data for communicating between TFL (in tokio-land)
 /// and the viz thread.
@@ -764,6 +790,7 @@ pub(crate) struct VizCtx {
 
 impl VizCtx {
     fn push_node(&mut self, node: NodeInit, parent_hash: Option<[u8; 32]>) -> NodeRef {
+        play_sound_once(Sound::NewNode);
         // TODO: dynamically update length & rad
         // TODO: could overlay internal circle/rings for shielded/transparent
         // TODO: track unfilled parents
@@ -1277,6 +1304,7 @@ pub async fn viz_main(
     }
 
     let mut hover_circle_rad = 0.;
+    let mut recent_hover_node_i: NodeRef = None;
     let mut old_hover_node_i: NodeRef = None;
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
@@ -1312,6 +1340,8 @@ pub async fn viz_main(
     let mut dbg = VizDbg {
         nodes_forces: HashMap::new(),
     };
+
+    init_audio().await;
 
     loop {
         dbg.nodes_forces.clear();
@@ -1748,14 +1778,14 @@ pub async fn viz_main(
         };
 
         let rad_mul = if let Some(node_i) = hover_node_i {
-            old_hover_node_i = hover_node_i;
+            recent_hover_node_i = hover_node_i;
             std::f32::consts::SQRT_2
         } else {
             0.9
         };
 
-        if let Some(old_hover_node_i) = old_hover_node_i {
-            let old_hover_node = &ctx.nodes[old_hover_node_i];
+        if let Some(recent_hover_node_i) = recent_hover_node_i {
+            let old_hover_node = &ctx.nodes[recent_hover_node_i];
             let target_rad = old_hover_node.rad * rad_mul;
             hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
             if hover_circle_rad > old_hover_node.rad {
@@ -1772,6 +1802,11 @@ pub async fn viz_main(
                 );
             }
         }
+
+        if old_hover_node_i != hover_node_i && hover_node_i.is_some() {
+            play_sound_once(Sound::HoverNode);
+        }
+        old_hover_node_i = hover_node_i;
 
         // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
         if mouse_l_is_world_pressed {
