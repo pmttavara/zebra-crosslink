@@ -399,20 +399,28 @@ enum Sound {
 #[cfg(feature = "audio")]
 const SOUNDS_N: usize = 2; // TODO: get automatically from enum?
 #[cfg(feature = "audio")]
-static G_SOUNDS: std::sync::Mutex<[Option<macroquad::audio::Sound>; SOUNDS_N]> = std::sync::Mutex::new([const{None}; SOUNDS_N]);
+static G_SOUNDS: std::sync::Mutex<[Option<macroquad::audio::Sound>; SOUNDS_N]> =
+    std::sync::Mutex::new([const { None }; SOUNDS_N]);
 
 async fn init_audio() {
-#[cfg(feature = "audio")]
+    #[cfg(feature = "audio")]
     {
         let mut lock = G_SOUNDS.lock();
         let sounds = lock.as_mut().unwrap();
-        sounds[Sound::HoverNode as usize] = macroquad::audio::load_sound_from_bytes(include_bytes!("../res/impactGlass_heavy_000.ogg")).await.ok();
-        sounds[Sound::NewNode as usize] = macroquad::audio::load_sound_from_bytes(include_bytes!("../res/toggle_001.ogg")).await.ok();
+        sounds[Sound::HoverNode as usize] = macroquad::audio::load_sound_from_bytes(
+            include_bytes!("../res/impactGlass_heavy_000.ogg"),
+        )
+        .await
+        .ok();
+        sounds[Sound::NewNode as usize] =
+            macroquad::audio::load_sound_from_bytes(include_bytes!("../res/toggle_001.ogg"))
+                .await
+                .ok();
     }
 }
 
 fn play_sound_once(sound: Sound) {
-#[cfg(feature = "audio")]
+    #[cfg(feature = "audio")]
     if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
         macroquad::audio::play_sound_once(sound);
     }
@@ -777,7 +785,11 @@ enum MouseDrag {
     Nil,
     Ui,
     World(Vec2), // start point (may need a different name?)
-    Node { start_pt: Vec2, node: NodeRef, mouse_to_node: Vec2 },
+    Node {
+        start_pt: Vec2,
+        node: NodeRef,
+        mouse_to_node: Vec2,
+    },
 }
 
 /// Common GUI state that may need to be passed around
@@ -1122,7 +1134,7 @@ fn draw_multiline_text(
 fn circles_closest_pts(a: Circle, b: Circle) -> (Vec2, Vec2) {
     (
         pt_on_circle_edge(a, b.point()),
-        pt_on_circle_edge(b, a.point())
+        pt_on_circle_edge(b, a.point()),
     )
 }
 
@@ -1625,7 +1637,7 @@ pub async fn viz_main(
                 // used for momentum after letting go
                 match ctx.mouse_drag {
                     MouseDrag::World(_) => ctx.screen_vel = mouse_pt - ctx.old_mouse_pt, // ALT: average of last few frames?
-                    MouseDrag::Node{..} => mouse_was_node_drag = true,
+                    MouseDrag::Node { .. } => mouse_was_node_drag = true,
                     _ => {}
                 }
                 ctx.mouse_drag = MouseDrag::Nil;
@@ -1865,7 +1877,12 @@ pub async fn viz_main(
         }
         old_hover_node_i = hover_node_i;
 
-        let drag_node_ref = if let MouseDrag::Node { node, start_pt, mouse_to_node } = ctx.mouse_drag {
+        let drag_node_ref = if let MouseDrag::Node {
+            node,
+            start_pt,
+            mouse_to_node,
+        } = ctx.mouse_drag
+        {
             let drag_node = &mut ctx.nodes[node.unwrap()];
             drag_node.vel = world_mouse_pt - old_world_mouse_pt;
             drag_node.pt = world_mouse_pt + mouse_to_node;
@@ -1878,7 +1895,10 @@ pub async fn viz_main(
         // TODO: we're sort of duplicating handling for mouse clicks & drags; dedup
         if mouse_l_is_world_pressed {
             mouse_dn_node_i = hover_node_i;
-        } else if mouse_l_is_world_released && hover_node_i == mouse_dn_node_i && !mouse_was_node_drag {
+        } else if mouse_l_is_world_released
+            && hover_node_i == mouse_dn_node_i
+            && !mouse_was_node_drag
+        {
             // node is clicked on
             if hover_node_i.is_some()
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
@@ -1957,9 +1977,10 @@ pub async fn viz_main(
             // parent-child height - O(n) //////////////////////////////
 
             let a_parent = ctx.nodes[node_i].parent;
-            if (a_parent.is_some() &&
-                a_parent != drag_node_ref &&
-                a_parent.unwrap() < ctx.nodes.len()) {
+            if (a_parent.is_some()
+                && a_parent != drag_node_ref
+                && a_parent.unwrap() < ctx.nodes.len())
+            {
                 let parent_i = a_parent.unwrap();
                 let parent = &ctx.nodes[parent_i];
 
@@ -1980,12 +2001,10 @@ pub async fn viz_main(
                         -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y)
                     }
 
-                    SpringMethod::Coeff => {
-                        Vec2 {
-                            x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
-                            y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
-                        }
-                    }
+                    SpringMethod::Coeff => Vec2 {
+                        x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
+                        y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
+                    },
                 };
 
                 ctx.nodes[node_i].acc += force;
@@ -2012,19 +2031,26 @@ pub async fn viz_main(
                         let target_pt = b_pt + dir * target_dist;
                         let v = a_pt - target_pt;
                         let force = match spring_method {
-                            SpringMethod::Old => -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y),
+                            SpringMethod::Old => {
+                                -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y)
+                            }
                             // NOTE: 0.5 is the reduced mass for 2 nodes of mass 1
-                            SpringMethod::Coeff => v.normalize_or(vec2(0., 0.)) * spring_force(v.length(), a_vel_mag, 0.5, 0.02, 0.3),
+                            SpringMethod::Coeff => {
+                                v.normalize_or(vec2(0., 0.))
+                                    * spring_force(v.length(), a_vel_mag, 0.5, 0.02, 0.3)
+                            }
                         };
                         ctx.nodes[node_i].acc += force;
 
                         dbg.new_force(node_i, force);
                     }
 
-
                     // apply forces perpendicular to edges
                     let b_parent = ctx.nodes[node_i2].parent;
-                    if b_parent.is_some() && b_parent.unwrap() < ctx.nodes.len() && b_parent.unwrap() != node_i {
+                    if b_parent.is_some()
+                        && b_parent.unwrap() < ctx.nodes.len()
+                        && b_parent.unwrap() != node_i
+                    {
                         if b_parent == drag_node_ref {
                             continue;
                         }
@@ -2032,13 +2058,16 @@ pub async fn viz_main(
                         let parent = &ctx.nodes[b_parent.unwrap()];
 
                         // the maths here can be simplified significantly if this is a perf hit
-                        let edge = circles_closest_pts(ctx.nodes[node_i2].circle(), parent.circle());
+                        let edge =
+                            circles_closest_pts(ctx.nodes[node_i2].circle(), parent.circle());
                         let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
                         let line_to_node = a_pt - pt;
                         let target_dist = 15.;
 
-                        if (pt != edge.0 && pt != edge.1 &&
-                            line_to_node.length_squared() < (target_dist * target_dist)) {
+                        if (pt != edge.0
+                            && pt != edge.1
+                            && line_to_node.length_squared() < (target_dist * target_dist))
+                        {
                             let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
                             let target_pt = if perp_line.dot(line_to_node) > 0. {
                                 pt + target_dist * perp_line
@@ -2046,12 +2075,16 @@ pub async fn viz_main(
                                 pt - target_dist * perp_line
                             };
 
-                            let m = reduced_mass(1./1., 1./2.);
+                            let m = reduced_mass(1. / 1., 1. / 2.);
 
                             let v = a_pt - target_pt;
                             let force = match spring_method {
-                                SpringMethod::Old => -vec2(1.5 * spring_stiffness * v.x, m * spring_stiffness * v.y),
-                                SpringMethod::Coeff => perp_line * spring_force(v.length(), a_vel_mag, m, 0.01, 0.001),
+                                SpringMethod::Old => {
+                                    -vec2(1.5 * spring_stiffness * v.x, m * spring_stiffness * v.y)
+                                }
+                                SpringMethod::Coeff => {
+                                    perp_line * spring_force(v.length(), a_vel_mag, m, 0.01, 0.001)
+                                }
                             };
 
                             ctx.nodes[node_i].acc += force;
@@ -2147,7 +2180,13 @@ pub async fn viz_main(
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent_i) = node.parent {
-                    let line = draw_arrow_between_circles(circle, ctx.nodes[parent_i].circle(), 2., 9., GRAY);
+                    let line = draw_arrow_between_circles(
+                        circle,
+                        ctx.nodes[parent_i].circle(),
+                        2.,
+                        9.,
+                        GRAY,
+                    );
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
