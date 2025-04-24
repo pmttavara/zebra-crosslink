@@ -1376,6 +1376,7 @@ pub async fn viz_main(
     root_ui().push_skin(&skin);
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
+    let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
     let mut bft_block_hi_i = 0;
@@ -1826,6 +1827,40 @@ pub async fn viz_main(
                 {
                     proposed_bft_string = Some(edit_proposed_bft_string.clone())
                 }
+            },
+        );
+
+
+        // UI CONTROLS ////////////////////////////////////////////////////////////
+        let goto_button_txt = "Goto height";
+        let controls_txt_size = vec2(12. * ch_w, font_size);
+        let controls_wnd_size = controls_txt_size + vec2((goto_button_txt.len() + 2) as f32 * ch_w, 0.2 * font_size);
+        ui_dynamic_window(
+            hash!(),
+            vec2(
+                window::screen_width() - (controls_wnd_size.x + 0.5 * font_size),
+                window::screen_height() - (controls_wnd_size.y + 0.5 * font_size),
+            ),
+            controls_wnd_size,
+            |ui| {
+                let enter_pressed = widgets::Editbox::new(hash!(), controls_txt_size)
+                    .multiline(false)
+                    .filter(&|ch| char::is_ascii_digit(&ch))// || ch == '-')
+                    .ui(ui, &mut goto_str)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+
+                ui.same_line(controls_txt_size.x + ch_w);
+
+                if ui.button(None, goto_button_txt) || enter_pressed {
+                    if let Ok(abs_height) = goto_str.trim().parse::<u32>() {
+                        if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, BlockHeight(abs_height)) {
+                            println!("found node at {}: {}", abs_height, BlockHash(ctx.nodes[node_i].hash().expect("BC nodes should have a hash")));
+                        } else {
+                            println!("couldn't find node at {}", abs_height);
+                        }
+                    }
+                }
+                // TODO: "track height continuously" checkbox
             },
         );
 
