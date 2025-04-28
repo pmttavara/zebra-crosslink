@@ -13,28 +13,38 @@ use malachitebft_proto::{Error as ProtoError, Protobuf};
 
 use core::fmt;
 
-use malachitebft_core_types::Validator as _;
 use malachitebft_core_types::{
-    CertificateError, CommitCertificate, CommitSignature, SignedProposal, SignedProposalPart,
-    SignedVote, SigningProvider,
+    Validator as _,
+    CertificateError,
+    CommitCertificate,
+    CommitSignature,
+    SignedProposal,
+    SignedProposalPart,
+    SignedVote,
+    SigningProvider,
 };
 
-use malachitebft_signing_ed25519::*;
+pub use malachitebft_core_types::{Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions};
+pub use malachitebft_app::types::{Keypair as MalKeyPair};
+pub use malachitebft_core_consensus::{ProposedValue as MalProposedValue, LocallyProposedValue as MalLocallyProposedValue};
+
+
+pub use malachitebft_signing_ed25519::{PrivateKey as MalPrivateKey, PublicKey as MalPublicKey, Ed25519 as MalEd25519};
 
 use prost::Message;
 
 use malachitebft_app::engine::util::streaming::{StreamContent, StreamId, StreamMessage};
 use malachitebft_codec::Codec;
-use malachitebft_core_consensus::{ProposedValue, SignedConsensusMsg};
-use malachitebft_core_types::{AggregatedSignature, PolkaCertificate, Validity, VoteSet};
+use malachitebft_core_consensus::{SignedConsensusMsg};
+use malachitebft_core_types::{AggregatedSignature, PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamedProposalData {
+pub struct MalStreamedProposalData {
     pub factor: char,
 }
 
-impl StreamedProposalData {
+impl MalStreamedProposalData {
     pub fn new(factor: char) -> Self {
         Self { factor }
     }
@@ -52,13 +62,13 @@ enum RoundDef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StreamedProposalPart {
-    Init(StreamedProposalInit),
-    Data(StreamedProposalData),
-    Fin(StreamedProposalFin),
+pub enum MalStreamedProposalPart {
+    Init(MalStreamedProposalInit),
+    Data(MalStreamedProposalData),
+    Fin(MalStreamedProposalFin),
 }
 
-impl StreamedProposalPart {
+impl MalStreamedProposalPart {
     pub fn get_type(&self) -> &'static str {
         match self {
             Self::Init(_) => "init",
@@ -67,21 +77,21 @@ impl StreamedProposalPart {
         }
     }
 
-    pub fn as_init(&self) -> Option<&StreamedProposalInit> {
+    pub fn as_init(&self) -> Option<&MalStreamedProposalInit> {
         match self {
             Self::Init(init) => Some(init),
             _ => None,
         }
     }
 
-    pub fn as_data(&self) -> Option<&StreamedProposalData> {
+    pub fn as_data(&self) -> Option<&MalStreamedProposalData> {
         match self {
             Self::Data(data) => Some(data),
             _ => None,
         }
     }
 
-    pub fn as_fin(&self) -> Option<&StreamedProposalFin> {
+    pub fn as_fin(&self) -> Option<&MalStreamedProposalFin> {
         match self {
             Self::Fin(fin) => Some(fin),
             _ => None,
@@ -95,17 +105,17 @@ impl StreamedProposalPart {
 
 /// A part of a value for a height, round. Identified in this scope by the sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamedProposalInit {
-    pub height: Height,
+pub struct MalStreamedProposalInit {
+    pub height: MalHeight,
     #[serde(with = "RoundDef")]
     pub round: Round,
     #[serde(with = "RoundDef")]
     pub pol_round: Round,
-    pub proposer: Address,
+    pub proposer: MalAddress,
 }
 
-impl StreamedProposalInit {
-    pub fn new(height: Height, round: Round, pol_round: Round, proposer: Address) -> Self {
+impl MalStreamedProposalInit {
+    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalAddress) -> Self {
         Self {
             height,
             round,
@@ -116,17 +126,17 @@ impl StreamedProposalInit {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamedProposalFin {
+pub struct MalStreamedProposalFin {
     pub signature: Signature,
 }
 
-impl StreamedProposalFin {
+impl MalStreamedProposalFin {
     pub fn new(signature: Signature) -> Self {
         Self { signature }
     }
 }
 
-impl malachitebft_core_types::ProposalPart<TestContext> for StreamedProposalPart {
+impl malachitebft_core_types::ProposalPart<MalContext> for MalStreamedProposalPart {
     fn is_first(&self) -> bool {
         matches!(self, Self::Init(_))
     }
@@ -136,46 +146,46 @@ impl malachitebft_core_types::ProposalPart<TestContext> for StreamedProposalPart
     }
 }
 
-impl Protobuf for StreamedProposalPart {
-    type Proto = proto::StreamedProposalPart;
+impl Protobuf for MalStreamedProposalPart {
+    type Proto = malctx_schema_proto::StreamedProposalPart;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        use proto::streamed_proposal_part::Part;
+        use malctx_schema_proto::streamed_proposal_part::Part;
 
         let part = proto
             .part
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("part"))?;
 
         match part {
-            Part::Init(init) => Ok(Self::Init(StreamedProposalInit {
-                height: Height::new(init.height),
+            Part::Init(init) => Ok(Self::Init(MalStreamedProposalInit {
+                height: MalHeight::new(init.height),
                 round: Round::new(init.round),
                 pol_round: Round::from(init.pol_round),
                 proposer: init
                     .proposer
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("proposer"))
-                    .and_then(Address::from_proto)?,
+                    .and_then(MalAddress::from_proto)?,
             })),
-            Part::Data(data) => Ok(Self::Data(StreamedProposalData::new(
+            Part::Data(data) => Ok(Self::Data(MalStreamedProposalData::new(
                 char::from_u32(data.factor as u32).unwrap(),
             ))),
-            Part::Fin(fin) => Ok(Self::Fin(StreamedProposalFin {
+            Part::Fin(fin) => Ok(Self::Fin(MalStreamedProposalFin {
                 signature: fin
                     .signature
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("signature"))
-                    .and_then(decode_signature)?,
+                    .and_then(mal_decode_signature)?,
             })),
         }
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        use proto::streamed_proposal_part::Part;
+        use malctx_schema_proto::streamed_proposal_part::Part;
 
         match self {
             Self::Init(init) => Ok(Self::Proto {
-                part: Some(Part::Init(proto::StreamedProposalInit {
+                part: Some(Part::Init(malctx_schema_proto::StreamedProposalInit {
                     height: init.height.as_u64(),
                     round: init.round.as_u32().unwrap(),
                     pol_round: init.pol_round.as_u32(),
@@ -183,13 +193,13 @@ impl Protobuf for StreamedProposalPart {
                 })),
             }),
             Self::Data(data) => Ok(Self::Proto {
-                part: Some(Part::Data(proto::StreamedProposalData {
+                part: Some(Part::Data(malctx_schema_proto::StreamedProposalData {
                     factor: data.factor as u64,
                 })),
             }),
             Self::Fin(fin) => Ok(Self::Proto {
-                part: Some(Part::Fin(proto::StreamedProposalFin {
-                    signature: Some(encode_signature(&fin.signature)),
+                part: Some(Part::Fin(malctx_schema_proto::StreamedProposalFin {
+                    signature: Some(mal_encode_signature(&fin.signature)),
                 })),
             }),
         }
@@ -198,9 +208,9 @@ impl Protobuf for StreamedProposalPart {
 
 /// A blockchain height
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct Height(u64);
+pub struct MalHeight(u64);
 
-impl Height {
+impl MalHeight {
     pub const fn new(height: u64) -> Self {
         Self(height)
     }
@@ -218,25 +228,25 @@ impl Height {
     }
 }
 
-impl Default for Height {
+impl Default for MalHeight {
     fn default() -> Self {
         malachitebft_core_types::Height::ZERO
     }
 }
 
-impl fmt::Display for Height {
+impl fmt::Display for MalHeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
     }
 }
 
-impl fmt::Debug for Height {
+impl fmt::Debug for MalHeight {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Height({})", self.0)
+        write!(f, "MalHeight({})", self.0)
     }
 }
 
-impl malachitebft_core_types::Height for Height {
+impl malachitebft_core_types::Height for MalHeight {
     const ZERO: Self = Self(0);
     const INITIAL: Self = Self(1);
 
@@ -253,7 +263,7 @@ impl malachitebft_core_types::Height for Height {
     }
 }
 
-impl Protobuf for Height {
+impl Protobuf for MalHeight {
     type Proto = u64;
 
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
@@ -267,7 +277,7 @@ impl Protobuf for Height {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Address(
+pub struct MalAddress(
     #[serde(
         serialize_with = "hex::serde::serialize_upper",
         deserialize_with = "hex::serde::deserialize"
@@ -275,7 +285,7 @@ pub struct Address(
     [u8; Self::LENGTH],
 );
 
-impl Address {
+impl MalAddress {
     const LENGTH: usize = 20;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
@@ -284,8 +294,13 @@ impl Address {
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn from_public_key(public_key: &PublicKey) -> Self {
-        let hash = public_key.hash();
+    pub fn from_public_key(public_key: &MalPublicKey) -> Self {
+        let hash : [u8; 32] = {
+            use sha3::{Digest, Keccak256};
+            let mut hasher = Keccak256::new();
+            hasher.update(public_key.as_bytes());
+            hasher.finalize().into()
+        };
         let mut address = [0; Self::LENGTH];
         address.copy_from_slice(&hash[..Self::LENGTH]);
         Self(address)
@@ -296,7 +311,7 @@ impl Address {
     }
 }
 
-impl fmt::Display for Address {
+impl fmt::Display for MalAddress {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0.iter() {
@@ -306,17 +321,17 @@ impl fmt::Display for Address {
     }
 }
 
-impl fmt::Debug for Address {
+impl fmt::Debug for MalAddress {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Address({})", self)
+        write!(f, "MalAddress({})", self)
     }
 }
 
-impl malachitebft_core_types::Address for Address {}
+impl malachitebft_core_types::Address for MalAddress {}
 
-impl Protobuf for Address {
-    type Proto = proto::Address;
+impl Protobuf for MalAddress {
+    type Proto = malctx_schema_proto::Address;
 
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
         if proto.value.len() != Self::LENGTH {
@@ -333,16 +348,16 @@ impl Protobuf for Address {
     }
 
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        Ok(proto::Address {
+        Ok(malctx_schema_proto::Address {
             value: self.0.to_vec().into(),
         })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Serialize, Deserialize)]
-pub struct ValueId(u64);
+pub struct MalValueId(u64);
 
-impl ValueId {
+impl MalValueId {
     pub const fn new(id: u64) -> Self {
         Self(id)
     }
@@ -352,20 +367,20 @@ impl ValueId {
     }
 }
 
-impl From<u64> for ValueId {
+impl From<u64> for MalValueId {
     fn from(value: u64) -> Self {
         Self::new(value)
     }
 }
 
-impl fmt::Display for ValueId {
+impl fmt::Display for MalValueId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:x}", self.0)
     }
 }
 
-impl Protobuf for ValueId {
-    type Proto = proto::ValueId;
+impl Protobuf for MalValueId {
+    type Proto = malctx_schema_proto::ValueId;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
@@ -381,12 +396,12 @@ impl Protobuf for ValueId {
             ))
         })?;
 
-        Ok(ValueId::new(u64::from_be_bytes(bytes)))
+        Ok(MalValueId::new(u64::from_be_bytes(bytes)))
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        Ok(proto::ValueId {
+        Ok(malctx_schema_proto::ValueId {
             value: Some(self.0.to_be_bytes().to_vec().into()),
         })
     }
@@ -394,12 +409,12 @@ impl Protobuf for ValueId {
 
 /// The value to decide on
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct Value {
+pub struct MalValue {
     pub value: String,
     pub extensions: Bytes,
 }
 
-impl Value {
+impl MalValue {
     pub fn new(value: String) -> Self {
         Self {
             value,
@@ -407,14 +422,14 @@ impl Value {
         }
     }
 
-    pub fn id(&self) -> ValueId {
+    pub fn id(&self) -> MalValueId {
         let mut dumb_hash: u64 = 0;
         for c in self.value.chars() {
             dumb_hash += c as u64;
             dumb_hash = dumb_hash >> 1 | dumb_hash << 63;
         }
         dumb_hash += self.value.len() as u64;
-        ValueId(dumb_hash)
+        MalValueId(dumb_hash)
     }
 
     pub fn size_bytes(&self) -> usize {
@@ -422,16 +437,16 @@ impl Value {
     }
 }
 
-impl malachitebft_core_types::Value for Value {
-    type Id = ValueId;
+impl malachitebft_core_types::Value for MalValue {
+    type Id = MalValueId;
 
-    fn id(&self) -> ValueId {
+    fn id(&self) -> MalValueId {
         self.id()
     }
 }
 
-impl Protobuf for Value {
-    type Proto = proto::Value;
+impl Protobuf for MalValue {
+    type Proto = malctx_schema_proto::Value;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
@@ -446,7 +461,7 @@ impl Protobuf for Value {
         let string_utf8 = bytes.slice(1..1 + len);
         let extensions = bytes.slice(1 + len..);
 
-        Ok(Value {
+        Ok(MalValue {
             value: String::from_utf8((&string_utf8).to_vec())
                 .map_err(|error| ProtoError::Other(format!("Not a string! {:?}", error)))?,
             extensions,
@@ -467,39 +482,23 @@ impl Protobuf for Value {
         bytes.extend_from_slice(&self.value.as_bytes());
         bytes.extend_from_slice(&self.extensions);
 
-        Ok(proto::Value {
+        Ok(malctx_schema_proto::Value {
             value: Some(bytes.freeze()),
         })
     }
 }
 
-pub trait Hashable {
-    type Output;
-    fn hash(&self) -> Self::Output;
-}
-
-impl Hashable for PublicKey {
-    type Output = [u8; 32];
-
-    fn hash(&self) -> [u8; 32] {
-        use sha3::{Digest, Keccak256};
-        let mut hasher = Keccak256::new();
-        hasher.update(self.as_bytes());
-        hasher.finalize().into()
-    }
-}
-
 #[derive(Debug)]
-pub struct Ed25519Provider {
-    private_key: PrivateKey,
+pub struct MalEd25519Provider {
+    private_key: MalPrivateKey,
 }
 
-impl Ed25519Provider {
-    pub fn new(private_key: PrivateKey) -> Self {
+impl MalEd25519Provider {
+    pub fn new(private_key: MalPrivateKey) -> Self {
         Self { private_key }
     }
 
-    pub fn private_key(&self) -> &PrivateKey {
+    pub fn private_key(&self) -> &MalPrivateKey {
         &self.private_key
     }
 
@@ -507,36 +506,36 @@ impl Ed25519Provider {
         self.private_key.sign(data)
     }
 
-    pub fn verify(&self, data: &[u8], signature: &Signature, public_key: &PublicKey) -> bool {
+    pub fn verify(&self, data: &[u8], signature: &Signature, public_key: &MalPublicKey) -> bool {
         public_key.verify(data, signature).is_ok()
     }
 }
 
-impl SigningProvider<TestContext> for Ed25519Provider {
-    fn sign_vote(&self, vote: Vote) -> SignedVote<TestContext> {
+impl SigningProvider<MalContext> for MalEd25519Provider {
+    fn sign_vote(&self, vote: MalVote) -> SignedVote<MalContext> {
         let signature = self.sign(&vote.to_sign_bytes());
         SignedVote::new(vote, signature)
     }
 
     fn verify_signed_vote(
         &self,
-        vote: &Vote,
+        vote: &MalVote,
         signature: &Signature,
-        public_key: &PublicKey,
+        public_key: &MalPublicKey,
     ) -> bool {
         public_key.verify(&vote.to_sign_bytes(), signature).is_ok()
     }
 
-    fn sign_proposal(&self, proposal: Proposal) -> SignedProposal<TestContext> {
+    fn sign_proposal(&self, proposal: MalProposal) -> SignedProposal<MalContext> {
         let signature = self.private_key.sign(&proposal.to_sign_bytes());
         SignedProposal::new(proposal, signature)
     }
 
     fn verify_signed_proposal(
         &self,
-        proposal: &Proposal,
+        proposal: &MalProposal,
         signature: &Signature,
-        public_key: &PublicKey,
+        public_key: &MalPublicKey,
     ) -> bool {
         public_key
             .verify(&proposal.to_sign_bytes(), signature)
@@ -545,24 +544,24 @@ impl SigningProvider<TestContext> for Ed25519Provider {
 
     fn sign_proposal_part(
         &self,
-        proposal_part: StreamedProposalPart,
-    ) -> SignedProposalPart<TestContext> {
+        proposal_part: MalStreamedProposalPart,
+    ) -> SignedProposalPart<MalContext> {
         let signature = self.private_key.sign(&proposal_part.to_sign_bytes());
         SignedProposalPart::new(proposal_part, signature)
     }
 
     fn verify_signed_proposal_part(
         &self,
-        proposal_part: &StreamedProposalPart,
+        proposal_part: &MalStreamedProposalPart,
         signature: &Signature,
-        public_key: &PublicKey,
+        public_key: &MalPublicKey,
     ) -> bool {
         public_key
             .verify(&proposal_part.to_sign_bytes(), signature)
             .is_ok()
     }
 
-    fn sign_vote_extension(&self, extension: Bytes) -> SignedExtension<TestContext> {
+    fn sign_vote_extension(&self, extension: Bytes) -> SignedExtension<MalContext> {
         let signature = self.private_key.sign(extension.as_ref());
         malachitebft_core_types::SignedMessage::new(extension, signature)
     }
@@ -571,19 +570,19 @@ impl SigningProvider<TestContext> for Ed25519Provider {
         &self,
         extension: &Bytes,
         signature: &Signature,
-        public_key: &PublicKey,
+        public_key: &MalPublicKey,
     ) -> bool {
         public_key.verify(extension.as_ref(), signature).is_ok()
     }
 
     fn verify_commit_signature(
         &self,
-        certificate: &CommitCertificate<TestContext>,
-        commit_sig: &CommitSignature<TestContext>,
-        validator: &Validator,
-    ) -> Result<VotingPower, CertificateError<TestContext>> {
+        certificate: &CommitCertificate<MalContext>,
+        commit_sig: &CommitSignature<MalContext>,
+        validator: &MalValidator,
+    ) -> Result<VotingPower, CertificateError<MalContext>> {
         // Reconstruct the vote that was signed
-        let vote = Vote::new_precommit(
+        let vote = MalVote::new_precommit(
             certificate.height,
             certificate.round,
             NilOrVal::Val(certificate.value_id),
@@ -601,41 +600,41 @@ impl SigningProvider<TestContext> for Ed25519Provider {
 
 /// A validator is a public key and voting power
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Validator {
-    pub address: Address,
-    pub public_key: PublicKey,
+pub struct MalValidator {
+    pub address: MalAddress,
+    pub public_key: MalPublicKey,
     pub voting_power: VotingPower,
 }
 
-impl Validator {
+impl MalValidator {
     #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn new(public_key: PublicKey, voting_power: VotingPower) -> Self {
+    pub fn new(public_key: MalPublicKey, voting_power: VotingPower) -> Self {
         Self {
-            address: Address::from_public_key(&public_key),
+            address: MalAddress::from_public_key(&public_key),
             public_key,
             voting_power,
         }
     }
 }
 
-impl PartialOrd for Validator {
+impl PartialOrd for MalValidator {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Validator {
+impl Ord for MalValidator {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.address.cmp(&other.address)
     }
 }
 
-impl malachitebft_core_types::Validator<TestContext> for Validator {
-    fn address(&self) -> &Address {
+impl malachitebft_core_types::Validator<MalContext> for MalValidator {
+    fn address(&self) -> &MalAddress {
         &self.address
     }
 
-    fn public_key(&self) -> &PublicKey {
+    fn public_key(&self) -> &MalPublicKey {
         &self.public_key
     }
 
@@ -646,14 +645,14 @@ impl malachitebft_core_types::Validator<TestContext> for Validator {
 
 /// A validator set contains a list of validators sorted by address.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ValidatorSet {
-    pub validators: Arc<Vec<Validator>>,
+pub struct MalValidatorSet {
+    pub validators: Arc<Vec<MalValidator>>,
 }
 
-impl ValidatorSet {
-    pub fn new(validators: impl IntoIterator<Item = Validator>) -> Self {
+impl MalValidatorSet {
+    pub fn new(validators: impl IntoIterator<Item = MalValidator>) -> Self {
         let mut validators: Vec<_> = validators.into_iter().collect();
-        ValidatorSet::sort_validators(&mut validators);
+        MalValidatorSet::sort_validators(&mut validators);
 
         assert!(!validators.is_empty());
 
@@ -668,16 +667,16 @@ impl ValidatorSet {
     }
 
     /// Get a validator by its address
-    pub fn get_by_address(&self, address: &Address) -> Option<&Validator> {
+    pub fn get_by_address(&self, address: &MalAddress) -> Option<&MalValidator> {
         self.validators.iter().find(|v| &v.address == address)
     }
 
-    pub fn get_by_public_key(&self, public_key: &PublicKey) -> Option<&Validator> {
+    pub fn get_by_public_key(&self, public_key: &MalPublicKey) -> Option<&MalValidator> {
         self.validators.iter().find(|v| &v.public_key == public_key)
     }
 
     /// In place sort and deduplication of a list of validators
-    fn sort_validators(vals: &mut Vec<Validator>) {
+    fn sort_validators(vals: &mut Vec<MalValidator>) {
         // Sort the validators according to the current Tendermint requirements
         //
         // use core::cmp::Reverse;
@@ -692,17 +691,12 @@ impl ValidatorSet {
         vals.dedup();
     }
 
-    pub fn get_keys(&self) -> Vec<PublicKey> {
+    pub fn get_keys(&self) -> Vec<MalPublicKey> {
         self.validators.iter().map(|v| v.public_key).collect()
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Genesis {
-    pub validator_set: ValidatorSet,
-}
-
-impl malachitebft_core_types::ValidatorSet<TestContext> for ValidatorSet {
+impl malachitebft_core_types::ValidatorSet<MalContext> for MalValidatorSet {
     fn count(&self) -> usize {
         self.validators.len()
     }
@@ -711,32 +705,32 @@ impl malachitebft_core_types::ValidatorSet<TestContext> for ValidatorSet {
         self.total_voting_power()
     }
 
-    fn get_by_address(&self, address: &Address) -> Option<&Validator> {
+    fn get_by_address(&self, address: &MalAddress) -> Option<&MalValidator> {
         self.get_by_address(address)
     }
 
-    fn get_by_index(&self, index: usize) -> Option<&Validator> {
+    fn get_by_index(&self, index: usize) -> Option<&MalValidator> {
         self.validators.get(index)
     }
 }
 
 /// A proposal for a value in a round
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Proposal {
-    pub height: Height,
+pub struct MalProposal {
+    pub height: MalHeight,
     pub round: Round,
-    pub value: Value,
+    pub value: MalValue,
     pub pol_round: Round,
-    pub validator_address: Address,
+    pub validator_address: MalAddress,
 }
 
-impl Proposal {
+impl MalProposal {
     pub fn new(
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value: Value,
+        value: MalValue,
         pol_round: Round,
-        validator_address: Address,
+        validator_address: MalAddress,
     ) -> Self {
         Self {
             height,
@@ -756,8 +750,8 @@ impl Proposal {
     }
 }
 
-impl malachitebft_core_types::Proposal<TestContext> for Proposal {
-    fn height(&self) -> Height {
+impl malachitebft_core_types::Proposal<MalContext> for MalProposal {
+    fn height(&self) -> MalHeight {
         self.height
     }
 
@@ -765,11 +759,11 @@ impl malachitebft_core_types::Proposal<TestContext> for Proposal {
         self.round
     }
 
-    fn value(&self) -> &Value {
+    fn value(&self) -> &MalValue {
         &self.value
     }
 
-    fn take_value(self) -> Value {
+    fn take_value(self) -> MalValue {
         self.value
     }
 
@@ -777,13 +771,13 @@ impl malachitebft_core_types::Proposal<TestContext> for Proposal {
         self.pol_round
     }
 
-    fn validator_address(&self) -> &Address {
+    fn validator_address(&self) -> &MalAddress {
         &self.validator_address
     }
 }
 
-impl Protobuf for Proposal {
-    type Proto = proto::Proposal;
+impl Protobuf for MalProposal {
+    type Proto = malctx_schema_proto::Proposal;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
@@ -799,15 +793,15 @@ impl Protobuf for Proposal {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
         Ok(Self {
-            height: Height::from_proto(proto.height)?,
+            height: MalHeight::from_proto(proto.height)?,
             round: Round::new(proto.round),
-            value: Value::from_proto(
+            value: MalValue::from_proto(
                 proto
                     .value
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?,
             )?,
             pol_round: Round::from(proto.pol_round),
-            validator_address: Address::from_proto(
+            validator_address: MalAddress::from_proto(
                 proto
                     .validator_address
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("validator_address"))?,
@@ -816,50 +810,50 @@ impl Protobuf for Proposal {
     }
 }
 
-pub mod proto {
+pub mod malctx_schema_proto {
     #![allow(missing_docs)]
 
     include!(concat!(env!("OUT_DIR"), "/mal_schema.rs"));
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ProtobufCodec;
+pub struct MalProtobufCodec;
 
-impl Codec<Value> for ProtobufCodec {
+impl Codec<MalValue> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<Value, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<MalValue, Self::Error> {
         Protobuf::from_bytes(&bytes)
     }
 
-    fn encode(&self, msg: &Value) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &MalValue) -> Result<Bytes, Self::Error> {
         Protobuf::to_bytes(msg)
     }
 }
 
-impl Codec<StreamedProposalPart> for ProtobufCodec {
+impl Codec<MalStreamedProposalPart> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<StreamedProposalPart, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<MalStreamedProposalPart, Self::Error> {
         Protobuf::from_bytes(&bytes)
     }
 
-    fn encode(&self, msg: &StreamedProposalPart) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &MalStreamedProposalPart) -> Result<Bytes, Self::Error> {
         Protobuf::to_bytes(msg)
     }
 }
 
-impl Codec<Signature> for ProtobufCodec {
+impl Codec<Signature> for MalProtobufCodec {
     type Error = ProtoError;
 
     fn decode(&self, bytes: Bytes) -> Result<Signature, Self::Error> {
-        let proto = proto::Signature::decode(bytes.as_ref())?;
-        decode_signature(proto)
+        let proto = malctx_schema_proto::Signature::decode(bytes.as_ref())?;
+        mal_decode_signature(proto)
     }
 
     fn encode(&self, msg: &Signature) -> Result<Bytes, Self::Error> {
         Ok(Bytes::from(
-            proto::Signature {
+            malctx_schema_proto::Signature {
                 bytes: Bytes::copy_from_slice(msg.to_bytes().as_ref()),
             }
             .encode_to_vec(),
@@ -867,52 +861,52 @@ impl Codec<Signature> for ProtobufCodec {
     }
 }
 
-impl Codec<SignedConsensusMsg<TestContext>> for ProtobufCodec {
+impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<SignedConsensusMsg<TestContext>, Self::Error> {
-        let proto = proto::SignedMessage::decode(bytes.as_ref())?;
+    fn decode(&self, bytes: Bytes) -> Result<SignedConsensusMsg<MalContext>, Self::Error> {
+        let proto = malctx_schema_proto::SignedMessage::decode(bytes.as_ref())?;
 
         let signature = proto
             .signature
-            .ok_or_else(|| ProtoError::missing_field::<proto::SignedMessage>("signature"))
-            .and_then(decode_signature)?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature"))
+            .and_then(mal_decode_signature)?;
 
         let proto_message = proto
             .message
-            .ok_or_else(|| ProtoError::missing_field::<proto::SignedMessage>("message"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("message"))?;
 
         match proto_message {
-            proto::signed_message::Message::Proposal(proto) => {
-                let proposal = Proposal::from_proto(proto)?;
+            malctx_schema_proto::signed_message::Message::Proposal(proto) => {
+                let proposal = MalProposal::from_proto(proto)?;
                 Ok(SignedConsensusMsg::Proposal(SignedProposal::new(
                     proposal, signature,
                 )))
             }
-            proto::signed_message::Message::Vote(vote) => {
-                let vote = Vote::from_proto(vote)?;
+            malctx_schema_proto::signed_message::Message::Vote(vote) => {
+                let vote = MalVote::from_proto(vote)?;
                 Ok(SignedConsensusMsg::Vote(SignedVote::new(vote, signature)))
             }
         }
     }
 
-    fn encode(&self, msg: &SignedConsensusMsg<TestContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &SignedConsensusMsg<MalContext>) -> Result<Bytes, Self::Error> {
         match msg {
             SignedConsensusMsg::Vote(vote) => {
-                let proto = proto::SignedMessage {
-                    message: Some(proto::signed_message::Message::Vote(
+                let proto = malctx_schema_proto::SignedMessage {
+                    message: Some(malctx_schema_proto::signed_message::Message::Vote(
                         vote.message.to_proto()?,
                     )),
-                    signature: Some(encode_signature(&vote.signature)),
+                    signature: Some(mal_encode_signature(&vote.signature)),
                 };
                 Ok(Bytes::from(proto.encode_to_vec()))
             }
             SignedConsensusMsg::Proposal(proposal) => {
-                let proto = proto::SignedMessage {
-                    message: Some(proto::signed_message::Message::Proposal(
+                let proto = malctx_schema_proto::SignedMessage {
+                    message: Some(malctx_schema_proto::signed_message::Message::Proposal(
                         proposal.message.to_proto()?,
                     )),
-                    signature: Some(encode_signature(&proposal.signature)),
+                    signature: Some(mal_encode_signature(&proposal.signature)),
                 };
                 Ok(Bytes::from(proto.encode_to_vec()))
             }
@@ -920,21 +914,21 @@ impl Codec<SignedConsensusMsg<TestContext>> for ProtobufCodec {
     }
 }
 
-impl Codec<StreamMessage<StreamedProposalPart>> for ProtobufCodec {
+impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<StreamedProposalPart>, Self::Error> {
-        let proto = proto::StreamMessage::decode(bytes.as_ref())?;
+    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<MalStreamedProposalPart>, Self::Error> {
+        let proto = malctx_schema_proto::StreamMessage::decode(bytes.as_ref())?;
 
         let proto_content = proto
             .content
-            .ok_or_else(|| ProtoError::missing_field::<proto::StreamMessage>("content"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::StreamMessage>("content"))?;
 
         let content = match proto_content {
-            proto::stream_message::Content::Data(data) => {
-                StreamContent::Data(StreamedProposalPart::from_bytes(&data)?)
+            malctx_schema_proto::stream_message::Content::Data(data) => {
+                StreamContent::Data(MalStreamedProposalPart::from_bytes(&data)?)
             }
-            proto::stream_message::Content::Fin(_) => StreamContent::Fin,
+            malctx_schema_proto::stream_message::Content::Fin(_) => StreamContent::Fin,
         };
 
         Ok(StreamMessage {
@@ -944,15 +938,15 @@ impl Codec<StreamMessage<StreamedProposalPart>> for ProtobufCodec {
         })
     }
 
-    fn encode(&self, msg: &StreamMessage<StreamedProposalPart>) -> Result<Bytes, Self::Error> {
-        let proto = proto::StreamMessage {
+    fn encode(&self, msg: &StreamMessage<MalStreamedProposalPart>) -> Result<Bytes, Self::Error> {
+        let proto = malctx_schema_proto::StreamMessage {
             stream_id: msg.stream_id.to_bytes(),
             sequence: msg.sequence,
             content: match &msg.content {
                 StreamContent::Data(data) => {
-                    Some(proto::stream_message::Content::Data(data.to_bytes()?))
+                    Some(malctx_schema_proto::stream_message::Content::Data(data.to_bytes()?))
                 }
-                StreamContent::Fin => Some(proto::stream_message::Content::Fin(true)),
+                StreamContent::Fin => Some(malctx_schema_proto::stream_message::Content::Fin(true)),
             },
         };
 
@@ -960,32 +954,32 @@ impl Codec<StreamMessage<StreamedProposalPart>> for ProtobufCodec {
     }
 }
 
-impl Codec<ProposedValue<TestContext>> for ProtobufCodec {
+impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<ProposedValue<TestContext>, Self::Error> {
-        let proto = proto::ProposedValue::decode(bytes.as_ref())?;
+    fn decode(&self, bytes: Bytes) -> Result<MalProposedValue<MalContext>, Self::Error> {
+        let proto = malctx_schema_proto::ProposedValue::decode(bytes.as_ref())?;
 
         let proposer = proto
             .proposer
-            .ok_or_else(|| ProtoError::missing_field::<proto::ProposedValue>("proposer"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer"))?;
 
         let value = proto
             .value
-            .ok_or_else(|| ProtoError::missing_field::<proto::ProposedValue>("value"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("value"))?;
 
-        Ok(ProposedValue {
-            height: Height::new(proto.height),
+        Ok(MalProposedValue {
+            height: MalHeight::new(proto.height),
             round: Round::new(proto.round),
             valid_round: proto.valid_round.map(Round::new).unwrap_or(Round::Nil),
-            proposer: Address::from_proto(proposer)?,
-            value: Value::from_proto(value)?,
-            validity: Validity::from_bool(proto.validity),
+            proposer: MalAddress::from_proto(proposer)?,
+            value: MalValue::from_proto(value)?,
+            validity: MalValidity::from_bool(proto.validity),
         })
     }
 
-    fn encode(&self, msg: &ProposedValue<TestContext>) -> Result<Bytes, Self::Error> {
-        let proto = proto::ProposedValue {
+    fn encode(&self, msg: &MalProposedValue<MalContext>) -> Result<Bytes, Self::Error> {
+        let proto = malctx_schema_proto::ProposedValue {
             height: msg.height.as_u64(),
             round: msg.round.as_u32().unwrap(),
             valid_round: msg.valid_round.as_u32(),
@@ -998,26 +992,26 @@ impl Codec<ProposedValue<TestContext>> for ProtobufCodec {
     }
 }
 
-impl Codec<malachitebft_sync::Status<TestContext>> for ProtobufCodec {
+impl Codec<malachitebft_sync::Status<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Status<TestContext>, Self::Error> {
-        let proto = proto::Status::decode(bytes.as_ref())?;
+    fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Status<MalContext>, Self::Error> {
+        let proto = malctx_schema_proto::Status::decode(bytes.as_ref())?;
 
         let proto_peer_id = proto
             .peer_id
-            .ok_or_else(|| ProtoError::missing_field::<proto::Status>("peer_id"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::Status>("peer_id"))?;
 
         Ok(malachitebft_sync::Status {
             peer_id: PeerId::from_bytes(proto_peer_id.id.as_ref()).unwrap(),
-            height: Height::new(proto.height),
-            history_min_height: Height::new(proto.earliest_height),
+            height: MalHeight::new(proto.height),
+            history_min_height: MalHeight::new(proto.earliest_height),
         })
     }
 
-    fn encode(&self, msg: &malachitebft_sync::Status<TestContext>) -> Result<Bytes, Self::Error> {
-        let proto = proto::Status {
-            peer_id: Some(proto::PeerId {
+    fn encode(&self, msg: &malachitebft_sync::Status<MalContext>) -> Result<Bytes, Self::Error> {
+        let proto = malctx_schema_proto::Status {
+            peer_id: Some(malctx_schema_proto::PeerId {
                 id: Bytes::from(msg.peer_id.to_bytes()),
             }),
             height: msg.height.as_u64(),
@@ -1028,42 +1022,42 @@ impl Codec<malachitebft_sync::Status<TestContext>> for ProtobufCodec {
     }
 }
 
-impl Codec<malachitebft_sync::Request<TestContext>> for ProtobufCodec {
+impl Codec<malachitebft_sync::Request<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Request<TestContext>, Self::Error> {
-        let proto = proto::SyncRequest::decode(bytes.as_ref())?;
+    fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Request<MalContext>, Self::Error> {
+        let proto = malctx_schema_proto::SyncRequest::decode(bytes.as_ref())?;
         let request = proto
             .request
-            .ok_or_else(|| ProtoError::missing_field::<proto::SyncRequest>("request"))?;
+            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncRequest>("request"))?;
 
         match request {
-            proto::sync_request::Request::ValueRequest(req) => {
+            malctx_schema_proto::sync_request::Request::ValueRequest(req) => {
                 Ok(malachitebft_sync::Request::ValueRequest(
-                    malachitebft_sync::ValueRequest::new(Height::new(req.height)),
+                    malachitebft_sync::ValueRequest::new(MalHeight::new(req.height)),
                 ))
             }
-            proto::sync_request::Request::VoteSetRequest(req) => Ok(
+            malctx_schema_proto::sync_request::Request::VoteSetRequest(req) => Ok(
                 malachitebft_sync::Request::VoteSetRequest(malachitebft_sync::VoteSetRequest::new(
-                    Height::new(req.height),
+                    MalHeight::new(req.height),
                     Round::new(req.round),
                 )),
             ),
         }
     }
 
-    fn encode(&self, msg: &malachitebft_sync::Request<TestContext>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &malachitebft_sync::Request<MalContext>) -> Result<Bytes, Self::Error> {
         let proto = match msg {
-            malachitebft_sync::Request::ValueRequest(req) => proto::SyncRequest {
-                request: Some(proto::sync_request::Request::ValueRequest(
-                    proto::ValueRequest {
+            malachitebft_sync::Request::ValueRequest(req) => malctx_schema_proto::SyncRequest {
+                request: Some(malctx_schema_proto::sync_request::Request::ValueRequest(
+                    malctx_schema_proto::ValueRequest {
                         height: req.height.as_u64(),
                     },
                 )),
             },
-            malachitebft_sync::Request::VoteSetRequest(req) => proto::SyncRequest {
-                request: Some(proto::sync_request::Request::VoteSetRequest(
-                    proto::VoteSetRequest {
+            malachitebft_sync::Request::VoteSetRequest(req) => malctx_schema_proto::SyncRequest {
+                request: Some(malctx_schema_proto::sync_request::Request::VoteSetRequest(
+                    malctx_schema_proto::VoteSetRequest {
                         height: req.height.as_u64(),
                         round: req.round.as_u32().unwrap(),
                     },
@@ -1075,49 +1069,49 @@ impl Codec<malachitebft_sync::Request<TestContext>> for ProtobufCodec {
     }
 }
 
-impl Codec<malachitebft_sync::Response<TestContext>> for ProtobufCodec {
+impl Codec<malachitebft_sync::Response<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
     fn decode(
         &self,
         bytes: Bytes,
-    ) -> Result<malachitebft_sync::Response<TestContext>, Self::Error> {
-        decode_sync_response(proto::SyncResponse::decode(bytes)?)
+    ) -> Result<malachitebft_sync::Response<MalContext>, Self::Error> {
+        mal_decode_sync_response(malctx_schema_proto::SyncResponse::decode(bytes)?)
     }
 
     fn encode(
         &self,
-        response: &malachitebft_sync::Response<TestContext>,
+        response: &malachitebft_sync::Response<MalContext>,
     ) -> Result<Bytes, Self::Error> {
-        encode_sync_response(response).map(|proto| proto.encode_to_vec().into())
+        mal_encode_sync_response(response).map(|proto| proto.encode_to_vec().into())
     }
 }
 
-pub fn decode_sync_response(
-    proto_response: proto::SyncResponse,
-) -> Result<malachitebft_sync::Response<TestContext>, ProtoError> {
+pub fn mal_decode_sync_response(
+    proto_response: malctx_schema_proto::SyncResponse,
+) -> Result<malachitebft_sync::Response<MalContext>, ProtoError> {
     let response = proto_response
         .response
-        .ok_or_else(|| ProtoError::missing_field::<proto::SyncResponse>("messages"))?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncResponse>("messages"))?;
 
     let response = match response {
-        proto::sync_response::Response::ValueResponse(value_response) => {
+        malctx_schema_proto::sync_response::Response::ValueResponse(value_response) => {
             malachitebft_sync::Response::ValueResponse(malachitebft_sync::ValueResponse::new(
-                Height::new(value_response.height),
-                value_response.value.map(decode_synced_value).transpose()?,
+                MalHeight::new(value_response.height),
+                value_response.value.map(mal_decode_synced_value).transpose()?,
             ))
         }
-        proto::sync_response::Response::VoteSetResponse(vote_set_response) => {
-            let height = Height::new(vote_set_response.height);
+        malctx_schema_proto::sync_response::Response::VoteSetResponse(vote_set_response) => {
+            let height = MalHeight::new(vote_set_response.height);
             let round = Round::new(vote_set_response.round);
             let vote_set = vote_set_response
                 .vote_set
-                .ok_or_else(|| ProtoError::missing_field::<proto::VoteSet>("vote_set"))?;
+                .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::VoteSet>("vote_set"))?;
 
             malachitebft_sync::Response::VoteSetResponse(malachitebft_sync::VoteSetResponse::new(
                 height,
                 round,
-                decode_vote_set(vote_set)?,
+                mal_decode_vote_set(vote_set)?,
                 vote_set_response
                     .polka_certificates
                     .into_iter()
@@ -1129,31 +1123,31 @@ pub fn decode_sync_response(
     Ok(response)
 }
 
-pub fn encode_sync_response(
-    response: &malachitebft_sync::Response<TestContext>,
-) -> Result<proto::SyncResponse, ProtoError> {
+pub fn mal_encode_sync_response(
+    response: &malachitebft_sync::Response<MalContext>,
+) -> Result<malctx_schema_proto::SyncResponse, ProtoError> {
     let proto = match response {
-        malachitebft_sync::Response::ValueResponse(value_response) => proto::SyncResponse {
-            response: Some(proto::sync_response::Response::ValueResponse(
-                proto::ValueResponse {
+        malachitebft_sync::Response::ValueResponse(value_response) => malctx_schema_proto::SyncResponse {
+            response: Some(malctx_schema_proto::sync_response::Response::ValueResponse(
+                malctx_schema_proto::ValueResponse {
                     height: value_response.height.as_u64(),
                     value: value_response
                         .value
                         .as_ref()
-                        .map(encode_synced_value)
+                        .map(mal_encode_synced_value)
                         .transpose()?,
                 },
             )),
         },
-        malachitebft_sync::Response::VoteSetResponse(vote_set_response) => proto::SyncResponse {
-            response: Some(proto::sync_response::Response::VoteSetResponse(
-                proto::VoteSetResponse {
+        malachitebft_sync::Response::VoteSetResponse(vote_set_response) => malctx_schema_proto::SyncResponse {
+            response: Some(malctx_schema_proto::sync_response::Response::VoteSetResponse(
+                malctx_schema_proto::VoteSetResponse {
                     height: vote_set_response.height.as_u64(),
                     round: vote_set_response
                         .round
                         .as_u32()
                         .expect("round should not be nil"),
-                    vote_set: Some(encode_vote_set(&vote_set_response.vote_set)?),
+                    vote_set: Some(mal_encode_vote_set(&vote_set_response.vote_set)?),
                     polka_certificates: vote_set_response
                         .polka_certificates
                         .iter()
@@ -1167,32 +1161,32 @@ pub fn encode_sync_response(
     Ok(proto)
 }
 
-pub fn encode_synced_value(
-    synced_value: &malachitebft_sync::RawDecidedValue<TestContext>,
-) -> Result<proto::SyncedValue, ProtoError> {
-    Ok(proto::SyncedValue {
+pub fn mal_encode_synced_value(
+    synced_value: &malachitebft_sync::RawDecidedValue<MalContext>,
+) -> Result<malctx_schema_proto::SyncedValue, ProtoError> {
+    Ok(malctx_schema_proto::SyncedValue {
         value_bytes: synced_value.value_bytes.clone(),
-        certificate: Some(encode_commit_certificate(&synced_value.certificate)?),
+        certificate: Some(mal_encode_commit_certificate(&synced_value.certificate)?),
     })
 }
 
-pub fn decode_synced_value(
-    proto: proto::SyncedValue,
-) -> Result<malachitebft_sync::RawDecidedValue<TestContext>, ProtoError> {
+pub fn mal_decode_synced_value(
+    proto: malctx_schema_proto::SyncedValue,
+) -> Result<malachitebft_sync::RawDecidedValue<MalContext>, ProtoError> {
     let certificate = proto
         .certificate
-        .ok_or_else(|| ProtoError::missing_field::<proto::SyncedValue>("certificate"))?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncedValue>("certificate"))?;
 
     Ok(malachitebft_sync::RawDecidedValue {
         value_bytes: proto.value_bytes,
-        certificate: decode_commit_certificate(certificate)?,
+        certificate: mal_decode_commit_certificate(certificate)?,
     })
 }
 
 pub(crate) fn encode_polka_certificate(
-    polka_certificate: &PolkaCertificate<TestContext>,
-) -> Result<proto::PolkaCertificate, ProtoError> {
-    Ok(proto::PolkaCertificate {
+    polka_certificate: &PolkaCertificate<MalContext>,
+) -> Result<malctx_schema_proto::PolkaCertificate, ProtoError> {
+    Ok(malctx_schema_proto::PolkaCertificate {
         height: polka_certificate.height.as_u64(),
         round: polka_certificate
             .round
@@ -1202,48 +1196,48 @@ pub(crate) fn encode_polka_certificate(
         votes: polka_certificate
             .votes
             .iter()
-            .map(encode_vote)
+            .map(mal_encode_vote)
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
 pub(crate) fn decode_polka_certificate(
-    certificate: proto::PolkaCertificate,
-) -> Result<PolkaCertificate<TestContext>, ProtoError> {
+    certificate: malctx_schema_proto::PolkaCertificate,
+) -> Result<PolkaCertificate<MalContext>, ProtoError> {
     let value_id = certificate
         .value_id
-        .ok_or_else(|| ProtoError::missing_field::<proto::PolkaCertificate>("value_id"))
-        .and_then(ValueId::from_proto)?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("value_id"))
+        .and_then(MalValueId::from_proto)?;
 
     Ok(PolkaCertificate {
-        height: Height::new(certificate.height),
+        height: MalHeight::new(certificate.height),
         round: Round::new(certificate.round),
         value_id,
         votes: certificate
             .votes
             .into_iter()
-            .map(decode_vote)
+            .map(mal_decode_vote)
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
-pub fn decode_commit_certificate(
-    certificate: proto::CommitCertificate,
-) -> Result<CommitCertificate<TestContext>, ProtoError> {
+pub fn mal_decode_commit_certificate(
+    certificate: malctx_schema_proto::CommitCertificate,
+) -> Result<CommitCertificate<MalContext>, ProtoError> {
     let value_id = certificate
         .value_id
-        .ok_or_else(|| ProtoError::missing_field::<proto::CommitCertificate>("value_id"))
-        .and_then(ValueId::from_proto)?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("value_id"))
+        .and_then(MalValueId::from_proto)?;
 
     let aggregated_signature = certificate
         .aggregated_signature
         .ok_or_else(|| {
-            ProtoError::missing_field::<proto::CommitCertificate>("aggregated_signature")
+            ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("aggregated_signature")
         })
-        .and_then(decode_aggregated_signature)?;
+        .and_then(mal_decode_aggregated_signature)?;
 
     let certificate = CommitCertificate {
-        height: Height::new(certificate.height),
+        height: MalHeight::new(certificate.height),
         round: Round::new(certificate.round),
         value_id,
         aggregated_signature,
@@ -1252,37 +1246,37 @@ pub fn decode_commit_certificate(
     Ok(certificate)
 }
 
-pub fn encode_commit_certificate(
-    certificate: &CommitCertificate<TestContext>,
-) -> Result<proto::CommitCertificate, ProtoError> {
-    Ok(proto::CommitCertificate {
+pub fn mal_encode_commit_certificate(
+    certificate: &CommitCertificate<MalContext>,
+) -> Result<malctx_schema_proto::CommitCertificate, ProtoError> {
+    Ok(malctx_schema_proto::CommitCertificate {
         height: certificate.height.as_u64(),
         round: certificate.round.as_u32().expect("round should not be nil"),
         value_id: Some(certificate.value_id.to_proto()?),
-        aggregated_signature: Some(encode_aggregate_signature(
+        aggregated_signature: Some(mal_encode_aggregate_signature(
             &certificate.aggregated_signature,
         )?),
     })
 }
 
-pub fn decode_aggregated_signature(
-    signature: proto::AggregatedSignature,
-) -> Result<AggregatedSignature<TestContext>, ProtoError> {
+pub fn mal_decode_aggregated_signature(
+    signature: malctx_schema_proto::AggregatedSignature,
+) -> Result<AggregatedSignature<MalContext>, ProtoError> {
     let signatures = signature
         .signatures
         .into_iter()
         .map(|s| {
             let signature = s
                 .signature
-                .ok_or_else(|| ProtoError::missing_field::<proto::CommitSignature>("signature"))
-                .and_then(decode_signature)?;
+                .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("signature"))
+                .and_then(mal_decode_signature)?;
 
             let address = s
                 .validator_address
                 .ok_or_else(|| {
-                    ProtoError::missing_field::<proto::CommitSignature>("validator_address")
+                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("validator_address")
                 })
-                .and_then(Address::from_proto)?;
+                .and_then(MalAddress::from_proto)?;
 
             Ok(CommitSignature { address, signature })
         })
@@ -1291,94 +1285,94 @@ pub fn decode_aggregated_signature(
     Ok(AggregatedSignature { signatures })
 }
 
-pub fn encode_aggregate_signature(
-    aggregated_signature: &AggregatedSignature<TestContext>,
-) -> Result<proto::AggregatedSignature, ProtoError> {
+pub fn mal_encode_aggregate_signature(
+    aggregated_signature: &AggregatedSignature<MalContext>,
+) -> Result<malctx_schema_proto::AggregatedSignature, ProtoError> {
     let signatures = aggregated_signature
         .signatures
         .iter()
         .map(|s| {
-            Ok(proto::CommitSignature {
+            Ok(malctx_schema_proto::CommitSignature {
                 validator_address: Some(s.address.to_proto()?),
-                signature: Some(encode_signature(&s.signature)),
+                signature: Some(mal_encode_signature(&s.signature)),
             })
         })
         .collect::<Result<_, ProtoError>>()?;
 
-    Ok(proto::AggregatedSignature { signatures })
+    Ok(malctx_schema_proto::AggregatedSignature { signatures })
 }
 
-pub fn decode_extension(ext: proto::Extension) -> Result<SignedExtension<TestContext>, ProtoError> {
+pub fn mal_decode_extension(ext: malctx_schema_proto::Extension) -> Result<SignedExtension<MalContext>, ProtoError> {
     let signature = ext
         .signature
-        .ok_or_else(|| ProtoError::missing_field::<proto::Extension>("signature"))
-        .and_then(decode_signature)?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::Extension>("signature"))
+        .and_then(mal_decode_signature)?;
 
     Ok(SignedExtension::new(ext.data, signature))
 }
 
-pub fn encode_extension(
-    ext: &SignedExtension<TestContext>,
-) -> Result<proto::Extension, ProtoError> {
-    Ok(proto::Extension {
+pub fn mal_encode_extension(
+    ext: &SignedExtension<MalContext>,
+) -> Result<malctx_schema_proto::Extension, ProtoError> {
+    Ok(malctx_schema_proto::Extension {
         data: ext.message.clone(),
-        signature: Some(encode_signature(&ext.signature)),
+        signature: Some(mal_encode_signature(&ext.signature)),
     })
 }
 
-pub fn encode_vote_set(vote_set: &VoteSet<TestContext>) -> Result<proto::VoteSet, ProtoError> {
-    Ok(proto::VoteSet {
+pub fn mal_encode_vote_set(vote_set: &VoteSet<MalContext>) -> Result<malctx_schema_proto::VoteSet, ProtoError> {
+    Ok(malctx_schema_proto::VoteSet {
         signed_votes: vote_set
             .votes
             .iter()
-            .map(encode_vote)
+            .map(mal_encode_vote)
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
-pub fn encode_vote(vote: &SignedVote<TestContext>) -> Result<proto::SignedMessage, ProtoError> {
-    Ok(proto::SignedMessage {
-        message: Some(proto::signed_message::Message::Vote(
+pub fn mal_encode_vote(vote: &SignedVote<MalContext>) -> Result<malctx_schema_proto::SignedMessage, ProtoError> {
+    Ok(malctx_schema_proto::SignedMessage {
+        message: Some(malctx_schema_proto::signed_message::Message::Vote(
             vote.message.to_proto()?,
         )),
-        signature: Some(encode_signature(&vote.signature)),
+        signature: Some(mal_encode_signature(&vote.signature)),
     })
 }
 
-pub fn decode_vote_set(vote_set: proto::VoteSet) -> Result<VoteSet<TestContext>, ProtoError> {
+pub fn mal_decode_vote_set(vote_set: malctx_schema_proto::VoteSet) -> Result<VoteSet<MalContext>, ProtoError> {
     Ok(VoteSet {
         votes: vote_set
             .signed_votes
             .into_iter()
-            .map(decode_vote)
+            .map(mal_decode_vote)
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
-pub fn decode_vote(msg: proto::SignedMessage) -> Result<SignedVote<TestContext>, ProtoError> {
+pub fn mal_decode_vote(msg: malctx_schema_proto::SignedMessage) -> Result<SignedVote<MalContext>, ProtoError> {
     let signature = msg
         .signature
-        .ok_or_else(|| ProtoError::missing_field::<proto::SignedMessage>("signature"))?;
+        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature"))?;
 
     let vote = match msg.message {
-        Some(proto::signed_message::Message::Vote(v)) => Ok(v),
+        Some(malctx_schema_proto::signed_message::Message::Vote(v)) => Ok(v),
         _ => Err(ProtoError::Other(
             "Invalid message type: not a vote".to_string(),
         )),
     }?;
 
-    let signature = decode_signature(signature)?;
-    let vote = Vote::from_proto(vote)?;
+    let signature = mal_decode_signature(signature)?;
+    let vote = MalVote::from_proto(vote)?;
     Ok(SignedVote::new(vote, signature))
 }
 
-pub fn encode_signature(signature: &Signature) -> proto::Signature {
-    proto::Signature {
+pub fn mal_encode_signature(signature: &Signature) -> malctx_schema_proto::Signature {
+    malctx_schema_proto::Signature {
         bytes: Bytes::copy_from_slice(signature.to_bytes().as_ref()),
     }
 }
 
-pub fn decode_signature(signature: proto::Signature) -> Result<Signature, ProtoError> {
+pub fn mal_decode_signature(signature: malctx_schema_proto::Signature) -> Result<Signature, ProtoError> {
     let bytes = <[u8; 64]>::try_from(signature.bytes.as_ref())
         .map_err(|_| ProtoError::Other("Invalid signature length".to_string()))?;
     Ok(Signature::from_bytes(bytes))
@@ -1386,21 +1380,21 @@ pub fn decode_signature(signature: proto::Signature) -> Result<Signature, ProtoE
 
 /// A vote for a value in a round
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Vote {
+pub struct MalVote {
     pub typ: VoteType,
-    pub height: Height,
+    pub height: MalHeight,
     pub round: Round,
-    pub value: NilOrVal<ValueId>,
-    pub validator_address: Address,
-    pub extension: Option<SignedExtension<TestContext>>,
+    pub value: NilOrVal<MalValueId>,
+    pub validator_address: MalAddress,
+    pub extension: Option<SignedExtension<MalContext>>,
 }
 
-impl Vote {
+impl MalVote {
     pub fn new_prevote(
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value: NilOrVal<ValueId>,
-        validator_address: Address,
+        value: NilOrVal<MalValueId>,
+        validator_address: MalAddress,
     ) -> Self {
         Self {
             typ: VoteType::Prevote,
@@ -1413,10 +1407,10 @@ impl Vote {
     }
 
     pub fn new_precommit(
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value: NilOrVal<ValueId>,
-        address: Address,
+        value: NilOrVal<MalValueId>,
+        address: MalAddress,
     ) -> Self {
         Self {
             typ: VoteType::Precommit,
@@ -1442,20 +1436,20 @@ impl Vote {
     }
 }
 
-impl Protobuf for Vote {
-    type Proto = proto::Vote;
+impl Protobuf for MalVote {
+    type Proto = malctx_schema_proto::Vote;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
         Ok(Self {
-            typ: decode_votetype(proto.vote_type()),
-            height: Height::from_proto(proto.height)?,
+            typ: mal_decode_votetype(proto.vote_type()),
+            height: MalHeight::from_proto(proto.height)?,
             round: Round::new(proto.round),
             value: match proto.value {
-                Some(value) => NilOrVal::Val(ValueId::from_proto(value)?),
+                Some(value) => NilOrVal::Val(MalValueId::from_proto(value)?),
                 None => NilOrVal::Nil,
             },
-            validator_address: Address::from_proto(
+            validator_address: MalAddress::from_proto(
                 proto
                     .validator_address
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("validator_address"))?,
@@ -1467,7 +1461,7 @@ impl Protobuf for Vote {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
         Ok(Self::Proto {
-            vote_type: encode_votetype(self.typ).into(),
+            vote_type: mal_encode_votetype(self.typ).into(),
             height: self.height.to_proto()?,
             round: self.round.as_u32().expect("round should not be nil"),
             value: match &self.value {
@@ -1480,26 +1474,26 @@ impl Protobuf for Vote {
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn encode_votetype(vote_type: VoteType) -> proto::VoteType {
+fn mal_encode_votetype(vote_type: VoteType) -> malctx_schema_proto::VoteType {
     match vote_type {
-        VoteType::Prevote => proto::VoteType::Prevote,
-        VoteType::Precommit => proto::VoteType::Precommit,
+        VoteType::Prevote => malctx_schema_proto::VoteType::Prevote,
+        VoteType::Precommit => malctx_schema_proto::VoteType::Precommit,
     }
 }
 
 #[cfg_attr(coverage_nightly, coverage(off))]
-fn decode_votetype(vote_type: proto::VoteType) -> VoteType {
+fn mal_decode_votetype(vote_type: malctx_schema_proto::VoteType) -> VoteType {
     match vote_type {
-        proto::VoteType::Prevote => VoteType::Prevote,
-        proto::VoteType::Precommit => VoteType::Precommit,
+        malctx_schema_proto::VoteType::Prevote => VoteType::Prevote,
+        malctx_schema_proto::VoteType::Precommit => VoteType::Precommit,
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct TestContext;
+pub struct MalContext;
 
-impl malachitebft_core_types::Vote<TestContext> for Vote {
-    fn height(&self) -> Height {
+impl malachitebft_core_types::Vote<MalContext> for MalVote {
+    fn height(&self) -> MalHeight {
         self.height
     }
 
@@ -1507,11 +1501,11 @@ impl malachitebft_core_types::Vote<TestContext> for Vote {
         self.round
     }
 
-    fn value(&self) -> &NilOrVal<ValueId> {
+    fn value(&self) -> &NilOrVal<MalValueId> {
         &self.value
     }
 
-    fn take_value(self) -> NilOrVal<ValueId> {
+    fn take_value(self) -> NilOrVal<MalValueId> {
         self.value
     }
 
@@ -1519,19 +1513,19 @@ impl malachitebft_core_types::Vote<TestContext> for Vote {
         self.typ
     }
 
-    fn validator_address(&self) -> &Address {
+    fn validator_address(&self) -> &MalAddress {
         &self.validator_address
     }
 
-    fn extension(&self) -> Option<&SignedExtension<TestContext>> {
+    fn extension(&self) -> Option<&SignedExtension<MalContext>> {
         self.extension.as_ref()
     }
 
-    fn take_extension(&mut self) -> Option<SignedExtension<TestContext>> {
+    fn take_extension(&mut self) -> Option<SignedExtension<MalContext>> {
         self.extension.take()
     }
 
-    fn extend(self, extension: SignedExtension<TestContext>) -> Self {
+    fn extend(self, extension: SignedExtension<MalContext>) -> Self {
         Self {
             extension: Some(extension),
             ..self
@@ -1539,19 +1533,30 @@ impl malachitebft_core_types::Vote<TestContext> for Vote {
     }
 }
 
-impl Default for TestContext {
+impl Default for MalContext {
     fn default() -> Self {
         Self
     }
 }
 
-impl TestContext {
-    pub fn select_proposer<'a>(
+impl Context for MalContext {
+    type Address = MalAddress;
+    type ProposalPart = MalStreamedProposalPart;
+    type Height = MalHeight;
+    type Proposal = MalProposal;
+    type ValidatorSet = MalValidatorSet;
+    type Validator = MalValidator;
+    type Value = MalValue;
+    type Vote = MalVote;
+    type Extension = Bytes;
+    type SigningScheme = MalEd25519;
+
+    fn select_proposer<'a>(
         &self,
-        validator_set: &'a ValidatorSet,
-        height: Height,
+        validator_set: &'a Self::ValidatorSet,
+        height: Self::Height,
         round: Round,
-    ) -> &'a Validator {
+    ) -> &'a Self::Validator {
         assert!(validator_set.count() > 0);
         assert!(round != Round::Nil && round.as_i64() >= 0);
 
@@ -1566,57 +1571,35 @@ impl TestContext {
             .get_by_index(proposer_index)
             .expect("proposer_index is valid")
     }
-}
-
-impl Context for TestContext {
-    type Address = Address;
-    type ProposalPart = StreamedProposalPart;
-    type Height = Height;
-    type Proposal = Proposal;
-    type ValidatorSet = ValidatorSet;
-    type Validator = Validator;
-    type Value = Value;
-    type Vote = Vote;
-    type Extension = Bytes;
-    type SigningScheme = Ed25519;
-
-    fn select_proposer<'a>(
-        &self,
-        validator_set: &'a Self::ValidatorSet,
-        height: Self::Height,
-        round: Round,
-    ) -> &'a Self::Validator {
-        self.select_proposer(validator_set, height, round)
-    }
 
     fn new_proposal(
         &self,
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value: Value,
+        value: MalValue,
         pol_round: Round,
-        address: Address,
-    ) -> Proposal {
-        Proposal::new(height, round, value, pol_round, address)
+        address: MalAddress,
+    ) -> MalProposal {
+        MalProposal::new(height, round, value, pol_round, address)
     }
 
     fn new_prevote(
         &self,
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value_id: NilOrVal<ValueId>,
-        address: Address,
-    ) -> Vote {
-        Vote::new_prevote(height, round, value_id, address)
+        value_id: NilOrVal<MalValueId>,
+        address: MalAddress,
+    ) -> MalVote {
+        MalVote::new_prevote(height, round, value_id, address)
     }
 
     fn new_precommit(
         &self,
-        height: Height,
+        height: MalHeight,
         round: Round,
-        value_id: NilOrVal<ValueId>,
-        address: Address,
-    ) -> Vote {
-        Vote::new_precommit(height, round, value_id, address)
+        value_id: NilOrVal<MalValueId>,
+        address: MalAddress,
+    ) -> MalVote {
+        MalVote::new_precommit(height, round, value_id, address)
     }
 }
