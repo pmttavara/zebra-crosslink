@@ -1798,7 +1798,7 @@ pub async fn viz_main(
 
                             id: {
                                 bft_fake_id -= 1;
-                                (bft_fake_id + 1)
+                                bft_fake_id + 1
                             },
 
                             text: node_str.clone(),

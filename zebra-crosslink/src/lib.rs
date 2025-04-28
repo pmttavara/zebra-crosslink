@@ -2,17 +2,16 @@
 
 #![allow(clippy::print_stdout)]
 
-use crate::core::Round as BFTRound;
+use malachitebft_codec::Codec;
+
 use async_trait::async_trait;
 use malachitebft_app_channel::app::config as mconfig;
-use malachitebft_app_channel::app::events::*;
+use malachitebft_app_channel::app::events::RxEvent;
 use malachitebft_app_channel::app::node::NodeConfig;
-use malachitebft_app_channel::app::types::codec::Codec;
-use malachitebft_app_channel::app::types::core::{Round, Validity, VoteExtensions};
-use malachitebft_app_channel::app::types::*;
-use malachitebft_app_channel::app::*;
+use malachitebft_app_channel::app::types::sync::RawDecidedValue;
 use malachitebft_app_channel::AppMsg as BFTAppMsg;
 use malachitebft_app_channel::NetworkMsg;
+
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
@@ -22,7 +21,6 @@ use std::hash::{DefaultHasher, Hasher};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use sync::RawDecidedValue;
 use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
@@ -31,12 +29,7 @@ use zebra_crosslink_chain::params::ZcashCrosslinkParameters;
 use zebra_crosslink_chain::BftPayload;
 
 pub mod malctx;
-use crate::malctx::{
-    Address, Ed25519Provider, Genesis, Height as BFTHeight, StreamedProposalData,
-    StreamedProposalFin, StreamedProposalInit, StreamedProposalPart, TestContext, Validator,
-    ValidatorSet,
-};
-use malachitebft_signing_ed25519::*;
+use malctx::*;
 
 pub mod service;
 /// Configuration for the state service.
@@ -73,7 +66,7 @@ use crate::service::{
     TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,
 };
 
-// TODO: do we want to start differentiating BCHeight/PoWHeight, BFTHeight/PoSHeigh etc?
+// TODO: do we want to start differentiating BCHeight/PoWHeight, MalHeight/PoSHeigh etc?
 use zebra_chain::block::{
     Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
 };
@@ -294,12 +287,12 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 
     fn rng_private_public_key_from_address(
         addr: &str,
-    ) -> (rand::rngs::StdRng, PrivateKey, PublicKey) {
+    ) -> (rand::rngs::StdRng, MalPrivateKey, MalPublicKey) {
         let mut hasher = DefaultHasher::new();
         hasher.write(addr.as_bytes());
         let seed = hasher.finish();
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        let private_key = PrivateKey::generate(&mut rng);
+        let private_key = MalPrivateKey::generate(&mut rng);
         let public_key = private_key.public_key();
         (rng, private_key, public_key)
     }
@@ -316,29 +309,25 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 
         for peer in config.malachite_peers.iter() {
             let (_, _, public_key) = rng_private_public_key_from_address(&peer);
-            array.push(Validator::new(public_key, 1));
+            array.push(MalValidator::new(public_key, 1));
         }
 
         if array.is_empty() {
             let (_, _, public_key) =
                 rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1");
-            array.push(Validator::new(public_key, 1));
+            array.push(MalValidator::new(public_key, 1));
         }
 
-        ValidatorSet::new(array)
+        MalValidatorSet::new(array)
     };
 
-    let my_address = Address::from_public_key(&my_public_key);
-    let my_signing_provider = malctx::Ed25519Provider::new(my_private_key.clone());
-    let ctx = TestContext {};
+    let my_address = MalAddress::from_public_key(&my_public_key);
+    let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
+    let ctx = MalContext {};
 
-    let genesis = Genesis {
-        validator_set: initial_validator_set.clone(),
-    };
+    let codec = MalProtobufCodec;
 
-    let codec = malctx::ProtobufCodec;
-
-    let init_bft_height = BFTHeight::new(1);
+    let init_bft_height = MalHeight::new(1);
     let bft_node_handle = BFTNode {
         private_key: my_private_key.clone(),
     };
@@ -386,7 +375,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
         bft_node_handle,
         bft_config,
         Some(init_bft_height),
-        initial_validator_set,
+        initial_validator_set.clone(),
     )
     .await
     .unwrap();
@@ -398,13 +387,13 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 
     // TODO mutable state here in order to correctly respond to messages.
     let mut current_bft_height = init_bft_height;
-    let mut current_bft_round = Round::Nil;
+    let mut current_bft_round = MalRound::Nil;
     let mut current_bft_proposer = None;
     let mut vote_extensions =
-        std::collections::HashMap::<BFTHeight, VoteExtensions<TestContext>>::new();
+        std::collections::HashMap::<MalHeight, MalVoteExtensions<MalContext>>::new();
 
-    let mut prev_bft_values = HashMap::<(u64, i64), ProposedValue<TestContext>>::new();
-    let mut decided_bft_values = HashMap::<u64, RawDecidedValue<TestContext>>::new();
+    let mut prev_bft_values = HashMap::<(u64, i64), MalProposedValue<MalContext>>::new();
+    let mut decided_bft_values = HashMap::<u64, RawDecidedValue<MalContext>>::new();
 
     let mut streams_map = strm::PartStreamsMap::new();
 
@@ -431,7 +420,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                             BFTAppMsg::ConsensusReady { reply } => {
                                 info!("BFT Consensus is ready");
 
-                                if reply.send((current_bft_height, genesis.validator_set.clone())).is_err() {
+                                if reply.send((current_bft_height, initial_validator_set.clone())).is_err() {
                                     tracing::error!("Failed to send ConsensusReady reply");
                                 }
                             },
@@ -472,139 +461,144 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                 reply,
                             } => {
                                 info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
+                                if new_bc_tip.is_some() {
 
-                                let payload: BftPayload<ZCP> = {
-                                    // Build BftPayload in a local scope to keep the outer scope tidier:
+                                    let maybe_payload: Option<BftPayload<ZCP>> = {
+                                        // Build BftPayload in a local scope to keep the outer scope tidier:
 
-                                    // TODO: Improve error handling:
-                                    // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
-                                    let (tip_height, tip_hash) = new_bc_tip.unwrap();
-                                    let finality_candidate_height = tip_height.sat_sub(ZCP::BC_CONFIRMATION_DEPTH_SIGMA as i32);
+                                        // TODO: Improve error handling:
+                                        // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
+                                        let (tip_height, tip_hash) = new_bc_tip.unwrap();
+                                        let finality_candidate_height = tip_height.sat_sub(ZCP::BC_CONFIRMATION_DEPTH_SIGMA as i32);
 
-                                    let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+                                        let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
 
-                                    let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
-                                        hash
-                                    } else {
-                                        // Error or unexpected response type:
-                                        panic!("TODO: improve error handling.");
-                                    };
-
-                                    let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                                        known_blocks: vec![candidate_hash],
-                                        stop: None,
-                                    })
-                                    .await;
-
-                                    let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
-
-                                        hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
-                                    } else {
-                                        // Error or unexpected response type:
-                                        panic!("TODO: improve error handling.");
-                                    };
-
-                                    BftPayload::try_from(headers).unwrap()
-                                };
-
-                                todo!("use payload: {payload:?}");
-
-                                if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
-                                    // Here it is important that, if we have previously built a value for this height and round,
-                                    // we send back the very same value.
-                                    let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
-                                        info!(value = %val.value.id(), "Re-using previously built value");
-                                        val.clone()
-                                    } else {
-                                        let val = ProposedValue {
-                                            height,
-                                            round,
-                                            valid_round: Round::Nil,
-                                            proposer: my_address,
-                                            value: malctx::Value::new(propose_string),
-                                            validity: Validity::Valid,
-                                            // extension: None, TODO? "does not have this field"
+                                        let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+                                            hash
+                                        } else {
+                                            // Error or unexpected response type:
+                                            panic!("TODO: improve error handling.");
                                         };
-                                        prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
-                                        val
+
+                                        let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                            known_blocks: vec![candidate_hash],
+                                            stop: None,
+                                        })
+                                        .await;
+
+                                        let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
+
+                                            hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                        } else {
+                                            // Error or unexpected response type:
+                                            panic!("TODO: improve error handling.");
+                                        };
+
+                                        BftPayload::try_from(headers).ok()
                                     };
-                                    if reply.send(LocallyProposedValue::<malctx::TestContext>::new(
-                                            proposal.height,
-                                            proposal.round,
-                                            proposal.value.clone(),
-                                        )).is_err() {
-                                        error!("Failed to send GetValue reply");
+
+                                    if let Some(payload) = maybe_payload {
+                                        todo!("use payload: {payload:?}");
                                     }
+                                    drop(maybe_payload);
 
-                                    // The POL round is always nil when we propose a newly built value.
-                                    // See L15/L18 of the Tendermint algorithm.
-                                    let pol_round = Round::Nil;
-
-                                    // NOTE(Sam): I have inlined the code from the example so that we
-                                    // can actually see the functionality. I am not sure what the purpose
-                                    // of this circus is. Why not just send the value with a simple signature?
-                                    // I am sure there is a good reason.
-
-                                    let mut hasher = sha3::Keccak256::new();
-                                    let mut parts = Vec::new();
-
-                                    // Init
-                                    // Include metadata about the proposal
-                                    {
-                                        parts.push(StreamedProposalPart::Init(StreamedProposalInit {
-                                            height: proposal.height,
-                                            round: proposal.round,
-                                            pol_round,
-                                            proposer: my_address,
-                                        }));
-
-                                        hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
-                                        hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
-                                    }
-
-                                    // Data
-                                    // Include each prime factor of the value as a separate proposal part
-                                    {
-                                        for factor in proposal.value.value.chars() {
-                                            parts.push(StreamedProposalPart::Data(StreamedProposalData::new(factor)));
-
-                                            let mut buf = [0u8; 4];
-                                            hasher.update(factor.encode_utf8(&mut buf).as_bytes());
+                                    if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
+                                        // Here it is important that, if we have previously built a value for this height and round,
+                                        // we send back the very same value.
+                                        let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
+                                            info!(value = %val.value.id(), "Re-using previously built value");
+                                            val.clone()
+                                        } else {
+                                            let val = MalProposedValue {
+                                                height,
+                                                round,
+                                                valid_round: MalRound::Nil,
+                                                proposer: my_address,
+                                                value: MalValue::new(propose_string),
+                                                validity: MalValidity::Valid,
+                                                // extension: None, TODO? "does not have this field"
+                                            };
+                                            prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
+                                            val
+                                        };
+                                        if reply.send(MalLocallyProposedValue::<MalContext>::new(
+                                                proposal.height,
+                                                proposal.round,
+                                                proposal.value.clone(),
+                                            )).is_err() {
+                                            error!("Failed to send GetValue reply");
                                         }
-                                    }
 
-                                    // Fin
-                                    // Sign the hash of the proposal parts
-                                    {
-                                        let hash = hasher.finalize().to_vec();
-                                        let signature = my_signing_provider.sign(&hash);
-                                        parts.push(StreamedProposalPart::Fin(StreamedProposalFin::new(signature)));
-                                    }
+                                        // The POL round is always nil when we propose a newly built value.
+                                        // See L15/L18 of the Tendermint algorithm.
+                                        let pol_round = MalRound::Nil;
 
-                                    let stream_id = {
-                                        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
-                                        bytes.extend_from_slice(&height.as_u64().to_be_bytes());
-                                        bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
-                                        malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
-                                    };
+                                        // NOTE(Sam): I have inlined the code from the example so that we
+                                        // can actually see the functionality. I am not sure what the purpose
+                                        // of this circus is. Why not just send the value with a simple signature?
+                                        // I am sure there is a good reason.
 
-                                    let mut msgs = Vec::with_capacity(parts.len() + 1);
-                                    let mut sequence = 0;
+                                        let mut hasher = sha3::Keccak256::new();
+                                        let mut parts = Vec::new();
 
-                                    for part in parts {
-                                        let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
-                                        sequence += 1;
-                                        msgs.push(msg);
-                                    }
+                                        // Init
+                                        // Include metadata about the proposal
+                                        {
+                                            parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
+                                                height: proposal.height,
+                                                round: proposal.round,
+                                                pol_round,
+                                                proposer: my_address,
+                                            }));
 
-                                    msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+                                            hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                                            hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                                        }
 
-                                    for stream_message in msgs {
-                                        info!(%height, %round, "Streaming proposal part: {stream_message:?}");
-                                        channels
-                                            .network
-                                            .send(NetworkMsg::PublishProposalPart(stream_message))
-                                            .await.unwrap();
+                                        // Data
+                                        // Include each prime factor of the value as a separate proposal part
+                                        {
+                                            for factor in proposal.value.value.chars() {
+                                                parts.push(MalStreamedProposalPart::Data(MalStreamedProposalData::new(factor)));
+
+                                                let mut buf = [0u8; 4];
+                                                hasher.update(factor.encode_utf8(&mut buf).as_bytes());
+                                            }
+                                        }
+
+                                        // Fin
+                                        // Sign the hash of the proposal parts
+                                        {
+                                            let hash = hasher.finalize().to_vec();
+                                            let signature = my_signing_provider.sign(&hash);
+                                            parts.push(MalStreamedProposalPart::Fin(MalStreamedProposalFin::new(signature)));
+                                        }
+
+                                        let stream_id = {
+                                            let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                                            bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                                            bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
+                                            malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                                        };
+
+                                        let mut msgs = Vec::with_capacity(parts.len() + 1);
+                                        let mut sequence = 0;
+
+                                        for part in parts {
+                                            let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
+                                            sequence += 1;
+                                            msgs.push(msg);
+                                        }
+
+                                        msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+
+                                        for stream_message in msgs {
+                                            info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                                            channels
+                                                .network
+                                                .send(NetworkMsg::PublishProposalPart(stream_message))
+                                                .await.unwrap();
+                                        }
                                     }
                                 }
                             },
@@ -618,14 +612,14 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                             } => {
                                 info!(%height, %round, "Processing synced value");
 
-                                let value : malctx::Value = codec.decode(value_bytes).unwrap();
-                                let proposed_value = ProposedValue {
+                                let value : MalValue = codec.decode(value_bytes).unwrap();
+                                let proposed_value = MalProposedValue {
                                     height,
                                     round,
-                                    valid_round: Round::Nil,
+                                    valid_round: MalRound::Nil,
                                     proposer,
                                     value,
-                                    validity: Validity::Valid,
+                                    validity: MalValidity::Valid,
                                 };
 
                                 prev_bft_values.insert((height.as_u64(), round.as_i64()), proposed_value.clone());
@@ -643,7 +637,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                             // send back the validator set found in our genesis state.
                             BFTAppMsg::GetValidatorSet { height: _, reply } => {
                                 // TODO: parameterize by height
-                                if reply.send(genesis.validator_set.clone()).is_err() {
+                                if reply.send(initial_validator_set.clone()).is_err() {
                                     tracing::error!("Failed to send GetValidatorSet reply");
                                 }
                             },
@@ -669,7 +663,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 
                                 let raw_decided_value = RawDecidedValue {
                                     certificate: certificate.clone(),
-                                    value_bytes: malctx::ProtobufCodec.encode(&decided_value.value).unwrap(),
+                                    value_bytes: MalProtobufCodec.encode(&decided_value.value).unwrap(),
                                 };
 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
@@ -682,12 +676,12 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                 // When that happens, we store the decided value in our store
                                 // TODO: state.commit(certificate, extensions).await?;
                                 current_bft_height = certificate.height.increment();
-                                current_bft_round  = Round::new(0);
+                                current_bft_round  = MalRound::new(0);
 
                                 // And then we instruct consensus to start the next height
                                 if reply.send(malachitebft_app_channel::ConsensusMsg::StartHeight(
                                         current_bft_height,
-                                        genesis.validator_set.clone(),
+                                        initial_validator_set.clone(),
                                 )).is_err() {
                                     tracing::error!("Failed to send Decided reply");
                                 }
@@ -794,7 +788,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                             for peer in config.malachite_peers.iter() {
                                                 let (_, _, public_key) =
                                                     rng_private_public_key_from_address(&peer);
-                                                let address = Address::from_public_key(&public_key);
+                                                let address = MalAddress::from_public_key(&public_key);
                                                 if address == parts.proposer {
                                                     proposer_public_key = Some(public_key);
                                                     break;
@@ -806,7 +800,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                         }
 
                                         // Re-assemble the proposal from its parts
-                                        let value : ProposedValue::<malctx::TestContext> = {
+                                        let value : MalProposedValue::<MalContext> = {
                                             let init = parts.init().unwrap();
 
                                             let mut string_value = String::new();
@@ -814,13 +808,13 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                                 string_value.push(part.factor);
                                             }
 
-                                            ProposedValue {
+                                            MalProposedValue {
                                                 height: parts.height,
                                                 round: parts.round,
                                                 valid_round: init.pol_round,
                                                 proposer: parts.proposer,
-                                                value: malctx::Value::new(string_value),
-                                                validity: Validity::Valid,
+                                                value: MalValue::new(string_value),
+                                                validity: MalValidity::Valid,
                                             }
                                         };
 
@@ -953,15 +947,15 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 }
 
 struct BFTNode {
-    private_key: PrivateKey,
+    private_key: MalPrivateKey,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct DummyHandle;
 
 #[async_trait]
-impl malachitebft_app_channel::app::node::NodeHandle<malctx::TestContext> for DummyHandle {
-    fn subscribe(&self) -> RxEvent<malctx::TestContext> {
+impl malachitebft_app_channel::app::node::NodeHandle<MalContext> for DummyHandle {
+    fn subscribe(&self) -> RxEvent<MalContext> {
         panic!();
     }
 
@@ -974,10 +968,10 @@ static temp_dir_for_wal: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::n
 
 #[async_trait]
 impl malachitebft_app_channel::app::node::Node for BFTNode {
-    type Context = TestContext;
-    type Genesis = Genesis;
+    type Context = MalContext;
+    type Genesis = ();
     type PrivateKeyFile = ();
-    type SigningProvider = Ed25519Provider;
+    type SigningProvider = MalEd25519Provider;
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
@@ -996,19 +990,19 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
         std::path::PathBuf::from(td.as_ref().unwrap().path())
     }
 
-    fn get_address(&self, pk: &PublicKey) -> Address {
-        Address::from_public_key(pk)
+    fn get_address(&self, pk: &MalPublicKey) -> MalAddress {
+        MalAddress::from_public_key(pk)
     }
 
-    fn get_public_key(&self, pk: &PrivateKey) -> PublicKey {
+    fn get_public_key(&self, pk: &MalPrivateKey) -> MalPublicKey {
         pk.public_key()
     }
 
-    fn get_keypair(&self, pk: PrivateKey) -> Keypair {
-        Keypair::ed25519_from_bytes(pk.inner().to_bytes()).unwrap()
+    fn get_keypair(&self, pk: MalPrivateKey) -> MalKeyPair {
+        MalKeyPair::ed25519_from_bytes(pk.inner().to_bytes()).unwrap()
     }
 
-    fn load_private_key(&self, _file: ()) -> PrivateKey {
+    fn load_private_key(&self, _file: ()) -> MalPrivateKey {
         self.private_key.clone()
     }
 
@@ -1016,12 +1010,12 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
         Ok(())
     }
 
-    fn get_signing_provider(&self, private_key: PrivateKey) -> Self::SigningProvider {
-        malctx::Ed25519Provider::new(private_key)
+    fn get_signing_provider(&self, private_key: MalPrivateKey) -> Self::SigningProvider {
+        MalEd25519Provider::new(private_key)
     }
 
     fn load_genesis(&self) -> Result<Self::Genesis, eyre::ErrReport> {
-        panic!();
+        Ok(())
     }
 
     async fn start(&self) -> eyre::Result<DummyHandle> {
@@ -1498,11 +1492,11 @@ mod strm {
     use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
     use super::{
-        Address, BFTHeight, StreamedProposalFin, StreamedProposalInit, StreamedProposalPart,
+        MalAddress, MalHeight, MalRound, MalStreamedProposalFin, MalStreamedProposalInit,
+        MalStreamedProposalPart,
     };
     use malachitebft_app_channel::app::consensus::PeerId;
     use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
-    use malachitebft_app_channel::app::types::core::Round;
 
     struct MinSeq<T>(StreamMessage<T>);
 
@@ -1556,8 +1550,8 @@ mod strm {
 
     #[derive(Default)]
     struct StreamState {
-        buffer: MinHeap<StreamedProposalPart>,
-        init_info: Option<StreamedProposalInit>,
+        buffer: MinHeap<MalStreamedProposalPart>,
+        init_info: Option<MalStreamedProposalInit>,
         seen_sequences: HashSet<Sequence>,
         total_messages: usize,
         fin_received: bool,
@@ -1572,8 +1566,8 @@ mod strm {
 
         fn insert(
             &mut self,
-            msg: StreamMessage<StreamedProposalPart>,
-        ) -> Option<StreamedProposalParts> {
+            msg: StreamMessage<MalStreamedProposalPart>,
+        ) -> Option<MalStreamedProposalParts> {
             if msg.is_first() {
                 self.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
             }
@@ -1588,7 +1582,7 @@ mod strm {
             if self.is_done() {
                 let init_info = self.init_info.take()?;
 
-                Some(StreamedProposalParts {
+                Some(MalStreamedProposalParts {
                     height: init_info.height,
                     round: init_info.round,
                     proposer: init_info.proposer,
@@ -1601,19 +1595,19 @@ mod strm {
     }
 
     #[derive(Clone, Debug, PartialEq, Eq)]
-    pub struct StreamedProposalParts {
-        pub height: BFTHeight,
-        pub round: Round,
-        pub proposer: Address,
-        pub parts: Vec<StreamedProposalPart>,
+    pub struct MalStreamedProposalParts {
+        pub height: MalHeight,
+        pub round: MalRound,
+        pub proposer: MalAddress,
+        pub parts: Vec<MalStreamedProposalPart>,
     }
 
-    impl StreamedProposalParts {
-        pub fn init(&self) -> Option<&StreamedProposalInit> {
+    impl MalStreamedProposalParts {
+        pub fn init(&self) -> Option<&MalStreamedProposalInit> {
             self.parts.iter().find_map(|p| p.as_init())
         }
 
-        pub fn fin(&self) -> Option<&StreamedProposalFin> {
+        pub fn fin(&self) -> Option<&MalStreamedProposalFin> {
             self.parts.iter().find_map(|p| p.as_fin())
         }
     }
@@ -1631,8 +1625,8 @@ mod strm {
         pub fn insert(
             &mut self,
             peer_id: PeerId,
-            msg: StreamMessage<StreamedProposalPart>,
-        ) -> Option<StreamedProposalParts> {
+            msg: StreamMessage<MalStreamedProposalPart>,
+        ) -> Option<MalStreamedProposalParts> {
             let stream_id = msg.stream_id.clone();
             let state = self
                 .streams
