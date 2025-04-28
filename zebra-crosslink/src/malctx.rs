@@ -14,28 +14,27 @@ use malachitebft_proto::{Error as ProtoError, Protobuf};
 use core::fmt;
 
 use malachitebft_core_types::{
-    Validator as _,
-    CertificateError,
-    CommitCertificate,
-    CommitSignature,
-    SignedProposal,
-    SignedProposalPart,
-    SignedVote,
-    SigningProvider,
+    CertificateError, CommitCertificate, CommitSignature, SignedProposal, SignedProposalPart,
+    SignedVote, SigningProvider, Validator as _,
 };
 
-pub use malachitebft_core_types::{Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions};
-pub use malachitebft_app::types::{Keypair as MalKeyPair};
-pub use malachitebft_core_consensus::{ProposedValue as MalProposedValue, LocallyProposedValue as MalLocallyProposedValue};
+pub use malachitebft_app::types::Keypair as MalKeyPair;
+pub use malachitebft_core_consensus::{
+    LocallyProposedValue as MalLocallyProposedValue, ProposedValue as MalProposedValue,
+};
+pub use malachitebft_core_types::{
+    Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions,
+};
 
-
-pub use malachitebft_signing_ed25519::{PrivateKey as MalPrivateKey, PublicKey as MalPublicKey, Ed25519 as MalEd25519};
+pub use malachitebft_signing_ed25519::{
+    Ed25519 as MalEd25519, PrivateKey as MalPrivateKey, PublicKey as MalPublicKey,
+};
 
 use prost::Message;
 
 use malachitebft_app::engine::util::streaming::{StreamContent, StreamId, StreamMessage};
 use malachitebft_codec::Codec;
-use malachitebft_core_consensus::{SignedConsensusMsg};
+use malachitebft_core_consensus::SignedConsensusMsg;
 use malachitebft_core_types::{AggregatedSignature, PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
@@ -295,7 +294,7 @@ impl MalAddress {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn from_public_key(public_key: &MalPublicKey) -> Self {
-        let hash : [u8; 32] = {
+        let hash: [u8; 32] = {
             use sha3::{Digest, Keccak256};
             let mut hasher = Keccak256::new();
             hasher.update(public_key.as_bytes());
@@ -869,12 +868,14 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
 
         let signature = proto
             .signature
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature"))
+            .ok_or_else(|| {
+                ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature")
+            })
             .and_then(mal_decode_signature)?;
 
-        let proto_message = proto
-            .message
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("message"))?;
+        let proto_message = proto.message.ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("message")
+        })?;
 
         match proto_message {
             malctx_schema_proto::signed_message::Message::Proposal(proto) => {
@@ -920,9 +921,9 @@ impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
     fn decode(&self, bytes: Bytes) -> Result<StreamMessage<MalStreamedProposalPart>, Self::Error> {
         let proto = malctx_schema_proto::StreamMessage::decode(bytes.as_ref())?;
 
-        let proto_content = proto
-            .content
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::StreamMessage>("content"))?;
+        let proto_content = proto.content.ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::StreamMessage>("content")
+        })?;
 
         let content = match proto_content {
             malctx_schema_proto::stream_message::Content::Data(data) => {
@@ -943,9 +944,9 @@ impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
             stream_id: msg.stream_id.to_bytes(),
             sequence: msg.sequence,
             content: match &msg.content {
-                StreamContent::Data(data) => {
-                    Some(malctx_schema_proto::stream_message::Content::Data(data.to_bytes()?))
-                }
+                StreamContent::Data(data) => Some(
+                    malctx_schema_proto::stream_message::Content::Data(data.to_bytes()?),
+                ),
                 StreamContent::Fin => Some(malctx_schema_proto::stream_message::Content::Fin(true)),
             },
         };
@@ -960,13 +961,13 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
     fn decode(&self, bytes: Bytes) -> Result<MalProposedValue<MalContext>, Self::Error> {
         let proto = malctx_schema_proto::ProposedValue::decode(bytes.as_ref())?;
 
-        let proposer = proto
-            .proposer
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer"))?;
+        let proposer = proto.proposer.ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer")
+        })?;
 
-        let value = proto
-            .value
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("value"))?;
+        let value = proto.value.ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("value")
+        })?;
 
         Ok(MalProposedValue {
             height: MalHeight::new(proto.height),
@@ -1027,9 +1028,9 @@ impl Codec<malachitebft_sync::Request<MalContext>> for MalProtobufCodec {
 
     fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Request<MalContext>, Self::Error> {
         let proto = malctx_schema_proto::SyncRequest::decode(bytes.as_ref())?;
-        let request = proto
-            .request
-            .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncRequest>("request"))?;
+        let request = proto.request.ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::SyncRequest>("request")
+        })?;
 
         match request {
             malctx_schema_proto::sync_request::Request::ValueRequest(req) => {
@@ -1072,10 +1073,7 @@ impl Codec<malachitebft_sync::Request<MalContext>> for MalProtobufCodec {
 impl Codec<malachitebft_sync::Response<MalContext>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(
-        &self,
-        bytes: Bytes,
-    ) -> Result<malachitebft_sync::Response<MalContext>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<malachitebft_sync::Response<MalContext>, Self::Error> {
         mal_decode_sync_response(malctx_schema_proto::SyncResponse::decode(bytes)?)
     }
 
@@ -1090,23 +1088,26 @@ impl Codec<malachitebft_sync::Response<MalContext>> for MalProtobufCodec {
 pub fn mal_decode_sync_response(
     proto_response: malctx_schema_proto::SyncResponse,
 ) -> Result<malachitebft_sync::Response<MalContext>, ProtoError> {
-    let response = proto_response
-        .response
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncResponse>("messages"))?;
+    let response = proto_response.response.ok_or_else(|| {
+        ProtoError::missing_field::<malctx_schema_proto::SyncResponse>("messages")
+    })?;
 
     let response = match response {
         malctx_schema_proto::sync_response::Response::ValueResponse(value_response) => {
             malachitebft_sync::Response::ValueResponse(malachitebft_sync::ValueResponse::new(
                 MalHeight::new(value_response.height),
-                value_response.value.map(mal_decode_synced_value).transpose()?,
+                value_response
+                    .value
+                    .map(mal_decode_synced_value)
+                    .transpose()?,
             ))
         }
         malctx_schema_proto::sync_response::Response::VoteSetResponse(vote_set_response) => {
             let height = MalHeight::new(vote_set_response.height);
             let round = Round::new(vote_set_response.round);
-            let vote_set = vote_set_response
-                .vote_set
-                .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::VoteSet>("vote_set"))?;
+            let vote_set = vote_set_response.vote_set.ok_or_else(|| {
+                ProtoError::missing_field::<malctx_schema_proto::VoteSet>("vote_set")
+            })?;
 
             malachitebft_sync::Response::VoteSetResponse(malachitebft_sync::VoteSetResponse::new(
                 height,
@@ -1127,35 +1128,41 @@ pub fn mal_encode_sync_response(
     response: &malachitebft_sync::Response<MalContext>,
 ) -> Result<malctx_schema_proto::SyncResponse, ProtoError> {
     let proto = match response {
-        malachitebft_sync::Response::ValueResponse(value_response) => malctx_schema_proto::SyncResponse {
-            response: Some(malctx_schema_proto::sync_response::Response::ValueResponse(
-                malctx_schema_proto::ValueResponse {
-                    height: value_response.height.as_u64(),
-                    value: value_response
-                        .value
-                        .as_ref()
-                        .map(mal_encode_synced_value)
-                        .transpose()?,
-                },
-            )),
-        },
-        malachitebft_sync::Response::VoteSetResponse(vote_set_response) => malctx_schema_proto::SyncResponse {
-            response: Some(malctx_schema_proto::sync_response::Response::VoteSetResponse(
-                malctx_schema_proto::VoteSetResponse {
-                    height: vote_set_response.height.as_u64(),
-                    round: vote_set_response
-                        .round
-                        .as_u32()
-                        .expect("round should not be nil"),
-                    vote_set: Some(mal_encode_vote_set(&vote_set_response.vote_set)?),
-                    polka_certificates: vote_set_response
-                        .polka_certificates
-                        .iter()
-                        .map(encode_polka_certificate)
-                        .collect::<Result<Vec<_>, _>>()?,
-                },
-            )),
-        },
+        malachitebft_sync::Response::ValueResponse(value_response) => {
+            malctx_schema_proto::SyncResponse {
+                response: Some(malctx_schema_proto::sync_response::Response::ValueResponse(
+                    malctx_schema_proto::ValueResponse {
+                        height: value_response.height.as_u64(),
+                        value: value_response
+                            .value
+                            .as_ref()
+                            .map(mal_encode_synced_value)
+                            .transpose()?,
+                    },
+                )),
+            }
+        }
+        malachitebft_sync::Response::VoteSetResponse(vote_set_response) => {
+            malctx_schema_proto::SyncResponse {
+                response: Some(
+                    malctx_schema_proto::sync_response::Response::VoteSetResponse(
+                        malctx_schema_proto::VoteSetResponse {
+                            height: vote_set_response.height.as_u64(),
+                            round: vote_set_response
+                                .round
+                                .as_u32()
+                                .expect("round should not be nil"),
+                            vote_set: Some(mal_encode_vote_set(&vote_set_response.vote_set)?),
+                            polka_certificates: vote_set_response
+                                .polka_certificates
+                                .iter()
+                                .map(encode_polka_certificate)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        },
+                    ),
+                ),
+            }
+        }
     };
 
     Ok(proto)
@@ -1173,9 +1180,9 @@ pub fn mal_encode_synced_value(
 pub fn mal_decode_synced_value(
     proto: malctx_schema_proto::SyncedValue,
 ) -> Result<malachitebft_sync::RawDecidedValue<MalContext>, ProtoError> {
-    let certificate = proto
-        .certificate
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SyncedValue>("certificate"))?;
+    let certificate = proto.certificate.ok_or_else(|| {
+        ProtoError::missing_field::<malctx_schema_proto::SyncedValue>("certificate")
+    })?;
 
     Ok(malachitebft_sync::RawDecidedValue {
         value_bytes: proto.value_bytes,
@@ -1206,7 +1213,9 @@ pub(crate) fn decode_polka_certificate(
 ) -> Result<PolkaCertificate<MalContext>, ProtoError> {
     let value_id = certificate
         .value_id
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("value_id"))
+        .ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("value_id")
+        })
         .and_then(MalValueId::from_proto)?;
 
     Ok(PolkaCertificate {
@@ -1226,13 +1235,17 @@ pub fn mal_decode_commit_certificate(
 ) -> Result<CommitCertificate<MalContext>, ProtoError> {
     let value_id = certificate
         .value_id
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("value_id"))
+        .ok_or_else(|| {
+            ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("value_id")
+        })
         .and_then(MalValueId::from_proto)?;
 
     let aggregated_signature = certificate
         .aggregated_signature
         .ok_or_else(|| {
-            ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("aggregated_signature")
+            ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>(
+                "aggregated_signature",
+            )
         })
         .and_then(mal_decode_aggregated_signature)?;
 
@@ -1268,13 +1281,17 @@ pub fn mal_decode_aggregated_signature(
         .map(|s| {
             let signature = s
                 .signature
-                .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("signature"))
+                .ok_or_else(|| {
+                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("signature")
+                })
                 .and_then(mal_decode_signature)?;
 
             let address = s
                 .validator_address
                 .ok_or_else(|| {
-                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("validator_address")
+                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>(
+                        "validator_address",
+                    )
                 })
                 .and_then(MalAddress::from_proto)?;
 
@@ -1302,7 +1319,9 @@ pub fn mal_encode_aggregate_signature(
     Ok(malctx_schema_proto::AggregatedSignature { signatures })
 }
 
-pub fn mal_decode_extension(ext: malctx_schema_proto::Extension) -> Result<SignedExtension<MalContext>, ProtoError> {
+pub fn mal_decode_extension(
+    ext: malctx_schema_proto::Extension,
+) -> Result<SignedExtension<MalContext>, ProtoError> {
     let signature = ext
         .signature
         .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::Extension>("signature"))
@@ -1320,7 +1339,9 @@ pub fn mal_encode_extension(
     })
 }
 
-pub fn mal_encode_vote_set(vote_set: &VoteSet<MalContext>) -> Result<malctx_schema_proto::VoteSet, ProtoError> {
+pub fn mal_encode_vote_set(
+    vote_set: &VoteSet<MalContext>,
+) -> Result<malctx_schema_proto::VoteSet, ProtoError> {
     Ok(malctx_schema_proto::VoteSet {
         signed_votes: vote_set
             .votes
@@ -1330,7 +1351,9 @@ pub fn mal_encode_vote_set(vote_set: &VoteSet<MalContext>) -> Result<malctx_sche
     })
 }
 
-pub fn mal_encode_vote(vote: &SignedVote<MalContext>) -> Result<malctx_schema_proto::SignedMessage, ProtoError> {
+pub fn mal_encode_vote(
+    vote: &SignedVote<MalContext>,
+) -> Result<malctx_schema_proto::SignedMessage, ProtoError> {
     Ok(malctx_schema_proto::SignedMessage {
         message: Some(malctx_schema_proto::signed_message::Message::Vote(
             vote.message.to_proto()?,
@@ -1339,7 +1362,9 @@ pub fn mal_encode_vote(vote: &SignedVote<MalContext>) -> Result<malctx_schema_pr
     })
 }
 
-pub fn mal_decode_vote_set(vote_set: malctx_schema_proto::VoteSet) -> Result<VoteSet<MalContext>, ProtoError> {
+pub fn mal_decode_vote_set(
+    vote_set: malctx_schema_proto::VoteSet,
+) -> Result<VoteSet<MalContext>, ProtoError> {
     Ok(VoteSet {
         votes: vote_set
             .signed_votes
@@ -1349,10 +1374,12 @@ pub fn mal_decode_vote_set(vote_set: malctx_schema_proto::VoteSet) -> Result<Vot
     })
 }
 
-pub fn mal_decode_vote(msg: malctx_schema_proto::SignedMessage) -> Result<SignedVote<MalContext>, ProtoError> {
-    let signature = msg
-        .signature
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature"))?;
+pub fn mal_decode_vote(
+    msg: malctx_schema_proto::SignedMessage,
+) -> Result<SignedVote<MalContext>, ProtoError> {
+    let signature = msg.signature.ok_or_else(|| {
+        ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature")
+    })?;
 
     let vote = match msg.message {
         Some(malctx_schema_proto::signed_message::Message::Vote(v)) => Ok(v),
@@ -1372,7 +1399,9 @@ pub fn mal_encode_signature(signature: &Signature) -> malctx_schema_proto::Signa
     }
 }
 
-pub fn mal_decode_signature(signature: malctx_schema_proto::Signature) -> Result<Signature, ProtoError> {
+pub fn mal_decode_signature(
+    signature: malctx_schema_proto::Signature,
+) -> Result<Signature, ProtoError> {
     let bytes = <[u8; 64]>::try_from(signature.bytes.as_ref())
         .map_err(|_| ProtoError::Other("Invalid signature length".to_string()))?;
     Ok(Signature::from_bytes(bytes))
