@@ -505,16 +505,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         };
 
                                         if let Some(payload) = maybe_payload {
-                                            todo!("use payload: {payload:?}");
-                                        }
-
-                                        if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
                                             let val = MalProposedValue {
                                                 height,
                                                 round,
                                                 valid_round: MalRound::Nil,
                                                 proposer: my_address,
-                                                value: MalValue::new(propose_string),
+                                                value: MalValue::new(payload),
                                                 validity: MalValidity::Valid,
                                                 // extension: None, TODO? "does not have this field"
                                             };
@@ -560,13 +556,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     }
 
                                     // Data
-                                    // Include each prime factor of the value as a separate proposal part
                                     {
-                                        for factor in proposal.value.value.chars() {
-                                            parts.push(MalStreamedProposalPart::Data(MalStreamedProposalData::new(factor)));
+                                        let pieces : Vec<MalStreamedProposalData> = proposal.value.fracture_into_pieces();
+                                        for piece in pieces {
+                                            hasher.update(&piece.data_bytes);
 
-                                            let mut buf = [0u8; 4];
-                                            hasher.update(factor.encode_utf8(&mut buf).as_bytes());
+                                            parts.push(MalStreamedProposalPart::Data(piece));
                                         }
                                     }
 
@@ -779,8 +774,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                 // The correctness of the hash computation relies on the parts being ordered by sequence
                                                 // number, which is guaranteed by the `PartStreamsMap`.
                                                 for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                                    let mut buf = [0u8; 4];
-                                                    hasher.update(part.factor.encode_utf8(&mut buf).as_bytes());
+                                                    hasher.update(&part.data_bytes);
                                                 }
 
                                                 hasher.finalize()
@@ -806,17 +800,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         let value : MalProposedValue::<MalContext> = {
                                             let init = parts.init().unwrap();
 
-                                            let mut string_value = String::new();
-                                            for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                                string_value.push(part.factor);
-                                            }
+                                            let pieces : Vec<MalStreamedProposalData> = parts.parts.iter().filter_map(|part| part.as_data()).cloned().collect();
+                                            let value = MalValue::reconstruct_from_pieces(&pieces);
 
                                             MalProposedValue {
                                                 height: parts.height,
                                                 round: parts.round,
                                                 valid_round: init.pol_round,
                                                 proposer: parts.proposer,
-                                                value: MalValue::new(string_value),
+                                                value,
                                                 validity: MalValidity::Valid,
                                             }
                                         };

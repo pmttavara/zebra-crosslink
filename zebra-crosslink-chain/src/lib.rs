@@ -5,6 +5,7 @@
 //! This crate is named similarly to [zebra_chain] since it has a similar scope. In a mature crosslink-enabled Zebra these two crates may be merged.
 #![deny(unsafe_code, missing_docs)]
 
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use thiserror::Error;
 use tracing::{error, info, warn};
@@ -50,7 +51,7 @@ use zebra_chain::block::Header as BcBlockHeader;
 /// # References
 ///
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BftPayload {
     headers: Vec<BcBlockHeader>,
 }

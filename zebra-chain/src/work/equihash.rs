@@ -41,7 +41,7 @@ pub(crate) const REGTEST_SOLUTION_SIZE: usize = 36;
 ///
 /// The size of an Equihash solution in bytes is always 1344 on Mainnet and Testnet, and
 /// is always 36 on Regtest so the length of this type is fixed.
-#[derive(Deserialize, Serialize)]
+#[derive(Ord, PartialOrd, Deserialize, Serialize)]
 // It's okay to use the extra space on Regtest
 #[allow(clippy::large_enum_variant)]
 pub enum Solution {
