@@ -1388,6 +1388,7 @@ pub async fn viz_main(
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
     let mut track_node_h: Option<i32> = None;
+    let mut track_continuously: bool = false;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
     let mut dbg = VizDbg {
@@ -1833,9 +1834,10 @@ pub async fn viz_main(
 
 
         // UI CONTROLS ////////////////////////////////////////////////////////////
+        let track_button_txt = "Track height";
         let goto_button_txt = "Goto height";
         let controls_txt_size = vec2(12. * ch_w, font_size);
-        let controls_wnd_size = controls_txt_size + vec2((goto_button_txt.len() + 2) as f32 * ch_w, 0.2 * font_size);
+        let controls_wnd_size = controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 1.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -1852,10 +1854,15 @@ pub async fn viz_main(
 
                 ui.same_line(controls_txt_size.x + ch_w);
 
-                if ui.button(None, goto_button_txt) || enter_pressed {
+                if ui.button(None, if track_continuously {
+                    track_button_txt
+                } else {
+                    goto_button_txt
+                }) || enter_pressed {
                     track_node_h = goto_str.trim().parse::<i32>().ok() ;
                 }
-                // TODO: "track height continuously" checkbox
+
+                widgets::Checkbox::new(hash!()).label("Track Continuously").ratio(0.12).ui(ui, &mut track_continuously);
             },
         );
 
@@ -1864,7 +1871,7 @@ pub async fn viz_main(
             if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, abs_h) {
                 let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
                 ctx.fix_screen_o.y += 0.4 * d_y;
-                if d_y.abs() < 1. {
+                if ! track_continuously && d_y.abs() < 1. {
                     track_node_h = None;
                 }
             } else {
