@@ -451,7 +451,7 @@ fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> Block
     if height >= 0 {
         BlockHeight(height.try_into().unwrap())
     } else if let Some(tip) = tip {
-        tip.0.sat_sub(-height)
+        tip.0.sat_sub(!height)
     } else {
         BlockHeight(0)
     }
@@ -803,11 +803,16 @@ pub(crate) struct VizCtx {
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
+
     bc_lo: NodeRef,
     bc_hi: NodeRef,
     bc_work_max: u128,
-
+    bc_fake_hash: u64,
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
+
+    bft_block_hi_i: usize,
+    bft_last_added: NodeRef,
+    bft_fake_id: usize,
 }
 
 impl VizCtx {
@@ -1006,6 +1011,14 @@ impl VizCtx {
         nodes.push(new_node);
         node_ref
     }
+
+    fn clear_nodes(&mut self) {
+        self.nodes.clear();
+        (self.bc_lo, self.bc_hi) = (None, None);
+        self.bc_work_max = 0;
+        self.missing_bc_parents.clear();
+        self.bft_block_hi_i = 0;
+    }
 }
 
 impl Default for VizCtx {
@@ -1018,10 +1031,16 @@ impl Default for VizCtx {
             mouse_drag_d: Vec2::_0,
             old_mouse_pt: Vec2::_0,
             nodes: Vec::with_capacity(512),
-            bc_hi: None,
+
             bc_lo: None,
+            bc_hi: None,
+            bc_fake_hash: 0,
             bc_work_max: 0,
             missing_bc_parents: HashMap::new(),
+
+            bft_block_hi_i: 0,
+            bft_last_added: None,
+            bft_fake_id: !0,
         }
     }
 }
@@ -1376,17 +1395,17 @@ pub async fn viz_main(
     root_ui().push_skin(&skin);
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
+    let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
-    let mut bft_block_hi_i = 0;
-    let mut bft_last_added = None;
-    let mut bft_fake_id = !0;
-    let mut bc_fake_hash: u64 = 0;
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
+    let mut track_node_h: Option<i32> = None;
+    let mut track_continuously: bool = false;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    let mut new_h_rng: Option<(i32, i32)> = None;
 
     let mut dbg = VizDbg {
         nodes_forces: HashMap::new(),
@@ -1425,7 +1444,12 @@ pub async fn viz_main(
                 // - there should be no visible wait for loading new items on screen when scrolling
                 // - minimize the number of repeated requests
                 // - the request range shouldn't ping-pong between 2 values
-                let (h_lo, h_hi) = abs_block_heights(g.bc_req_h, g.state.bc_tip);
+                let h_rng = if let Some(new_h_rng) = new_h_rng {
+                    new_h_rng
+                } else {
+                    g.bc_req_h
+                };
+                let (h_lo, h_hi) = abs_block_heights(h_rng, g.state.bc_tip);
 
                 // TODO: track cached bc lo/hi and reference off that
                 let mut bids_c = 0;
@@ -1472,6 +1496,7 @@ pub async fn viz_main(
             lock.as_mut().unwrap().proposed_bft_string = proposed_bft_string;
             lock.as_mut().unwrap().consumed = true;
             proposed_bft_string = None;
+            new_h_rng = None;
             g
         };
 
@@ -1550,7 +1575,7 @@ pub async fn viz_main(
         }
 
         let blocks = &g.state.bft_blocks;
-        for i in bft_block_hi_i..blocks.len() {
+        for i in ctx.bft_block_hi_i..blocks.len() {
             if find_bft_node_by_id(&ctx.nodes, i).is_none() {
                 let bft_parent_i = blocks[i].0;
                 let bft_parent = if i == 0 && bft_parent_i == 0 {
@@ -1562,7 +1587,7 @@ pub async fn viz_main(
                 };
 
                 let s: Vec<&str> = blocks[i].1.split(":").collect();
-                bft_last_added = ctx.push_node(
+                ctx.bft_last_added = ctx.push_node(
                     NodeInit::BFT {
                         // TODO: distance should be proportional to difficulty of newer block
                         parent: bft_parent,
@@ -1585,7 +1610,7 @@ pub async fn viz_main(
                 );
             }
         }
-        bft_block_hi_i = blocks.len();
+        ctx.bft_block_hi_i = blocks.len();
 
         end_zone(z_cache_blocks);
 
@@ -1791,15 +1816,16 @@ pub async fn viz_main(
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 if enter_pressed {
-                    bft_last_added = ctx.push_node(
+                    let id = {
+                        ctx.bft_fake_id -= 1;
+                        ctx.bft_fake_id + 1
+                    };
+                    ctx.bft_last_added = ctx.push_node(
                         NodeInit::BFT {
-                            parent: bft_last_added,
+                            parent: ctx.bft_last_added,
                             is_real: false,
 
-                            id: {
-                                bft_fake_id -= 1;
-                                bft_fake_id + 1
-                            },
+                            id,
 
                             text: node_str.clone(),
                             link: {
@@ -1810,7 +1836,7 @@ pub async fn viz_main(
                                     None
                                 }
                             },
-                            height: bft_last_added.map_or(Some(0), |_| None),
+                            height: ctx.bft_last_added.map_or(Some(0), |_| None),
                         },
                         None,
                     );
@@ -1828,6 +1854,65 @@ pub async fn viz_main(
                 }
             },
         );
+
+        // UI CONTROLS ////////////////////////////////////////////////////////////
+        let track_button_txt = "Track height";
+        let goto_button_txt = "Goto height";
+        let controls_txt_size = vec2(12. * ch_w, font_size);
+        let controls_wnd_size =
+            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 1.2 * font_size);
+        ui_dynamic_window(
+            hash!(),
+            vec2(
+                window::screen_width() - (controls_wnd_size.x + 0.5 * font_size),
+                window::screen_height() - (controls_wnd_size.y + 0.5 * font_size),
+            ),
+            controls_wnd_size,
+            |ui| {
+                let enter_pressed = widgets::Editbox::new(hash!(), controls_txt_size)
+                    .multiline(false)
+                    .filter(&|ch| char::is_ascii_digit(&ch) || ch == '-')
+                    .ui(ui, &mut goto_str)
+                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+
+                ui.same_line(controls_txt_size.x + ch_w);
+
+                if ui.button(
+                    None,
+                    if track_continuously {
+                        track_button_txt
+                    } else {
+                        goto_button_txt
+                    },
+                ) || enter_pressed
+                {
+                    track_node_h = goto_str.trim().parse::<i32>().ok();
+                }
+
+                widgets::Checkbox::new(hash!())
+                    .label("Track Continuously")
+                    .ratio(0.12)
+                    .ui(ui, &mut track_continuously);
+            },
+        );
+
+        if let Some(h) = track_node_h {
+            let abs_h = abs_block_height(h, g.state.bc_tip);
+            if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, abs_h) {
+                let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
+                ctx.fix_screen_o.y += 0.4 * d_y;
+                if !track_continuously && d_y.abs() < 1. {
+                    track_node_h = None;
+                }
+            } else if g.state.bc_tip.is_some() && abs_h.0 <= g.state.bc_tip.unwrap().0 .0 {
+                ctx.clear_nodes();
+                let hi = i32::try_from(abs_h.0 + VIZ_REQ_N / 2).unwrap();
+                new_h_rng = Some((sat_sub_2_sided(hi, VIZ_REQ_N), hi));
+            } else {
+                println!("couldn't find node at {}", h);
+                track_node_h = None; // ALT: track indefinitely until it appears
+            }
+        }
 
         // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
         let hover_node_i: NodeRef = if mouse_is_over_ui {
@@ -1906,6 +1991,17 @@ pub async fn viz_main(
                 // create new node
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 let is_bft = hover_node.kind == NodeKind::BFT;
+                let id = match hover_node.kind {
+                    NodeKind::BC => NodeId::Hash({
+                        ctx.bc_fake_hash += 1;
+                        hash_from_u64(ctx.bc_fake_hash)
+                    }),
+                    NodeKind::BFT => {
+                        ctx.bft_fake_id -= 1;
+                        NodeId::Index(ctx.bft_fake_id + 1)
+                    }
+                };
+
                 let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
@@ -1915,16 +2011,7 @@ pub async fn viz_main(
                         height: hover_node.height + 1,
 
                         text: "".to_string(),
-                        id: match hover_node.kind {
-                            NodeKind::BC => NodeId::Hash({
-                                bc_fake_hash += 1;
-                                hash_from_u64(bc_fake_hash)
-                            }),
-                            NodeKind::BFT => {
-                                bft_fake_id -= 1;
-                                NodeId::Index(bft_fake_id + 1)
-                            }
-                        },
+                        id,
                         is_real: false,
                         difficulty: None,
                         txs_n: (hover_node.kind == NodeKind::BC) as u32,
@@ -1933,7 +2020,7 @@ pub async fn viz_main(
                 );
 
                 if is_bft {
-                    bft_last_added = node_ref;
+                    ctx.bft_last_added = node_ref;
                 }
             } else {
                 click_node_i = hover_node_i;
@@ -1964,8 +2051,7 @@ pub async fn viz_main(
                 continue;
             }
 
-            let a_pt = ctx.nodes[node_i].pt
-                + vec2(rng.gen_range(0. ..=0.0001), rng.gen_range(0. ..=0.0001));
+            let a_pt = ctx.nodes[node_i].pt;
             let a_vel = ctx.nodes[node_i].vel;
             let a_vel_mag = a_vel.length();
 
@@ -2308,7 +2394,8 @@ pub async fn viz_main(
                 {} hashes\n\
                 Node height range: [{:?}, {:?}]\n\
                 req: {:?} == {:?}\n\
-                Proposed BFT: {:?}",
+                Proposed BFT: {:?}\n\
+                Tracked node: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
                 world_camera.offset,
@@ -2322,6 +2409,7 @@ pub async fn viz_main(
                 g.bc_req_h,
                 abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
+                track_node_h,
             );
             draw_multiline_text(
                 &dbg_str,
