@@ -8709,6 +8709,7 @@ version = "0.1.0"
 dependencies = [
  "static_assertions",
  "thiserror 2.0.11",
+ "tracing",
  "zebra-chain",
 ]
 
