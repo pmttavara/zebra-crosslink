@@ -1387,7 +1387,7 @@ pub async fn viz_main(
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
-    let mut track_node_ref: NodeRef = None;
+    let mut track_node_h: Option<i32> = None;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 
     let mut dbg = VizDbg {
@@ -1846,29 +1846,30 @@ pub async fn viz_main(
             |ui| {
                 let enter_pressed = widgets::Editbox::new(hash!(), controls_txt_size)
                     .multiline(false)
-                    .filter(&|ch| char::is_ascii_digit(&ch))// || ch == '-')
+                    .filter(&|ch| char::is_ascii_digit(&ch) || ch == '-')
                     .ui(ui, &mut goto_str)
                     && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                 ui.same_line(controls_txt_size.x + ch_w);
 
                 if ui.button(None, goto_button_txt) || enter_pressed {
-                    if let Ok(abs_height) = goto_str.trim().parse::<u32>() {
-                        track_node_ref = find_bc_node_i_by_height(&ctx.nodes, BlockHeight(abs_height));
-                        if let None = track_node_ref {
-                            println!("couldn't find node at {}", abs_height)
-                        }
-                    }
+                    track_node_h = goto_str.trim().parse::<i32>().ok() ;
                 }
                 // TODO: "track height continuously" checkbox
             },
         );
 
-        if let Some(node_i) = track_node_ref {
-            let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
-            ctx.fix_screen_o.y += 0.4 * d_y;
-            if d_y.abs() < 1. {
-                track_node_ref = None;
+        if let Some(h) = track_node_h {
+            let abs_h = abs_block_height(h, g.state.bc_tip);
+            if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, abs_h) {
+                let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
+                ctx.fix_screen_o.y += 0.4 * d_y;
+                if d_y.abs() < 1. {
+                    track_node_h = None;
+                }
+            } else {
+                println!("couldn't find node at {}", h);
+                track_node_h = None; // ALT: track indefinitely until it appears
             }
         }
 
@@ -2366,7 +2367,7 @@ pub async fn viz_main(
                 g.bc_req_h,
                 abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
-                track_node_ref.map(|i| (i, ctx.nodes[i].pt.y, (ctx.nodes[i].pt.y-ctx.screen_o.y).abs())),
+                track_node_h,
             );
             draw_multiline_text(
                 &dbg_str,
