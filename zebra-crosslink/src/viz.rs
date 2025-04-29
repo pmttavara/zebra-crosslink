@@ -1855,13 +1855,7 @@ pub async fn viz_main(
                 if ui.button(None, goto_button_txt) || enter_pressed {
                     if let Ok(abs_height) = goto_str.trim().parse::<u32>() {
                         track_node_ref = find_bc_node_i_by_height(&ctx.nodes, BlockHeight(abs_height));
-                        if let Some(node_i) = track_node_ref {
-                            // let node_screen_pt = world_camera.world_to_screen(ctx.nodes[node_i].pt);
-                            // println!("found node at {}: {} ({} => {})", abs_height, BlockHash(ctx.nodes[node_i].hash().expect("BC nodes should have a hash")),
-                            //     ctx.nodes[node_i].pt, node_screen_pt);
-                            ctx.fix_screen_o.y = ctx.nodes[node_i].pt.y;
-                            // TODO: smooth movement
-                        } else {
+                        if let None = track_node_ref {
                             println!("couldn't find node at {}", abs_height)
                         }
                     }
@@ -1870,12 +1864,13 @@ pub async fn viz_main(
             },
         );
 
-        // if let Some(node_i) = track_node_ref {
-        //     // TODO: this is awkward because vel & position are in different spaces
-        //     let mut d_y: f32 = ctx.screen_o.y - ctx.nodes[node_i].pt.y;
-        //     // d_y *= world_camera.zoom.y;
-        //     ctx.screen_vel.y += spring_force(d_y, ctx.screen_vel.y, /*m*/1., /*stiff*/0.1, /*damp*/0.1) / world_camera.zoom.y;
-        // }
+        if let Some(node_i) = track_node_ref {
+            let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
+            ctx.fix_screen_o.y += 0.4 * d_y;
+            if d_y.abs() < 1. {
+                track_node_ref = None;
+            }
+        }
 
         // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
         let hover_node_i: NodeRef = if mouse_is_over_ui {
@@ -2371,7 +2366,7 @@ pub async fn viz_main(
                 g.bc_req_h,
                 abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
-                track_node_ref.map(|i| ctx.nodes[i].pt),
+                track_node_ref.map(|i| (i, ctx.nodes[i].pt.y, (ctx.nodes[i].pt.y-ctx.screen_o.y).abs())),
             );
             draw_multiline_text(
                 &dbg_str,
