@@ -451,7 +451,7 @@ fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> Block
     if height >= 0 {
         BlockHeight(height.try_into().unwrap())
     } else if let Some(tip) = tip {
-        tip.0.sat_sub(-height)
+        tip.0.sat_sub(!height)
     } else {
         BlockHeight(0)
     }
