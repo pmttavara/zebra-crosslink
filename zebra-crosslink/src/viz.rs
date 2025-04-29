@@ -1855,12 +1855,12 @@ pub async fn viz_main(
             },
         );
 
-
         // UI CONTROLS ////////////////////////////////////////////////////////////
         let track_button_txt = "Track height";
         let goto_button_txt = "Goto height";
         let controls_txt_size = vec2(12. * ch_w, font_size);
-        let controls_wnd_size = controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 1.2 * font_size);
+        let controls_wnd_size =
+            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 1.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -1877,15 +1877,22 @@ pub async fn viz_main(
 
                 ui.same_line(controls_txt_size.x + ch_w);
 
-                if ui.button(None, if track_continuously {
-                    track_button_txt
-                } else {
-                    goto_button_txt
-                }) || enter_pressed {
-                    track_node_h = goto_str.trim().parse::<i32>().ok() ;
+                if ui.button(
+                    None,
+                    if track_continuously {
+                        track_button_txt
+                    } else {
+                        goto_button_txt
+                    },
+                ) || enter_pressed
+                {
+                    track_node_h = goto_str.trim().parse::<i32>().ok();
                 }
 
-                widgets::Checkbox::new(hash!()).label("Track Continuously").ratio(0.12).ui(ui, &mut track_continuously);
+                widgets::Checkbox::new(hash!())
+                    .label("Track Continuously")
+                    .ratio(0.12)
+                    .ui(ui, &mut track_continuously);
             },
         );
 
@@ -1894,12 +1901,12 @@ pub async fn viz_main(
             if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, abs_h) {
                 let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
                 ctx.fix_screen_o.y += 0.4 * d_y;
-                if ! track_continuously && d_y.abs() < 1. {
+                if !track_continuously && d_y.abs() < 1. {
                     track_node_h = None;
                 }
-            } else if g.state.bc_tip.is_some() && abs_h.0 <= g.state.bc_tip.unwrap().0.0 {
+            } else if g.state.bc_tip.is_some() && abs_h.0 <= g.state.bc_tip.unwrap().0 .0 {
                 ctx.clear_nodes();
-                let hi = i32::try_from(abs_h.0 + VIZ_REQ_N/2).unwrap();
+                let hi = i32::try_from(abs_h.0 + VIZ_REQ_N / 2).unwrap();
                 new_h_rng = Some((sat_sub_2_sided(hi, VIZ_REQ_N), hi));
             } else {
                 println!("couldn't find node at {}", h);
