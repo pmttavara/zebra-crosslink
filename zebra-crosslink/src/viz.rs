@@ -163,7 +163,7 @@ pub struct VizState {
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
     /// Vector of all decided BFT block payloads, indexed by height.
-    pub bft_blocks: Vec<(usize, String)>,
+    pub bft_blocks: Vec<(usize, BftPayload)>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -192,12 +192,12 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<(usize, String)>,
+        bft_blocks: Vec<(usize, BftPayload)>,
     }
 
-    impl From<(&VizState, &VizCtx)> for MinimalVizStateExport {
-        fn from(data: (&VizState, &VizCtx)) -> Self {
-            let (state, ctx) = data;
+    impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
+        fn from(data: (&VizState, &VizCtx, &ZcashCrosslinkParameters)) -> Self {
+            let (state, ctx, params) = data;
             let nodes = &ctx.nodes;
 
             fn u32_from_compact_difficulty(difficulty: CompactDifficulty) -> u32 {
@@ -263,10 +263,22 @@ pub mod serialization {
                         };
 
                         bft_blocks.push((
-                            parent_id,
-                            node.link.map_or(node.text.clone(), |link| {
-                                format!("{}:{}", node.text, nodes[link].height)
-                            }),
+                                parent_id,
+                                BftPayload {
+                                    headers: node.link.map_or(Vec::new(), |link| {
+                                        let mut block = &nodes[link];
+                                        let mut headers: Vec<BlockHeader> = Vec::new();
+                                        for i in 0..params.bc_confirmation_depth_sigma {
+                                            headers.push(block.header.expect("BC blocks should have a header"));
+                                            if block.parent.is_none() {
+                                                break;
+                                            }
+                                            block = &nodes[block.parent.unwrap()];
+                                        }
+                                        headers.reverse();
+                                        headers
+                                    })
+                                },
                         ));
                     }
                 }
@@ -335,6 +347,7 @@ pub mod serialization {
             });
 
             VizGlobals {
+                params: &zebra_crosslink_chain::PROTOTYPE_PARAMETERS,
                 state,
                 bc_req_h: (0, 0),
                 consumed: true,
@@ -358,19 +371,19 @@ pub mod serialization {
     }
 
     /// Write the current visualizer state to a file
-    pub(crate) fn write_to_file_internal(path: &str, state: &VizState, ctx: &VizCtx) {
+    pub(crate) fn write_to_file_internal(path: &str, state: &VizState, ctx: &VizCtx, params: &ZcashCrosslinkParameters) {
         use serde_json::to_string_pretty;
         use std::fs;
 
-        let viz_export = MinimalVizStateExport::from((&*state, ctx));
+        let viz_export = MinimalVizStateExport::from((&*state, ctx, params));
         // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
         let json = to_string_pretty(&viz_export).expect("serialization success");
         fs::write(path, json).expect("write success");
     }
 
     /// Write the current visualizer state to a file
-    pub fn write_to_file(path: &str, state: &VizState) {
-        write_to_file_internal(path, state, &VizCtx::default())
+    pub fn write_to_file(path: &str, state: &VizState, params: &ZcashCrosslinkParameters) {
+        write_to_file_internal(path, state, &VizCtx::default(), params)
     }
 }
 
@@ -431,6 +444,8 @@ fn play_sound_once(sound: Sound) {
 /// and the viz thread.
 #[derive(Clone)]
 pub struct VizGlobals {
+    /// Crosslink parameters
+    params: &'static ZcashCrosslinkParameters,
     /// TFL state communicated from TFL to Viz
     pub state: std::sync::Arc<VizState>,
     // wanted_height_rng: (u32, u32),
@@ -468,10 +483,11 @@ fn abs_block_heights(
 }
 
 /// Bridge between tokio & viz code
-pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
+pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle, params: &'static ZcashCrosslinkParameters) {
     let call = tfl_handle.clone().call;
 
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
+        params,
         state: std::sync::Arc::new(VizState {
             latest_final_block: None,
             bc_tip: None,
@@ -636,6 +652,7 @@ struct Node {
     height: u32,
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
+    header: Option<BlockHeader>,
 
     is_real: bool,
 
@@ -661,6 +678,7 @@ enum NodeInit {
         text: String,
         id: NodeId,
         height: u32,
+        header: Option<BlockHeader>,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
 
@@ -673,6 +691,7 @@ enum NodeInit {
         hash: [u8; 32],
         height: u32,
         difficulty: Option<CompactDifficulty>,
+        header: BlockHeader,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
     },
@@ -807,7 +826,6 @@ pub(crate) struct VizCtx {
     bc_lo: NodeRef,
     bc_hi: NodeRef,
     bc_work_max: u128,
-    bc_fake_hash: u64,
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
 
     bft_block_hi_i: usize,
@@ -832,6 +850,7 @@ impl VizCtx {
                 kind,
                 text,
                 id,
+                header,
                 height,
                 difficulty,
                 txs_n,
@@ -845,6 +864,7 @@ impl VizCtx {
                         text,
                         id,
                         height, // TODO: this should be exclusively determined by parent for Dyn
+                        header,
                         difficulty,
                         txs_n,
                         is_real,
@@ -866,6 +886,7 @@ impl VizCtx {
                 link,
                 hash,
                 height,
+                header,
                 difficulty,
                 txs_n,
                 is_real,
@@ -884,6 +905,7 @@ impl VizCtx {
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
                         height,
+                        header: Some(header),
                         difficulty,
                         txs_n,
                         is_real,
@@ -927,6 +949,7 @@ impl VizCtx {
 
                         kind: NodeKind::BFT,
                         height,
+                        header: None,
                         text,
 
                         is_real,
@@ -1034,7 +1057,6 @@ impl Default for VizCtx {
 
             bc_lo: None,
             bc_hi: None,
-            bc_fake_hash: 0,
             bc_work_max: 0,
             missing_bc_parents: HashMap::new(),
 
@@ -1316,7 +1338,7 @@ fn hash_from_u64(v: u64) -> [u8; 32] {
 
 /// technically a line *segment*
 fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
-    let bgn_to_end = (line.1 - line.0);
+    let bgn_to_end = line.1 - line.0;
     let bgn_to_pt = pt - line.0;
     let len = bgn_to_end.length();
 
@@ -1519,12 +1541,13 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) =
+                        g.state.blocks[i].as_ref().map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
+                                Some(*block.header),
                             )
                         });
 
@@ -1535,6 +1558,7 @@ pub async fn viz_main(
 
                             hash: hash.0,
                             height: height.0,
+                            header: header.expect("valid header for BC"),
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1548,12 +1572,13 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) =
+                        g.state.blocks[i].as_ref().map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
+                                Some(*block.header),
                             )
                         });
 
@@ -1563,6 +1588,7 @@ pub async fn viz_main(
                             link: None,
 
                             hash: hash.0,
+                            header: header.expect("valid header for BC"),
                             height: height.0,
                             difficulty,
                             txs_n,
@@ -1586,7 +1612,6 @@ pub async fn viz_main(
                     None
                 };
 
-                let s: Vec<&str> = blocks[i].1.split(":").collect();
                 ctx.bft_last_added = ctx.push_node(
                     NodeInit::BFT {
                         // TODO: distance should be proportional to difficulty of newer block
@@ -1595,11 +1620,11 @@ pub async fn viz_main(
 
                         id: i,
 
-                        text: s[0].to_owned(),
+                        text: "".to_string(),
                         link: {
-                            let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
-                            if let Some(bc_i) = bc {
-                                find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
+                            // TODO: lazy links
+                            if let Some(header) = blocks[i].1.headers.last() {
+                                find_bc_node_by_hash(&ctx.nodes, &header.hash())
                             } else {
                                 None
                             }
@@ -1607,7 +1632,7 @@ pub async fn viz_main(
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
-                );
+                    );
             }
         }
         ctx.bft_block_hi_i = blocks.len();
@@ -1706,6 +1731,7 @@ pub async fn viz_main(
                 "./zebra-crosslink/viz_state.json",
                 &g.state,
                 &ctx,
+                g.params,
             );
         }
 
@@ -1991,11 +2017,22 @@ pub async fn viz_main(
                 // create new node
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 let is_bft = hover_node.kind == NodeKind::BFT;
+                let header = if hover_node.kind == NodeKind::BC {
+                    Some(BlockHeader {
+                        version: 0,
+                        previous_block_hash: BlockHash(hover_node.hash().expect("should have a hash")),
+                        merkle_root: zebra_chain::block::merkle::Root([0; 32]),
+                        commitment_bytes: zebra_chain::fmt::HexDebug([0; 32]),
+                        time: chrono::Utc::now(),
+                        difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
+                        nonce: zebra_chain::fmt::HexDebug([0; 32]),
+                        solution: zebra_chain::work::equihash::Solution::for_proposal(),
+                    })
+                } else {
+                    None
+                };
                 let id = match hover_node.kind {
-                    NodeKind::BC => NodeId::Hash({
-                        ctx.bc_fake_hash += 1;
-                        hash_from_u64(ctx.bc_fake_hash)
-                    }),
+                    NodeKind::BC => NodeId::Hash(header.unwrap().hash().0),
                     NodeKind::BFT => {
                         ctx.bft_fake_id -= 1;
                         NodeId::Index(ctx.bft_fake_id + 1)
@@ -2014,6 +2051,7 @@ pub async fn viz_main(
                         id,
                         is_real: false,
                         difficulty: None,
+                        header,
                         txs_n: (hover_node.kind == NodeKind::BC) as u32,
                     },
                     None,
@@ -2063,9 +2101,9 @@ pub async fn viz_main(
             // parent-child height - O(n) //////////////////////////////
 
             let a_parent = ctx.nodes[node_i].parent;
-            if (a_parent.is_some()
+            if a_parent.is_some()
                 && a_parent != drag_node_ref
-                && a_parent.unwrap() < ctx.nodes.len())
+                && a_parent.unwrap() < ctx.nodes.len()
             {
                 let parent_i = a_parent.unwrap();
                 let parent = &ctx.nodes[parent_i];
@@ -2150,9 +2188,9 @@ pub async fn viz_main(
                         let line_to_node = a_pt - pt;
                         let target_dist = 15.;
 
-                        if (pt != edge.0
+                        if pt != edge.0
                             && pt != edge.1
-                            && line_to_node.length_squared() < (target_dist * target_dist))
+                            && line_to_node.length_squared() < (target_dist * target_dist)
                         {
                             let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
                             let target_pt = if perp_line.dot(line_to_node) > 0. {

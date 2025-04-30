@@ -85,7 +85,7 @@ pub(crate) struct TFLServiceInternal {
     // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 
-    bft_blocks: Vec<(usize, String)>,
+    bft_blocks: Vec<(usize, BftPayload)>,
     proposed_bft_string: Option<String>,
 }
 
@@ -274,12 +274,13 @@ const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
     let config = internal_handle.config.clone();
+    let params = &PROTOTYPE_PARAMETERS;
 
     #[cfg(feature = "viz_gui")]
     {
         let rt = tokio::runtime::Handle::current();
         let viz_tfl_handle = internal_handle.clone();
-        tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
+        tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle, params)));
     }
 
     fn rng_private_public_key_from_address(
@@ -466,7 +467,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
                                     if new_bc_tip.is_none() { error!("new_bc_tip is None"); None }
                                     else {
-                                        let params = &PROTOTYPE_PARAMETERS;
                                         let maybe_payload: Option<BftPayload> = {
                                             // Build BftPayload in a local scope to keep the outer scope tidier:
 
@@ -681,7 +681,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                 let mut internal = internal_handle.internal.lock().await;
                                 let insert_i = certificate.height.as_u64() as usize - 1;
                                 let parent_i = insert_i.saturating_sub(1); // just a simple chain
-                                internal.bft_blocks.insert(insert_i, (parent_i, format!("{:?}", decided_value.value.value)));
+                                internal.bft_blocks.insert(insert_i, (parent_i, decided_value.value.value.clone()));
                                 internal.latest_final_block = Some((new_final_height, new_final_hash));
 
                                 // When that happens, we store the decided value in our store
