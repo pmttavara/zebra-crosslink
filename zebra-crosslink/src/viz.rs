@@ -2359,7 +2359,7 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
-        if dev(true) {
+        if dev(false) {
             // draw forces
             // draw resultant force
             for node in &mut *ctx.nodes {
@@ -2391,11 +2391,13 @@ pub async fn viz_main(
                 "{:2.3} ms\n\
                 target: {}, offset: {}, zoom: {}\n\
                 screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
-                {} hashes\n\
+                {} PoW blocks\n\
                 Node height range: [{:?}, {:?}]\n\
                 req: {:?} == {:?}\n\
                 Proposed BFT: {:?}\n\
-                Tracked node: {:?}",
+                Tracked node: {:?}\n\
+                Final: {:?}\n\
+                Tip: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
                 world_camera.offset,
@@ -2410,6 +2412,8 @@ pub async fn viz_main(
                 abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
                 track_node_h,
+                g.state.latest_final_block,
+                g.state.bc_tip,
             );
             draw_multiline_text(
                 &dbg_str,
