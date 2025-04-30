@@ -474,38 +474,46 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
                                             let (tip_height, tip_hash) = new_bc_tip.unwrap();
                                             let finality_candidate_height = tip_height.sat_sub(params.bc_confirmation_depth_sigma as i32);
+                                            // println!("finality candidate: {}", finality_candidate_height.0);
 
-                                            let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+                                            let latest_final_block = internal_handle.internal.lock().await.latest_final_block;
+                                            let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
-                                            let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
-                                                hash
+                                            if ! is_improved_final {
+                                                None
                                             } else {
-                                                // Error or unexpected response type:
-                                                panic!("TODO: improve error handling.");
-                                            };
+                                                let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
 
-                                            let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                                                known_blocks: vec![candidate_hash],
-                                                stop: None,
-                                            })
-                                            .await;
+                                                let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+                                                    hash
+                                                } else {
+                                                    // Error or unexpected response type:
+                                                    panic!("TODO: improve error handling.");
+                                                };
 
-                                            let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
+                                                let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                                    known_blocks: vec![candidate_hash],
+                                                    stop: None,
+                                                })
+                                                .await;
 
-                                                hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
-                                            } else {
-                                                // Error or unexpected response type:
-                                                panic!("TODO: improve error handling.");
-                                            };
+                                                let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
 
-                                            match BftPayload::try_from(params, headers) {
-                                                Ok(v) => Some(v),
-                                                Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
+                                                    hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                                } else {
+                                                    // Error or unexpected response type:
+                                                    panic!("TODO: improve error handling.");
+                                                };
+
+                                                match BftPayload::try_from(params, headers) {
+                                                    Ok(v) => Some(v),
+                                                    Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
+                                                }
                                             }
                                         };
 
                                         if let Some(payload) = maybe_payload {
-                                            tokio::time::sleep(MAIN_LOOP_SLEEP_INTERVAL*3).await;
+                                            // tokio::time::sleep(MAIN_LOOP_SLEEP_INTERVAL*3).await;
                                             let val = MalProposedValue {
                                                 height,
                                                 round,
