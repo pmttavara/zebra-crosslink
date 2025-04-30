@@ -446,7 +446,18 @@ impl MalValue {
     }
 
     pub fn reconstruct_from_pieces(pieces: &Vec<MalStreamedProposalData>) -> Self {
-        todo!("actually reconstruct");
+        use zebra_chain::serialization::ZcashDeserialize;
+        let extensions = pieces.last().unwrap().data_bytes.clone().into();
+        let rem = &pieces[0..pieces.len() - 1];
+        let mut array = Vec::new();
+        for p in rem {
+            let mut slice: &[u8] = &p.data_bytes;
+            array.push(ZcashDeserialize::zcash_deserialize(&mut slice).unwrap());
+        }
+        Self {
+            value: BftPayload { headers: array },
+            extensions,
+        }
     }
 }
 
@@ -463,6 +474,7 @@ impl Protobuf for MalValue {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
+        use zebra_chain::serialization::ZcashDeserialize;
         let value_bytes = proto
             .value
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?;
@@ -470,13 +482,20 @@ impl Protobuf for MalValue {
             .extensions
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("extensions"))?;
 
-        todo!("not auto, but auto deserialize");
-        /*
+        let mut slice: &[u8] = &value_bytes;
+        let mut array = Vec::new();
+        loop {
+            if let Ok(v) = ZcashDeserialize::zcash_deserialize(&mut slice) {
+                array.push(v);
+            } else {
+                break;
+            }
+        }
+
         Ok(MalValue {
-            value: String::from_utf8((&string_utf8).to_vec())
-                .map_err(|error| ProtoError::Other(format!("Not a string! {:?}", error)))?,
+            value: BftPayload { headers: array },
             extensions: extension_bytes,
-        })*/
+        })
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
