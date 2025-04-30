@@ -53,7 +53,8 @@ use zebra_chain::block::Header as BcBlockHeader;
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BftPayload {
-    headers: Vec<BcBlockHeader>,
+    /// The PoW Headers
+    pub headers: Vec<BcBlockHeader>,
 }
 
 impl BftPayload {

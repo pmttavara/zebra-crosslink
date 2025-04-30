@@ -414,7 +414,17 @@ impl MalValue {
     }
 
     pub fn id(&self) -> MalValueId {
-        todo!("actually hash");
+        let mut acc: u64 = 0;
+        for header in &self.value.headers {
+            let hash = header.hash().0;
+            let h1 = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+            let h2 = u64::from_le_bytes(hash[8..16].try_into().unwrap());
+            let h3 = u64::from_le_bytes(hash[16..24].try_into().unwrap());
+            let h4 = u64::from_le_bytes(hash[24..32].try_into().unwrap());
+            acc ^= h1 ^ h2 ^ h3 ^ h4;
+        }
+        // NOTE(Sam): I do not think this is supposed to include extensions?
+        MalValueId(acc)
     }
 
     //pub fn size_bytes(&self) -> usize {
@@ -422,7 +432,17 @@ impl MalValue {
     //}
 
     pub fn fracture_into_pieces(&self) -> Vec<MalStreamedProposalData> {
-        todo!("actually fracture");
+        use zebra_chain::serialization::ZcashSerialize;
+        let mut array = Vec::new();
+        for header in &self.value.headers {
+            array.push(MalStreamedProposalData {
+                data_bytes: header.zcash_serialize_to_vec().unwrap(),
+            });
+        }
+        array.push(MalStreamedProposalData {
+            data_bytes: self.extensions.to_vec(),
+        });
+        array
     }
 
     pub fn reconstruct_from_pieces(pieces: &Vec<MalStreamedProposalData>) -> Self {
@@ -461,23 +481,18 @@ impl Protobuf for MalValue {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        todo!("not auto, but auto serialize");
-        /*
         use bytes::BufMut;
+        use zebra_chain::serialization::ZcashSerialize;
+
         let mut bytes = BytesMut::new();
-        if self.value.len() > 255 {
-            return Err(ProtoError::Other(format!(
-                "String too long!, {} > 255",
-                self.value.len()
-            )));
+        for header in &self.value.headers {
+            bytes.extend_from_slice(&header.zcash_serialize_to_vec().unwrap());
         }
-        bytes.put_u8(self.value.len() as u8);
-        bytes.extend_from_slice(&self.value.as_bytes());
-        bytes.extend_from_slice(&self.extensions);
 
         Ok(malctx_schema_proto::Value {
             value: Some(bytes.freeze()),
-        })*/
+            extensions: Some(self.extensions.clone()),
+        })
     }
 }
 

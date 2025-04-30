@@ -505,6 +505,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         };
 
                                         if let Some(payload) = maybe_payload {
+                                            tokio::time::sleep(MAIN_LOOP_SLEEP_INTERVAL*3).await;
                                             let val = MalProposedValue {
                                                 height,
                                                 round,
