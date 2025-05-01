@@ -2431,8 +2431,8 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
-        if hover_node_i.is_some() {
-            let mut link = ctx.nodes[hover_node_i.unwrap()].link;
+        if let Some(node_i) = hover_node_i.or(drag_node_ref) {
+            let mut link = ctx.nodes[node_i].link;
             for i in 0..g.params.bc_confirmation_depth_sigma+1 {
                 if link.is_none() {
                     break;
