@@ -70,7 +70,7 @@ impl BftPayload {
         params: &ZcashCrosslinkParameters,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftPayload> {
-        let expected = params.bc_confirmation_depth_sigma;
+        let expected = params.bc_confirmation_depth_sigma + 1;
         let actual = headers.len() as u64;
         if actual != expected {
             return Err(InvalidBftPayload::IncorrectConfirmationDepth { expected, actual });

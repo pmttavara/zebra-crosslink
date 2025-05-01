@@ -475,7 +475,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             // TODO: Improve error handling:
                                             // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
                                             let (tip_height, tip_hash) = new_bc_tip.unwrap();
-                                            let finality_candidate_height = tip_height.sub(BlockHeightDiff::from((params.bc_confirmation_depth_sigma + params.bc_confirmation_depth_sigma) as i64));
+                                            let finality_candidate_height = tip_height.sub(BlockHeightDiff::from((params.bc_confirmation_depth_sigma + params.bc_confirmation_depth_sigma + 1) as i64));
                                             println!("finality candidate: {:?}", finality_candidate_height);
 
                                             let finality_candidate_height = if let Some(h) = finality_candidate_height {
@@ -512,7 +512,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                             let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(mut hdrs)) = resp {
                                                 // TODO: do we want these in chain order or "walk-back order"
-                                                hdrs.truncate(params.bc_confirmation_depth_sigma as usize);
+                                                hdrs.truncate(params.bc_confirmation_depth_sigma as usize + 1);
                                                 hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
                                             } else {
                                                 // Error or unexpected response type:
