@@ -2407,6 +2407,25 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
+        if hover_node_i.is_some() {
+            let mut link = ctx.nodes[hover_node_i.unwrap()].link;
+            for i in 0..g.params.bc_confirmation_depth_sigma {
+                if link.is_none() {
+                    break;
+                }
+                let node = &ctx.nodes[link.unwrap()];
+
+                if i == g.params.bc_confirmation_depth_sigma-1 {
+                    draw_circle(node.circle(), PINK);
+                } else {
+                    draw_ring(node.circle(), 3., 1., PINK);
+                }
+
+
+                link = node.parent;
+            }
+        }
+
         if dev(false) {
             // draw forces
             // draw resultant force
