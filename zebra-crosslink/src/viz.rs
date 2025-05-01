@@ -265,7 +265,7 @@ pub mod serialization {
                         bft_blocks.push((
                                 parent_id,
                                 BftPayload {
-                                    headers: node.link.map_or(Vec::new(), |link| {
+                                    headers: node.links.nominee.map_or(Vec::new(), |link| {
                                         let mut block = &nodes[link];
                                         let mut headers: Vec<BlockHeader> = Vec::new();
                                         for i in 0..params.bc_confirmation_depth_sigma {
@@ -637,13 +637,19 @@ enum NodeId {
 
 type NodeRef = Option<usize>; // TODO: generational handle
 
+#[derive(Clone, Debug)]
+struct VizBFTLinks {
+    nominee: NodeRef,
+    finalized: NodeRef,
+}
+
 /// A node on the graph/network diagram.
 /// Contains a bundle of attributes that can represent PoW or BFT blocks.
 #[derive(Clone, Debug)]
 struct Node {
     // structure
     parent: NodeRef, // TODO: do we need explicit edges?
-    link: NodeRef,
+    links: VizBFTLinks,
 
     // data
     kind: NodeKind,
@@ -671,7 +677,7 @@ enum NodeInit {
 
     Dyn {
         parent: NodeRef, // TODO: do we need explicit edges?
-        link: NodeRef,
+        links: VizBFTLinks,
 
         // data
         kind: NodeKind,
@@ -687,7 +693,6 @@ enum NodeInit {
 
     BC {
         parent: NodeRef, // TODO: do we need explicit edges?
-        link: NodeRef,
         hash: [u8; 32],
         height: u32,
         difficulty: Option<CompactDifficulty>,
@@ -699,7 +704,7 @@ enum NodeInit {
     BFT {
         parent: NodeRef, // TODO: do we need explicit edges?
         id: usize,
-        link: NodeRef,
+        links: VizBFTLinks,
         text: String,
         height: Option<u32>, // if None, works out from parent
         is_real: bool,
@@ -846,7 +851,7 @@ impl VizCtx {
 
             NodeInit::Dyn {
                 parent,
-                link,
+                links,
                 kind,
                 text,
                 id,
@@ -859,7 +864,7 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links,
                         kind,
                         text,
                         id,
@@ -883,7 +888,6 @@ impl VizCtx {
 
             NodeInit::BC {
                 parent,
-                link,
                 hash,
                 height,
                 header,
@@ -900,7 +904,7 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links: VizBFTLinks { nominee: None, finalized: None },
 
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
@@ -923,7 +927,7 @@ impl VizCtx {
 
             NodeInit::BFT {
                 parent,
-                link,
+                links,
                 height,
                 id,
                 text,
@@ -941,7 +945,7 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links,
 
                         id: NodeId::Index(id),
                         difficulty: None,
@@ -1554,7 +1558,6 @@ pub async fn viz_main(
                     ctx.push_node(
                         NodeInit::BC {
                             parent: None,
-                            link: None,
 
                             hash: hash.0,
                             height: height.0,
@@ -1585,7 +1588,6 @@ pub async fn viz_main(
                     ctx.push_node(
                         NodeInit::BC {
                             parent: None, // new lowest
-                            link: None,
 
                             hash: hash.0,
                             header: header.expect("valid header for BC"),
@@ -1612,20 +1614,24 @@ pub async fn viz_main(
                     None
                 };
 
-                let link = {
-                    if let Some(header) = blocks[i].1.headers.last() {
-                        let hash = header.hash();
-                        let link = find_bc_node_by_hash(&ctx.nodes, &hash);
-                        if link.is_none() {
-                            // NOTE: this is likely just that the PoW node is off-screen enough to
-                            // not be requested
-                            // TODO: lazy links
-                            warn!("Could not find BFT-linked block with hash {}", hash);
+                let links: VizBFTLinks = {
+                    if let (Some(nominee), Some(finalized)) = (blocks[i].1.headers.last(), blocks[i].1.headers.first()) {
+                        let (nominee_hash, finalized_hash) = (nominee.hash(), finalized.hash());
+                        let nominee = find_bc_node_by_hash(&ctx.nodes, &nominee_hash);
+                        let finalized = find_bc_node_by_hash(&ctx.nodes, &finalized_hash);
+                        // NOTE: this is likely just that the PoW node is off-screen enough to
+                        // not be requested
+                        // TODO: lazy links
+                        if nominee.is_none() {
+                            warn!("Could not find BFT-linked block with hash {}", nominee_hash);
                         }
-                        link
+                        if finalized.is_none() {
+                            warn!("Could not find BFT-linked block with hash {}", finalized_hash);
+                        }
+                        VizBFTLinks { nominee, finalized }
                     } else {
                         warn!("BFT block does not have associated headers");
-                        None
+                        VizBFTLinks { nominee: None, finalized: None}
                     }
                 };
 
@@ -1638,7 +1644,7 @@ pub async fn viz_main(
                         id: i,
 
                         text: "".to_string(),
-                        link,
+                        links,
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
@@ -1864,13 +1870,16 @@ pub async fn viz_main(
                             id,
 
                             text: node_str.clone(),
-                            link: {
+                            links: {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                if let Some(bc_i) = bc {
+                                let node = if let Some(bc_i) = bc {
                                     find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
                                 } else {
                                     None
-                                }
+                                };
+                                VizBFTLinks { nominee: node, finalized: node } // TODO: account for
+                                                                               // non-sigma
+                                                                               // distances
                             },
                             height: ctx.bft_last_added.map_or(Some(0), |_| None),
                         },
@@ -2052,7 +2061,7 @@ pub async fn viz_main(
                 let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
-                        link: None,
+                        links: VizBFTLinks { nominee: None, finalized: None },
 
                         kind: hover_node.kind,
                         height: hover_node.height + 1,
@@ -2115,7 +2124,7 @@ pub async fn viz_main(
             let mut y_counterpart = None;
 
             // match heights across links for BFT
-            let a_link = ctx.nodes[node_i].link;
+            let a_link = ctx.nodes[node_i].links.nominee;
             if a_link.is_some()
                 && a_link != drag_node_ref
                 && a_link.unwrap() < ctx.nodes.len()
@@ -2348,7 +2357,7 @@ pub async fn viz_main(
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
-                if let Some(link) = node.link {
+                if let Some(link) = if false { node.links.nominee } else { node.links.finalized } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
             }
@@ -2432,7 +2441,7 @@ pub async fn viz_main(
         end_zone(z_draw_nodes);
 
         if let Some(node_i) = hover_node_i.or(drag_node_ref) {
-            let mut link = ctx.nodes[node_i].link;
+            let mut link = ctx.nodes[node_i].links.nominee;
             for i in 0..g.params.bc_confirmation_depth_sigma+1 {
                 if link.is_none() {
                     break;
@@ -2441,6 +2450,7 @@ pub async fn viz_main(
 
                 if i == g.params.bc_confirmation_depth_sigma {
                     draw_circle(node.circle(), PINK);
+                    assert!(link == ctx.nodes[node_i].links.finalized);
                 } else {
                     draw_ring(node.circle(), 3., 1., PINK);
                 }
