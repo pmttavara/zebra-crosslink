@@ -467,49 +467,60 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
                                     if new_bc_tip.is_none() { error!("new_bc_tip is None"); None }
                                     else {
-                                        let maybe_payload: Option<BftPayload> = {
+                                        let maybe_payload: Option<BftPayload> = loop {
+                                            use std::ops::Sub;
+                                            use zebra_chain::block::HeightDiff as BlockHeightDiff;
                                             // Build BftPayload in a local scope to keep the outer scope tidier:
 
                                             // TODO: Improve error handling:
                                             // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
                                             let (tip_height, tip_hash) = new_bc_tip.unwrap();
-                                            let finality_candidate_height = tip_height.sat_sub(params.bc_confirmation_depth_sigma as i32);
-                                            // println!("finality candidate: {}", finality_candidate_height.0);
+                                            let finality_candidate_height = tip_height.sub(BlockHeightDiff::from((params.bc_confirmation_depth_sigma + params.bc_confirmation_depth_sigma) as i64));
+                                            println!("finality candidate: {:?}", finality_candidate_height);
+
+                                            let finality_candidate_height = if let Some(h) = finality_candidate_height {
+                                                h
+                                            } else {
+                                                break None;
+                                            };
 
                                             let latest_final_block = internal_handle.internal.lock().await.latest_final_block;
                                             let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
                                             if ! is_improved_final {
-                                                None
-                                            } else {
-                                                let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
-
-                                                let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
-                                                    hash
-                                                } else {
-                                                    // Error or unexpected response type:
-                                                    panic!("TODO: improve error handling.");
-                                                };
-
-                                                let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                                                    known_blocks: vec![candidate_hash],
-                                                    stop: None,
-                                                })
-                                                .await;
-
-                                                let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
-
-                                                    hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
-                                                } else {
-                                                    // Error or unexpected response type:
-                                                    panic!("TODO: improve error handling.");
-                                                };
-
-                                                match BftPayload::try_from(params, headers) {
-                                                    Ok(v) => Some(v),
-                                                    Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
-                                                }
+                                                break None;
                                             }
+
+                                            let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+
+                                            let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+                                                hash
+                                            } else {
+                                                // Error or unexpected response type:
+                                                panic!("TODO: improve error handling.");
+                                                break None;
+                                            };
+
+                                            // NOTE: probably faster to request 2x as many blocks as we need rather than have another async call
+                                            let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                                known_blocks: vec![candidate_hash],
+                                                stop: None,
+                                            })
+                                            .await;
+
+                                            let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(mut hdrs)) = resp {
+                                                // TODO: do we want these in chain order or "walk-back order"
+                                                hdrs.truncate(params.bc_confirmation_depth_sigma as usize);
+                                                hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                            } else {
+                                                // Error or unexpected response type:
+                                                panic!("TODO: improve error handling.");
+                                            };
+
+                                            break match BftPayload::try_from(params, headers) {
+                                                Ok(v) => Some(v),
+                                                Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
+                                            };
                                         };
 
                                         if let Some(payload) = maybe_payload {
@@ -675,7 +686,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
 
-                                let new_final_hash   = decided_value.value.value.headers.last().expect("at least 1 header").hash();
+                                let new_final_hash   = decided_value.value.value.headers.first().expect("at least 1 header").hash();
                                 let new_final_height = block_height_from_hash(&call, new_final_hash).await.expect("hash should map to a height");
 
                                 let mut internal = internal_handle.internal.lock().await;

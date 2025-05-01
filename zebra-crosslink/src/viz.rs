@@ -1612,6 +1612,23 @@ pub async fn viz_main(
                     None
                 };
 
+                let link = {
+                    if let Some(header) = blocks[i].1.headers.last() {
+                        let hash = header.hash();
+                        let link = find_bc_node_by_hash(&ctx.nodes, &hash);
+                        if link.is_none() {
+                            // NOTE: this is likely just that the PoW node is off-screen enough to
+                            // not be requested
+                            // TODO: lazy links
+                            warn!("Could not find BFT-linked block with hash {}", hash);
+                        }
+                        link
+                    } else {
+                        warn!("BFT block does not have associated headers");
+                        None
+                    }
+                };
+
                 ctx.bft_last_added = ctx.push_node(
                     NodeInit::BFT {
                         // TODO: distance should be proportional to difficulty of newer block
@@ -1621,14 +1638,7 @@ pub async fn viz_main(
                         id: i,
 
                         text: "".to_string(),
-                        link: {
-                            // TODO: lazy links
-                            if let Some(header) = blocks[i].1.headers.last() {
-                                find_bc_node_by_hash(&ctx.nodes, &header.hash())
-                            } else {
-                                None
-                            }
-                        },
+                        link,
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
