@@ -263,22 +263,24 @@ pub mod serialization {
                         };
 
                         bft_blocks.push((
-                                parent_id,
-                                BftPayload {
-                                    headers: node.links.nominee.map_or(Vec::new(), |link| {
-                                        let mut block = &nodes[link];
-                                        let mut headers: Vec<BlockHeader> = Vec::new();
-                                        for i in 0..params.bc_confirmation_depth_sigma {
-                                            headers.push(block.header.expect("BC blocks should have a header"));
-                                            if block.parent.is_none() {
-                                                break;
-                                            }
-                                            block = &nodes[block.parent.unwrap()];
+                            parent_id,
+                            BftPayload {
+                                headers: node.links.nominee.map_or(Vec::new(), |link| {
+                                    let mut block = &nodes[link];
+                                    let mut headers: Vec<BlockHeader> = Vec::new();
+                                    for i in 0..params.bc_confirmation_depth_sigma {
+                                        headers.push(
+                                            block.header.expect("BC blocks should have a header"),
+                                        );
+                                        if block.parent.is_none() {
+                                            break;
                                         }
-                                        headers.reverse();
-                                        headers
-                                    })
-                                },
+                                        block = &nodes[block.parent.unwrap()];
+                                    }
+                                    headers.reverse();
+                                    headers
+                                }),
+                            },
                         ));
                     }
                 }
@@ -371,7 +373,12 @@ pub mod serialization {
     }
 
     /// Write the current visualizer state to a file
-    pub(crate) fn write_to_file_internal(path: &str, state: &VizState, ctx: &VizCtx, params: &ZcashCrosslinkParameters) {
+    pub(crate) fn write_to_file_internal(
+        path: &str,
+        state: &VizState,
+        ctx: &VizCtx,
+        params: &ZcashCrosslinkParameters,
+    ) {
         use serde_json::to_string_pretty;
         use std::fs;
 
@@ -483,7 +490,10 @@ fn abs_block_heights(
 }
 
 /// Bridge between tokio & viz code
-pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle, params: &'static ZcashCrosslinkParameters) {
+pub async fn service_viz_requests(
+    tfl_handle: crate::TFLServiceHandle,
+    params: &'static ZcashCrosslinkParameters,
+) {
     let call = tfl_handle.clone().call;
 
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
@@ -904,7 +914,10 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        links: VizBFTLinks { nominee: None, finalized: None },
+                        links: VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        },
 
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
@@ -1545,8 +1558,9 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash, header) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                        .as_ref()
+                        .map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
@@ -1575,8 +1589,9 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash, header) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                        .as_ref()
+                        .map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
@@ -1615,7 +1630,9 @@ pub async fn viz_main(
                 };
 
                 let links: VizBFTLinks = {
-                    if let (Some(nominee), Some(finalized)) = (blocks[i].1.headers.last(), blocks[i].1.headers.first()) {
+                    if let (Some(nominee), Some(finalized)) =
+                        (blocks[i].1.headers.last(), blocks[i].1.headers.first())
+                    {
                         let (nominee_hash, finalized_hash) = (nominee.hash(), finalized.hash());
                         let nominee = find_bc_node_by_hash(&ctx.nodes, &nominee_hash);
                         let finalized = find_bc_node_by_hash(&ctx.nodes, &finalized_hash);
@@ -1626,12 +1643,18 @@ pub async fn viz_main(
                             warn!("Could not find BFT-linked block with hash {}", nominee_hash);
                         }
                         if finalized.is_none() {
-                            warn!("Could not find BFT-linked block with hash {}", finalized_hash);
+                            warn!(
+                                "Could not find BFT-linked block with hash {}",
+                                finalized_hash
+                            );
                         }
                         VizBFTLinks { nominee, finalized }
                     } else {
                         warn!("BFT block does not have associated headers");
-                        VizBFTLinks { nominee: None, finalized: None}
+                        VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        }
                     }
                 };
 
@@ -1648,7 +1671,7 @@ pub async fn viz_main(
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
-                    );
+                );
             }
         }
         ctx.bft_block_hi_i = blocks.len();
@@ -1877,9 +1900,10 @@ pub async fn viz_main(
                                 } else {
                                     None
                                 };
-                                VizBFTLinks { nominee: node, finalized: node } // TODO: account for
-                                                                               // non-sigma
-                                                                               // distances
+                                VizBFTLinks {
+                                    nominee: node,
+                                    finalized: node,
+                                } // TODO: account for non-sigma distances
                             },
                             height: ctx.bft_last_added.map_or(Some(0), |_| None),
                         },
@@ -2039,7 +2063,9 @@ pub async fn viz_main(
                 let header = if hover_node.kind == NodeKind::BC {
                     Some(BlockHeader {
                         version: 0,
-                        previous_block_hash: BlockHash(hover_node.hash().expect("should have a hash")),
+                        previous_block_hash: BlockHash(
+                            hover_node.hash().expect("should have a hash"),
+                        ),
                         merkle_root: zebra_chain::block::merkle::Root([0; 32]),
                         commitment_bytes: zebra_chain::fmt::HexDebug([0; 32]),
                         time: chrono::Utc::now(),
@@ -2061,7 +2087,10 @@ pub async fn viz_main(
                 let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
-                        links: VizBFTLinks { nominee: None, finalized: None },
+                        links: VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        },
 
                         kind: hover_node.kind,
                         height: hover_node.height + 1,
@@ -2125,10 +2154,7 @@ pub async fn viz_main(
 
             // match heights across links for BFT
             let a_link = ctx.nodes[node_i].links.nominee;
-            if a_link.is_some()
-                && a_link != drag_node_ref
-                && a_link.unwrap() < ctx.nodes.len()
-            {
+            if a_link.is_some() && a_link != drag_node_ref && a_link.unwrap() < ctx.nodes.len() {
                 let link = &ctx.nodes[a_link.unwrap()];
                 target_pt.y = link.pt.y;
                 y_counterpart = a_link;
@@ -2144,7 +2170,7 @@ pub async fn viz_main(
                 let parent = &ctx.nodes[a_parent.unwrap()];
                 target_pt.x = parent.pt.x;
 
-                if ! y_is_set {
+                if !y_is_set {
                     let intended_dy = ctx.nodes[node_i]
                         .difficulty
                         .and_then(|difficulty| difficulty.to_work())
@@ -2157,7 +2183,8 @@ pub async fn viz_main(
                 }
             }
 
-            { // add link/parent based forces
+            {
+                // add link/parent based forces
                 // TODO: if the alignment force is ~proportional to the total amount of work
                 // above the parent, this could make sure the best chain is the most linear
                 let force = match spring_method {
@@ -2357,7 +2384,11 @@ pub async fn viz_main(
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
-                if let Some(link) = if false { node.links.nominee } else { node.links.finalized } {
+                if let Some(link) = if false {
+                    node.links.nominee
+                } else {
+                    node.links.finalized
+                } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
             }
@@ -2442,7 +2473,7 @@ pub async fn viz_main(
 
         if let Some(node_i) = hover_node_i.or(drag_node_ref) {
             let mut link = ctx.nodes[node_i].links.nominee;
-            for i in 0..g.params.bc_confirmation_depth_sigma+1 {
+            for i in 0..g.params.bc_confirmation_depth_sigma + 1 {
                 if link.is_none() {
                     break;
                 }
@@ -2454,7 +2485,6 @@ pub async fn viz_main(
                 } else {
                     draw_ring(node.circle(), 3., 1., PINK);
                 }
-
 
                 link = node.parent;
             }
