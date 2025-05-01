@@ -481,6 +481,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             let finality_candidate_height = if let Some(h) = finality_candidate_height {
                                                 h
                                             } else {
+                                                info!("not enough blocks to enforce finality; tip height: {}", tip_height.0);
                                                 break None;
                                             };
 
@@ -488,6 +489,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
                                             if ! is_improved_final {
+                                                info!("candidate block can't be final: height {}, final height: {:?}", finality_candidate_height.0, latest_final_block);
                                                 break None;
                                             }
 

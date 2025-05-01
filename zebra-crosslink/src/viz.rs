@@ -2108,43 +2108,67 @@ pub async fn viz_main(
             ctx.nodes[node_i].acc += friction;
             dbg.new_force(node_i, friction);
 
-            // parent-child height - O(n) //////////////////////////////
+            // parent-child height/link height - O(n) //////////////////////////////
 
+            let mut target_pt = a_pt; // default to applying no force
+            let mut y_is_set = false;
+            let mut y_counterpart = None;
+
+            // match heights across links for BFT
+            let a_link = ctx.nodes[node_i].link;
+            if a_link.is_some()
+                && a_link != drag_node_ref
+                && a_link.unwrap() < ctx.nodes.len()
+            {
+                let link = &ctx.nodes[a_link.unwrap()];
+                target_pt.y = link.pt.y;
+                y_counterpart = a_link;
+                y_is_set = true;
+            }
+
+            // align x, set parent distance for PoW work/as BFT fallback
             let a_parent = ctx.nodes[node_i].parent;
             if a_parent.is_some()
                 && a_parent != drag_node_ref
                 && a_parent.unwrap() < ctx.nodes.len()
             {
-                let parent_i = a_parent.unwrap();
-                let parent = &ctx.nodes[parent_i];
+                let parent = &ctx.nodes[a_parent.unwrap()];
+                target_pt.x = parent.pt.x;
 
-                let intended_dy = ctx.nodes[node_i]
-                    .difficulty
-                    .and_then(|difficulty| difficulty.to_work())
-                    .map_or(100., |work| {
-                        150. * work.as_u128() as f32 / ctx.bc_work_max as f32
-                    });
-                let intended_y = parent.pt.y - intended_dy;
+                if ! y_is_set {
+                    let intended_dy = ctx.nodes[node_i]
+                        .difficulty
+                        .and_then(|difficulty| difficulty.to_work())
+                        .map_or(100., |work| {
+                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
+                        });
+                    target_pt.y = parent.pt.y - intended_dy;
+                    y_counterpart = a_parent;
+                    y_is_set = true;
+                }
+            }
 
+            { // add link/parent based forces
                 // TODO: if the alignment force is ~proportional to the total amount of work
                 // above the parent, this could make sure the best chain is the most linear
                 let force = match spring_method {
                     SpringMethod::Old => {
-                        let target_pt = vec2(parent.pt.x, intended_y);
                         let v = a_pt - target_pt;
                         -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y)
                     }
 
                     SpringMethod::Coeff => Vec2 {
-                        x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
-                        y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
+                        x: spring_force(a_pt.x - target_pt.x, a_vel.x, 0.5, 0.0003, 0.1),
+                        y: spring_force(a_pt.y - target_pt.y, a_vel.y, 0.5, 0.01, 0.2),
                     },
                 };
 
                 ctx.nodes[node_i].acc += force;
                 dbg.new_force(node_i, force);
-                ctx.nodes[parent_i].acc -= force;
-                dbg.new_force(node_i, -force);
+                if let Some(i) = y_counterpart {
+                    ctx.nodes[i].acc -= force;
+                    dbg.new_force(i, -force);
+                }
             }
 
             // any-node/any-edge distance - O(n^2) //////////////////////////////
