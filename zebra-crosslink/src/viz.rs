@@ -1984,7 +1984,23 @@ pub async fn viz_main(
         }
 
         // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
-        let hover_node_i: NodeRef = if mouse_is_over_ui {
+        let drag_node_ref = if let MouseDrag::Node {
+            node,
+            start_pt,
+            mouse_to_node,
+        } = ctx.mouse_drag
+        {
+            let drag_node = &mut ctx.nodes[node.unwrap()];
+            drag_node.vel = world_mouse_pt - old_world_mouse_pt;
+            drag_node.pt = world_mouse_pt + mouse_to_node;
+            node
+        } else {
+            None
+        };
+
+        let hover_node_i: NodeRef = if let Some(drag_node_i) = drag_node_ref {
+            drag_node_ref
+        } else if mouse_is_over_ui {
             None
         } else {
             // Selection ring (behind node circle)
@@ -2030,20 +2046,6 @@ pub async fn viz_main(
             play_sound_once(Sound::HoverNode);
         }
         old_hover_node_i = hover_node_i;
-
-        let drag_node_ref = if let MouseDrag::Node {
-            node,
-            start_pt,
-            mouse_to_node,
-        } = ctx.mouse_drag
-        {
-            let drag_node = &mut ctx.nodes[node.unwrap()];
-            drag_node.vel = world_mouse_pt - old_world_mouse_pt;
-            drag_node.pt = world_mouse_pt + mouse_to_node;
-            node
-        } else {
-            None
-        };
 
         // TODO: this is lower precedence than inbuilt macroquad UI to allow for overlap
         // TODO: we're sort of duplicating handling for mouse clicks & drags; dedup
@@ -2471,7 +2473,7 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
-        if let Some(node_i) = hover_node_i.or(drag_node_ref) {
+        if let Some(node_i) = hover_node_i {
             let mut link = ctx.nodes[node_i].links.nominee;
             for i in 0..g.params.bc_confirmation_depth_sigma + 1 {
                 if link.is_none() {
