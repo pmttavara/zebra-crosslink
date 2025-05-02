@@ -8,6 +8,7 @@ message Address {
 
 message Value {
     optional bytes value = 1;
+    optional bytes extensions = 2;
 }
 
 message ValueId {
@@ -63,7 +64,7 @@ message StreamedProposalInit {
 }
 
 message StreamedProposalData {
-    uint64 factor = 1;
+    bytes data_bytes = 1;
 }
 
 message StreamedProposalFin {

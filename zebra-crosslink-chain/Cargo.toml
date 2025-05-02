@@ -7,3 +7,5 @@ edition.workspace = true
 zebra-chain = { path = "../zebra-chain" }
 static_assertions.workspace = true
 thiserror.workspace = true
+tracing = { workspace = true }
+serde = { workspace = true, features = ["serde_derive"] }

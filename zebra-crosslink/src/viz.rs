@@ -163,7 +163,7 @@ pub struct VizState {
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
     /// Vector of all decided BFT block payloads, indexed by height.
-    pub bft_blocks: Vec<(usize, String)>,
+    pub bft_blocks: Vec<(usize, BftPayload)>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -192,12 +192,12 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<(usize, String)>,
+        bft_blocks: Vec<(usize, BftPayload)>,
     }
 
-    impl From<(&VizState, &VizCtx)> for MinimalVizStateExport {
-        fn from(data: (&VizState, &VizCtx)) -> Self {
-            let (state, ctx) = data;
+    impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
+        fn from(data: (&VizState, &VizCtx, &ZcashCrosslinkParameters)) -> Self {
+            let (state, ctx, params) = data;
             let nodes = &ctx.nodes;
 
             fn u32_from_compact_difficulty(difficulty: CompactDifficulty) -> u32 {
@@ -264,9 +264,23 @@ pub mod serialization {
 
                         bft_blocks.push((
                             parent_id,
-                            node.link.map_or(node.text.clone(), |link| {
-                                format!("{}:{}", node.text, nodes[link].height)
-                            }),
+                            BftPayload {
+                                headers: node.links.nominee.map_or(Vec::new(), |link| {
+                                    let mut block = &nodes[link];
+                                    let mut headers: Vec<BlockHeader> = Vec::new();
+                                    for i in 0..params.bc_confirmation_depth_sigma {
+                                        headers.push(
+                                            block.header.expect("BC blocks should have a header"),
+                                        );
+                                        if block.parent.is_none() {
+                                            break;
+                                        }
+                                        block = &nodes[block.parent.unwrap()];
+                                    }
+                                    headers.reverse();
+                                    headers
+                                }),
+                            },
                         ));
                     }
                 }
@@ -335,6 +349,7 @@ pub mod serialization {
             });
 
             VizGlobals {
+                params: &zebra_crosslink_chain::PROTOTYPE_PARAMETERS,
                 state,
                 bc_req_h: (0, 0),
                 consumed: true,
@@ -358,19 +373,24 @@ pub mod serialization {
     }
 
     /// Write the current visualizer state to a file
-    pub(crate) fn write_to_file_internal(path: &str, state: &VizState, ctx: &VizCtx) {
+    pub(crate) fn write_to_file_internal(
+        path: &str,
+        state: &VizState,
+        ctx: &VizCtx,
+        params: &ZcashCrosslinkParameters,
+    ) {
         use serde_json::to_string_pretty;
         use std::fs;
 
-        let viz_export = MinimalVizStateExport::from((&*state, ctx));
+        let viz_export = MinimalVizStateExport::from((&*state, ctx, params));
         // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
         let json = to_string_pretty(&viz_export).expect("serialization success");
         fs::write(path, json).expect("write success");
     }
 
     /// Write the current visualizer state to a file
-    pub fn write_to_file(path: &str, state: &VizState) {
-        write_to_file_internal(path, state, &VizCtx::default())
+    pub fn write_to_file(path: &str, state: &VizState, params: &ZcashCrosslinkParameters) {
+        write_to_file_internal(path, state, &VizCtx::default(), params)
     }
 }
 
@@ -431,6 +451,8 @@ fn play_sound_once(sound: Sound) {
 /// and the viz thread.
 #[derive(Clone)]
 pub struct VizGlobals {
+    /// Crosslink parameters
+    params: &'static ZcashCrosslinkParameters,
     /// TFL state communicated from TFL to Viz
     pub state: std::sync::Arc<VizState>,
     // wanted_height_rng: (u32, u32),
@@ -468,10 +490,14 @@ fn abs_block_heights(
 }
 
 /// Bridge between tokio & viz code
-pub async fn service_viz_requests(tfl_handle: crate::TFLServiceHandle) {
+pub async fn service_viz_requests(
+    tfl_handle: crate::TFLServiceHandle,
+    params: &'static ZcashCrosslinkParameters,
+) {
     let call = tfl_handle.clone().call;
 
     *VIZ_G.lock().unwrap() = Some(VizGlobals {
+        params,
         state: std::sync::Arc::new(VizState {
             latest_final_block: None,
             bc_tip: None,
@@ -621,13 +647,19 @@ enum NodeId {
 
 type NodeRef = Option<usize>; // TODO: generational handle
 
+#[derive(Clone, Debug)]
+struct VizBFTLinks {
+    nominee: NodeRef,
+    finalized: NodeRef,
+}
+
 /// A node on the graph/network diagram.
 /// Contains a bundle of attributes that can represent PoW or BFT blocks.
 #[derive(Clone, Debug)]
 struct Node {
     // structure
     parent: NodeRef, // TODO: do we need explicit edges?
-    link: NodeRef,
+    links: VizBFTLinks,
 
     // data
     kind: NodeKind,
@@ -636,6 +668,7 @@ struct Node {
     height: u32,
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
+    header: Option<BlockHeader>,
 
     is_real: bool,
 
@@ -654,13 +687,14 @@ enum NodeInit {
 
     Dyn {
         parent: NodeRef, // TODO: do we need explicit edges?
-        link: NodeRef,
+        links: VizBFTLinks,
 
         // data
         kind: NodeKind,
         text: String,
         id: NodeId,
         height: u32,
+        header: Option<BlockHeader>,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
 
@@ -669,10 +703,10 @@ enum NodeInit {
 
     BC {
         parent: NodeRef, // TODO: do we need explicit edges?
-        link: NodeRef,
         hash: [u8; 32],
         height: u32,
         difficulty: Option<CompactDifficulty>,
+        header: BlockHeader,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
     },
@@ -680,7 +714,7 @@ enum NodeInit {
     BFT {
         parent: NodeRef, // TODO: do we need explicit edges?
         id: usize,
-        link: NodeRef,
+        links: VizBFTLinks,
         text: String,
         height: Option<u32>, // if None, works out from parent
         is_real: bool,
@@ -807,7 +841,6 @@ pub(crate) struct VizCtx {
     bc_lo: NodeRef,
     bc_hi: NodeRef,
     bc_work_max: u128,
-    bc_fake_hash: u64,
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
 
     bft_block_hi_i: usize,
@@ -828,10 +861,11 @@ impl VizCtx {
 
             NodeInit::Dyn {
                 parent,
-                link,
+                links,
                 kind,
                 text,
                 id,
+                header,
                 height,
                 difficulty,
                 txs_n,
@@ -840,11 +874,12 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links,
                         kind,
                         text,
                         id,
                         height, // TODO: this should be exclusively determined by parent for Dyn
+                        header,
                         difficulty,
                         txs_n,
                         is_real,
@@ -863,9 +898,9 @@ impl VizCtx {
 
             NodeInit::BC {
                 parent,
-                link,
                 hash,
                 height,
+                header,
                 difficulty,
                 txs_n,
                 is_real,
@@ -879,11 +914,15 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links: VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        },
 
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
                         height,
+                        header: Some(header),
                         difficulty,
                         txs_n,
                         is_real,
@@ -901,7 +940,7 @@ impl VizCtx {
 
             NodeInit::BFT {
                 parent,
-                link,
+                links,
                 height,
                 id,
                 text,
@@ -919,7 +958,7 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        link,
+                        links,
 
                         id: NodeId::Index(id),
                         difficulty: None,
@@ -927,6 +966,7 @@ impl VizCtx {
 
                         kind: NodeKind::BFT,
                         height,
+                        header: None,
                         text,
 
                         is_real,
@@ -1034,7 +1074,6 @@ impl Default for VizCtx {
 
             bc_lo: None,
             bc_hi: None,
-            bc_fake_hash: 0,
             bc_work_max: 0,
             missing_bc_parents: HashMap::new(),
 
@@ -1316,7 +1355,7 @@ fn hash_from_u64(v: u64) -> [u8; 32] {
 
 /// technically a line *segment*
 fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
-    let bgn_to_end = (line.1 - line.0);
+    let bgn_to_end = line.1 - line.0;
     let bgn_to_pt = pt - line.0;
     let len = bgn_to_end.length();
 
@@ -1519,22 +1558,24 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                        .as_ref()
+                        .map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
+                                Some(*block.header),
                             )
                         });
 
                     ctx.push_node(
                         NodeInit::BC {
                             parent: None,
-                            link: None,
 
                             hash: hash.0,
                             height: height.0,
+                            header: header.expect("valid header for BC"),
                             difficulty,
                             txs_n,
                             is_real: true,
@@ -1548,21 +1589,23 @@ pub async fn viz_main(
                 let _z = ZoneGuard::new("cache block");
 
                 if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
-                    let (difficulty, txs_n, parent_hash) =
-                        g.state.blocks[i].as_ref().map_or((None, 0, None), |block| {
+                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                        .as_ref()
+                        .map_or((None, 0, None, None), |block| {
                             (
                                 Some(block.header.difficulty_threshold),
                                 block.transactions.len() as u32,
                                 Some(block.header.previous_block_hash.0),
+                                Some(*block.header),
                             )
                         });
 
                     ctx.push_node(
                         NodeInit::BC {
                             parent: None, // new lowest
-                            link: None,
 
                             hash: hash.0,
+                            header: header.expect("valid header for BC"),
                             height: height.0,
                             difficulty,
                             txs_n,
@@ -1586,7 +1629,35 @@ pub async fn viz_main(
                     None
                 };
 
-                let s: Vec<&str> = blocks[i].1.split(":").collect();
+                let links: VizBFTLinks = {
+                    if let (Some(nominee), Some(finalized)) =
+                        (blocks[i].1.headers.last(), blocks[i].1.headers.first())
+                    {
+                        let (nominee_hash, finalized_hash) = (nominee.hash(), finalized.hash());
+                        let nominee = find_bc_node_by_hash(&ctx.nodes, &nominee_hash);
+                        let finalized = find_bc_node_by_hash(&ctx.nodes, &finalized_hash);
+                        // NOTE: this is likely just that the PoW node is off-screen enough to
+                        // not be requested
+                        // TODO: lazy links
+                        if nominee.is_none() {
+                            warn!("Could not find BFT-linked block with hash {}", nominee_hash);
+                        }
+                        if finalized.is_none() {
+                            warn!(
+                                "Could not find BFT-linked block with hash {}",
+                                finalized_hash
+                            );
+                        }
+                        VizBFTLinks { nominee, finalized }
+                    } else {
+                        warn!("BFT block does not have associated headers");
+                        VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        }
+                    }
+                };
+
                 ctx.bft_last_added = ctx.push_node(
                     NodeInit::BFT {
                         // TODO: distance should be proportional to difficulty of newer block
@@ -1595,15 +1666,8 @@ pub async fn viz_main(
 
                         id: i,
 
-                        text: s[0].to_owned(),
-                        link: {
-                            let bc: Option<u32> = s.get(1).unwrap_or(&"").trim().parse().ok();
-                            if let Some(bc_i) = bc {
-                                find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
-                            } else {
-                                None
-                            }
-                        },
+                        text: "".to_string(),
+                        links,
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
@@ -1706,6 +1770,7 @@ pub async fn viz_main(
                 "./zebra-crosslink/viz_state.json",
                 &g.state,
                 &ctx,
+                g.params,
             );
         }
 
@@ -1828,13 +1893,17 @@ pub async fn viz_main(
                             id,
 
                             text: node_str.clone(),
-                            link: {
+                            links: {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                if let Some(bc_i) = bc {
+                                let node = if let Some(bc_i) = bc {
                                     find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
                                 } else {
                                     None
-                                }
+                                };
+                                VizBFTLinks {
+                                    nominee: node,
+                                    finalized: node,
+                                } // TODO: account for non-sigma distances
                             },
                             height: ctx.bft_last_added.map_or(Some(0), |_| None),
                         },
@@ -1991,11 +2060,24 @@ pub async fn viz_main(
                 // create new node
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 let is_bft = hover_node.kind == NodeKind::BFT;
+                let header = if hover_node.kind == NodeKind::BC {
+                    Some(BlockHeader {
+                        version: 0,
+                        previous_block_hash: BlockHash(
+                            hover_node.hash().expect("should have a hash"),
+                        ),
+                        merkle_root: zebra_chain::block::merkle::Root([0; 32]),
+                        commitment_bytes: zebra_chain::fmt::HexDebug([0; 32]),
+                        time: chrono::Utc::now(),
+                        difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
+                        nonce: zebra_chain::fmt::HexDebug([0; 32]),
+                        solution: zebra_chain::work::equihash::Solution::for_proposal(),
+                    })
+                } else {
+                    None
+                };
                 let id = match hover_node.kind {
-                    NodeKind::BC => NodeId::Hash({
-                        ctx.bc_fake_hash += 1;
-                        hash_from_u64(ctx.bc_fake_hash)
-                    }),
+                    NodeKind::BC => NodeId::Hash(header.unwrap().hash().0),
                     NodeKind::BFT => {
                         ctx.bft_fake_id -= 1;
                         NodeId::Index(ctx.bft_fake_id + 1)
@@ -2005,7 +2087,10 @@ pub async fn viz_main(
                 let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
-                        link: None,
+                        links: VizBFTLinks {
+                            nominee: None,
+                            finalized: None,
+                        },
 
                         kind: hover_node.kind,
                         height: hover_node.height + 1,
@@ -2014,6 +2099,7 @@ pub async fn viz_main(
                         id,
                         is_real: false,
                         difficulty: None,
+                        header,
                         txs_n: (hover_node.kind == NodeKind::BC) as u32,
                     },
                     None,
@@ -2060,43 +2146,65 @@ pub async fn viz_main(
             ctx.nodes[node_i].acc += friction;
             dbg.new_force(node_i, friction);
 
-            // parent-child height - O(n) //////////////////////////////
+            // parent-child height/link height - O(n) //////////////////////////////
 
+            let mut target_pt = a_pt; // default to applying no force
+            let mut y_is_set = false;
+            let mut y_counterpart = None;
+
+            // match heights across links for BFT
+            let a_link = ctx.nodes[node_i].links.nominee;
+            if a_link.is_some() && a_link != drag_node_ref && a_link.unwrap() < ctx.nodes.len() {
+                let link = &ctx.nodes[a_link.unwrap()];
+                target_pt.y = link.pt.y;
+                y_counterpart = a_link;
+                y_is_set = true;
+            }
+
+            // align x, set parent distance for PoW work/as BFT fallback
             let a_parent = ctx.nodes[node_i].parent;
-            if (a_parent.is_some()
+            if a_parent.is_some()
                 && a_parent != drag_node_ref
-                && a_parent.unwrap() < ctx.nodes.len())
+                && a_parent.unwrap() < ctx.nodes.len()
             {
-                let parent_i = a_parent.unwrap();
-                let parent = &ctx.nodes[parent_i];
+                let parent = &ctx.nodes[a_parent.unwrap()];
+                target_pt.x = parent.pt.x;
 
-                let intended_dy = ctx.nodes[node_i]
-                    .difficulty
-                    .and_then(|difficulty| difficulty.to_work())
-                    .map_or(100., |work| {
-                        150. * work.as_u128() as f32 / ctx.bc_work_max as f32
-                    });
-                let intended_y = parent.pt.y - intended_dy;
+                if !y_is_set {
+                    let intended_dy = ctx.nodes[node_i]
+                        .difficulty
+                        .and_then(|difficulty| difficulty.to_work())
+                        .map_or(100., |work| {
+                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
+                        });
+                    target_pt.y = parent.pt.y - intended_dy;
+                    y_counterpart = a_parent;
+                    y_is_set = true;
+                }
+            }
 
+            {
+                // add link/parent based forces
                 // TODO: if the alignment force is ~proportional to the total amount of work
                 // above the parent, this could make sure the best chain is the most linear
                 let force = match spring_method {
                     SpringMethod::Old => {
-                        let target_pt = vec2(parent.pt.x, intended_y);
                         let v = a_pt - target_pt;
                         -vec2(0.1 * spring_stiffness * v.x, 0.5 * spring_stiffness * v.y)
                     }
 
                     SpringMethod::Coeff => Vec2 {
-                        x: spring_force(a_pt.x - parent.pt.x, a_vel.x, 0.5, 0.0003, 0.1),
-                        y: spring_force(a_pt.y - intended_y, a_vel.y, 0.5, 0.01, 0.2),
+                        x: spring_force(a_pt.x - target_pt.x, a_vel.x, 0.5, 0.0003, 0.1),
+                        y: spring_force(a_pt.y - target_pt.y, a_vel.y, 0.5, 0.01, 0.2),
                     },
                 };
 
                 ctx.nodes[node_i].acc += force;
                 dbg.new_force(node_i, force);
-                ctx.nodes[parent_i].acc -= force;
-                dbg.new_force(node_i, -force);
+                if let Some(i) = y_counterpart {
+                    ctx.nodes[i].acc -= force;
+                    dbg.new_force(i, -force);
+                }
             }
 
             // any-node/any-edge distance - O(n^2) //////////////////////////////
@@ -2150,9 +2258,9 @@ pub async fn viz_main(
                         let line_to_node = a_pt - pt;
                         let target_dist = 15.;
 
-                        if (pt != edge.0
+                        if pt != edge.0
                             && pt != edge.1
-                            && line_to_node.length_squared() < (target_dist * target_dist))
+                            && line_to_node.length_squared() < (target_dist * target_dist)
                         {
                             let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
                             let target_pt = if perp_line.dot(line_to_node) > 0. {
@@ -2276,7 +2384,11 @@ pub async fn viz_main(
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
-                if let Some(link) = node.link {
+                if let Some(link) = if false {
+                    node.links.nominee
+                } else {
+                    node.links.finalized
+                } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
             }
@@ -2359,7 +2471,26 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
-        if dev(true) {
+        if let Some(node_i) = hover_node_i.or(drag_node_ref) {
+            let mut link = ctx.nodes[node_i].links.nominee;
+            for i in 0..g.params.bc_confirmation_depth_sigma + 1 {
+                if link.is_none() {
+                    break;
+                }
+                let node = &ctx.nodes[link.unwrap()];
+
+                if i == g.params.bc_confirmation_depth_sigma {
+                    draw_circle(node.circle(), PINK);
+                    assert!(link == ctx.nodes[node_i].links.finalized);
+                } else {
+                    draw_ring(node.circle(), 3., 1., PINK);
+                }
+
+                link = node.parent;
+            }
+        }
+
+        if dev(false) {
             // draw forces
             // draw resultant force
             for node in &mut *ctx.nodes {
@@ -2391,11 +2522,13 @@ pub async fn viz_main(
                 "{:2.3} ms\n\
                 target: {}, offset: {}, zoom: {}\n\
                 screen offset: {:8.3}, drag: {:7.3}, vel: {:7.3}\n\
-                {} hashes\n\
+                {} PoW blocks\n\
                 Node height range: [{:?}, {:?}]\n\
                 req: {:?} == {:?}\n\
                 Proposed BFT: {:?}\n\
-                Tracked node: {:?}",
+                Tracked node: {:?}\n\
+                Final: {:?}\n\
+                Tip: {:?}",
                 time::get_frame_time() * 1000.,
                 world_camera.target,
                 world_camera.offset,
@@ -2410,6 +2543,8 @@ pub async fn viz_main(
                 abs_block_heights(g.bc_req_h, g.state.bc_tip),
                 g.state.internal_proposed_bft_string,
                 track_node_h,
+                g.state.latest_final_block,
+                g.state.bc_tip,
             );
             draw_multiline_text(
                 &dbg_str,

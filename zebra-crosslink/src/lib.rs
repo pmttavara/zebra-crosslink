@@ -25,8 +25,7 @@ use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
-use zebra_crosslink_chain::params::ZcashCrosslinkParameters;
-use zebra_crosslink_chain::BftPayload;
+use zebra_crosslink_chain::*;
 
 pub mod malctx;
 use malctx::*;
@@ -86,7 +85,7 @@ pub(crate) struct TFLServiceInternal {
     // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 
-    bft_blocks: Vec<(usize, String)>,
+    bft_blocks: Vec<(usize, BftPayload)>,
     proposed_bft_string: Option<String>,
 }
 
@@ -272,17 +271,18 @@ async fn tfl_final_block_height_hash(
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 
-async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
-    internal_handle: TFLServiceHandle,
-) -> Result<(), String> {
+async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
     let config = internal_handle.config.clone();
+    let params = &PROTOTYPE_PARAMETERS;
 
     #[cfg(feature = "viz_gui")]
     {
         let rt = tokio::runtime::Handle::current();
         let viz_tfl_handle = internal_handle.clone();
-        tokio::task::spawn_blocking(move || rt.block_on(viz::service_viz_requests(viz_tfl_handle)));
+        tokio::task::spawn_blocking(move || {
+            rt.block_on(viz::service_viz_requests(viz_tfl_handle, params))
+        });
     }
 
     fn rng_private_public_key_from_address(
@@ -460,145 +460,167 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                 timeout,
                                 reply,
                             } => {
-                                info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
-                                if new_bc_tip.is_some() {
+                                // Here it is important that, if we have previously built a value for this height and round,
+                                // we send back the very same value.
+                                let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
+                                    info!(value = %val.value.id(), "Re-using previously built value");
+                                    Some(val.clone())
+                                } else {
+                                    info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
+                                    if new_bc_tip.is_none() { error!("new_bc_tip is None"); None }
+                                    else {
+                                        let maybe_payload: Option<BftPayload> = loop {
+                                            use std::ops::Sub;
+                                            use zebra_chain::block::HeightDiff as BlockHeightDiff;
+                                            // Build BftPayload in a local scope to keep the outer scope tidier:
 
-                                    let maybe_payload: Option<BftPayload<ZCP>> = {
-                                        // Build BftPayload in a local scope to keep the outer scope tidier:
+                                            // TODO: Improve error handling:
+                                            // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
+                                            let (tip_height, tip_hash) = new_bc_tip.unwrap();
+                                            let finality_candidate_height = tip_height.sub(BlockHeightDiff::from((params.bc_confirmation_depth_sigma + params.bc_confirmation_depth_sigma + 1) as i64));
+                                            println!("finality candidate: {:?}", finality_candidate_height);
 
-                                        // TODO: Improve error handling:
-                                        // This entire `payload` definition block unwraps in multiple cases, because we do not yet know how to proceed if we cannot construct a payload.
-                                        let (tip_height, tip_hash) = new_bc_tip.unwrap();
-                                        let finality_candidate_height = tip_height.sat_sub(ZCP::BC_CONFIRMATION_DEPTH_SIGMA as i32);
+                                            let finality_candidate_height = if let Some(h) = finality_candidate_height {
+                                                h
+                                            } else {
+                                                info!("not enough blocks to enforce finality; tip height: {}", tip_height.0);
+                                                break None;
+                                            };
 
-                                        let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+                                            let latest_final_block = internal_handle.internal.lock().await.latest_final_block;
+                                            let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
-                                        let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
-                                            hash
-                                        } else {
-                                            // Error or unexpected response type:
-                                            panic!("TODO: improve error handling.");
+                                            if ! is_improved_final {
+                                                info!("candidate block can't be final: height {}, final height: {:?}", finality_candidate_height.0, latest_final_block);
+                                                break None;
+                                            }
+
+                                            let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+
+                                            let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+                                                hash
+                                            } else {
+                                                // Error or unexpected response type:
+                                                panic!("TODO: improve error handling.");
+                                                break None;
+                                            };
+
+                                            // NOTE: probably faster to request 2x as many blocks as we need rather than have another async call
+                                            let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+                                                known_blocks: vec![candidate_hash],
+                                                stop: None,
+                                            })
+                                            .await;
+
+                                            let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(mut hdrs)) = resp {
+                                                // TODO: do we want these in chain order or "walk-back order"
+                                                hdrs.truncate(params.bc_confirmation_depth_sigma as usize + 1);
+                                                hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                            } else {
+                                                // Error or unexpected response type:
+                                                panic!("TODO: improve error handling.");
+                                            };
+
+                                            break match BftPayload::try_from(params, headers) {
+                                                Ok(v) => Some(v),
+                                                Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
+                                            };
                                         };
 
-                                        let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                                            known_blocks: vec![candidate_hash],
-                                            stop: None,
-                                        })
-                                        .await;
-
-                                        let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
-
-                                            hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
-                                        } else {
-                                            // Error or unexpected response type:
-                                            panic!("TODO: improve error handling.");
-                                        };
-
-                                        BftPayload::try_from(headers).ok()
-                                    };
-
-                                    if let Some(payload) = maybe_payload {
-                                        todo!("use payload: {payload:?}");
-                                    }
-                                    drop(maybe_payload);
-
-                                    if let Some(propose_string) = internal_handle.internal.lock().await.proposed_bft_string.take() {
-                                        // Here it is important that, if we have previously built a value for this height and round,
-                                        // we send back the very same value.
-                                        let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
-                                            info!(value = %val.value.id(), "Re-using previously built value");
-                                            val.clone()
-                                        } else {
+                                        if let Some(payload) = maybe_payload {
+                                            // tokio::time::sleep(MAIN_LOOP_SLEEP_INTERVAL*3).await;
                                             let val = MalProposedValue {
                                                 height,
                                                 round,
                                                 valid_round: MalRound::Nil,
                                                 proposer: my_address,
-                                                value: MalValue::new(propose_string),
+                                                value: MalValue::new(payload),
                                                 validity: MalValidity::Valid,
                                                 // extension: None, TODO? "does not have this field"
                                             };
                                             prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
-                                            val
-                                        };
-                                        if reply.send(MalLocallyProposedValue::<MalContext>::new(
-                                                proposal.height,
-                                                proposal.round,
-                                                proposal.value.clone(),
-                                            )).is_err() {
-                                            error!("Failed to send GetValue reply");
+                                            Some(val)
+                                        } else { None }
+                                    }
+                                };
+
+                                if let Some(proposal) = proposal {
+                                    if reply.send(MalLocallyProposedValue::<MalContext>::new(
+                                            proposal.height,
+                                            proposal.round,
+                                            proposal.value.clone(),
+                                        )).is_err() {
+                                        error!("Failed to send GetValue reply");
+                                    }
+
+                                    // The POL round is always nil when we propose a newly built value.
+                                    // See L15/L18 of the Tendermint algorithm.
+                                    let pol_round = MalRound::Nil;
+
+                                    // NOTE(Sam): I have inlined the code from the example so that we
+                                    // can actually see the functionality. I am not sure what the purpose
+                                    // of this circus is. Why not just send the value with a simple signature?
+                                    // I am sure there is a good reason.
+
+                                    let mut hasher = sha3::Keccak256::new();
+                                    let mut parts = Vec::new();
+
+                                    // Init
+                                    // Include metadata about the proposal
+                                    {
+                                        parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
+                                            height: proposal.height,
+                                            round: proposal.round,
+                                            pol_round,
+                                            proposer: my_address,
+                                        }));
+
+                                        hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                                        hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                                    }
+
+                                    // Data
+                                    {
+                                        let pieces : Vec<MalStreamedProposalData> = proposal.value.fracture_into_pieces();
+                                        for piece in pieces {
+                                            hasher.update(&piece.data_bytes);
+
+                                            parts.push(MalStreamedProposalPart::Data(piece));
                                         }
+                                    }
 
-                                        // The POL round is always nil when we propose a newly built value.
-                                        // See L15/L18 of the Tendermint algorithm.
-                                        let pol_round = MalRound::Nil;
+                                    // Fin
+                                    // Sign the hash of the proposal parts
+                                    {
+                                        let hash = hasher.finalize().to_vec();
+                                        let signature = my_signing_provider.sign(&hash);
+                                        parts.push(MalStreamedProposalPart::Fin(MalStreamedProposalFin::new(signature)));
+                                    }
 
-                                        // NOTE(Sam): I have inlined the code from the example so that we
-                                        // can actually see the functionality. I am not sure what the purpose
-                                        // of this circus is. Why not just send the value with a simple signature?
-                                        // I am sure there is a good reason.
+                                    let stream_id = {
+                                        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                                        bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                                        bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
+                                        malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                                    };
 
-                                        let mut hasher = sha3::Keccak256::new();
-                                        let mut parts = Vec::new();
+                                    let mut msgs = Vec::with_capacity(parts.len() + 1);
+                                    let mut sequence = 0;
 
-                                        // Init
-                                        // Include metadata about the proposal
-                                        {
-                                            parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
-                                                height: proposal.height,
-                                                round: proposal.round,
-                                                pol_round,
-                                                proposer: my_address,
-                                            }));
+                                    for part in parts {
+                                        let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
+                                        sequence += 1;
+                                        msgs.push(msg);
+                                    }
 
-                                            hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
-                                            hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
-                                        }
+                                    msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
 
-                                        // Data
-                                        // Include each prime factor of the value as a separate proposal part
-                                        {
-                                            for factor in proposal.value.value.chars() {
-                                                parts.push(MalStreamedProposalPart::Data(MalStreamedProposalData::new(factor)));
-
-                                                let mut buf = [0u8; 4];
-                                                hasher.update(factor.encode_utf8(&mut buf).as_bytes());
-                                            }
-                                        }
-
-                                        // Fin
-                                        // Sign the hash of the proposal parts
-                                        {
-                                            let hash = hasher.finalize().to_vec();
-                                            let signature = my_signing_provider.sign(&hash);
-                                            parts.push(MalStreamedProposalPart::Fin(MalStreamedProposalFin::new(signature)));
-                                        }
-
-                                        let stream_id = {
-                                            let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
-                                            bytes.extend_from_slice(&height.as_u64().to_be_bytes());
-                                            bytes.extend_from_slice(&round.as_u32().unwrap().to_be_bytes());
-                                            malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
-                                        };
-
-                                        let mut msgs = Vec::with_capacity(parts.len() + 1);
-                                        let mut sequence = 0;
-
-                                        for part in parts {
-                                            let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
-                                            sequence += 1;
-                                            msgs.push(msg);
-                                        }
-
-                                        msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
-
-                                        for stream_message in msgs {
-                                            info!(%height, %round, "Streaming proposal part: {stream_message:?}");
-                                            channels
-                                                .network
-                                                .send(NetworkMsg::PublishProposalPart(stream_message))
-                                                .await.unwrap();
-                                        }
+                                    for stream_message in msgs {
+                                        info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                                        channels
+                                            .network
+                                            .send(NetworkMsg::PublishProposalPart(stream_message))
+                                            .await.unwrap();
                                     }
                                 }
                             },
@@ -668,10 +690,14 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
 
+                                let new_final_hash   = decided_value.value.value.headers.first().expect("at least 1 header").hash();
+                                let new_final_height = block_height_from_hash(&call, new_final_hash).await.expect("hash should map to a height");
+
                                 let mut internal = internal_handle.internal.lock().await;
                                 let insert_i = certificate.height.as_u64() as usize - 1;
                                 let parent_i = insert_i.saturating_sub(1); // just a simple chain
-                                internal.bft_blocks.insert(insert_i, (parent_i, format!("{:?}", decided_value.value.value)));
+                                internal.bft_blocks.insert(insert_i, (parent_i, decided_value.value.value.clone()));
+                                internal.latest_final_block = Some((new_final_height, new_final_hash));
 
                                 // When that happens, we store the decided value in our store
                                 // TODO: state.commit(certificate, extensions).await?;
@@ -776,8 +802,7 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                                 // The correctness of the hash computation relies on the parts being ordered by sequence
                                                 // number, which is guaranteed by the `PartStreamsMap`.
                                                 for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                                    let mut buf = [0u8; 4];
-                                                    hasher.update(part.factor.encode_utf8(&mut buf).as_bytes());
+                                                    hasher.update(&part.data_bytes);
                                                 }
 
                                                 hasher.finalize()
@@ -803,17 +828,15 @@ async fn tfl_service_main_loop<ZCP: ZcashCrosslinkParameters>(
                                         let value : MalProposedValue::<MalContext> = {
                                             let init = parts.init().unwrap();
 
-                                            let mut string_value = String::new();
-                                            for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                                string_value.push(part.factor);
-                                            }
+                                            let pieces : Vec<MalStreamedProposalData> = parts.parts.iter().filter_map(|part| part.as_data()).cloned().collect();
+                                            let value = MalValue::reconstruct_from_pieces(&pieces);
 
                                             MalProposedValue {
                                                 height: parts.height,
                                                 round: parts.round,
                                                 valid_round: init.pol_round,
                                                 proposer: parts.proposer,
-                                                value: MalValue::new(string_value),
+                                                value,
                                                 validity: MalValidity::Valid,
                                             }
                                         };

@@ -38,19 +38,11 @@ use malachitebft_core_consensus::SignedConsensusMsg;
 use malachitebft_core_types::{AggregatedSignature, PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
+use zebra_crosslink_chain::*;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MalStreamedProposalData {
-    pub factor: char,
-}
-
-impl MalStreamedProposalData {
-    pub fn new(factor: char) -> Self {
-        Self { factor }
-    }
-
-    pub fn size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-    }
+    pub data_bytes: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -166,9 +158,9 @@ impl Protobuf for MalStreamedProposalPart {
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("proposer"))
                     .and_then(MalAddress::from_proto)?,
             })),
-            Part::Data(data) => Ok(Self::Data(MalStreamedProposalData::new(
-                char::from_u32(data.factor as u32).unwrap(),
-            ))),
+            Part::Data(data) => Ok(Self::Data(MalStreamedProposalData {
+                data_bytes: data.data_bytes.to_vec(),
+            })),
             Part::Fin(fin) => Ok(Self::Fin(MalStreamedProposalFin {
                 signature: fin
                     .signature
@@ -193,7 +185,7 @@ impl Protobuf for MalStreamedProposalPart {
             }),
             Self::Data(data) => Ok(Self::Proto {
                 part: Some(Part::Data(malctx_schema_proto::StreamedProposalData {
-                    factor: data.factor as u64,
+                    data_bytes: data.data_bytes.clone().into(),
                 })),
             }),
             Self::Fin(fin) => Ok(Self::Proto {
@@ -409,12 +401,12 @@ impl Protobuf for MalValueId {
 /// The value to decide on
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MalValue {
-    pub value: String,
+    pub value: BftPayload,
     pub extensions: Bytes,
 }
 
 impl MalValue {
-    pub fn new(value: String) -> Self {
+    pub fn new(value: BftPayload) -> Self {
         Self {
             value,
             extensions: Bytes::new(),
@@ -422,17 +414,50 @@ impl MalValue {
     }
 
     pub fn id(&self) -> MalValueId {
-        let mut dumb_hash: u64 = 0;
-        for c in self.value.chars() {
-            dumb_hash += c as u64;
-            dumb_hash = dumb_hash >> 1 | dumb_hash << 63;
+        let mut acc: u64 = 0;
+        for header in &self.value.headers {
+            let hash = header.hash().0;
+            let h1 = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+            let h2 = u64::from_le_bytes(hash[8..16].try_into().unwrap());
+            let h3 = u64::from_le_bytes(hash[16..24].try_into().unwrap());
+            let h4 = u64::from_le_bytes(hash[24..32].try_into().unwrap());
+            acc ^= h1 ^ h2 ^ h3 ^ h4;
         }
-        dumb_hash += self.value.len() as u64;
-        MalValueId(dumb_hash)
+        // NOTE(Sam): I do not think this is supposed to include extensions?
+        MalValueId(acc)
     }
 
-    pub fn size_bytes(&self) -> usize {
-        std::mem::size_of_val(&self.value) + self.extensions.len()
+    //pub fn size_bytes(&self) -> usize {
+    //    std::mem::size_of_val(&self.value) + self.extensions.len()
+    //}
+
+    pub fn fracture_into_pieces(&self) -> Vec<MalStreamedProposalData> {
+        use zebra_chain::serialization::ZcashSerialize;
+        let mut array = Vec::new();
+        for header in &self.value.headers {
+            array.push(MalStreamedProposalData {
+                data_bytes: header.zcash_serialize_to_vec().unwrap(),
+            });
+        }
+        array.push(MalStreamedProposalData {
+            data_bytes: self.extensions.to_vec(),
+        });
+        array
+    }
+
+    pub fn reconstruct_from_pieces(pieces: &Vec<MalStreamedProposalData>) -> Self {
+        use zebra_chain::serialization::ZcashDeserialize;
+        let extensions = pieces.last().unwrap().data_bytes.clone().into();
+        let rem = &pieces[0..pieces.len() - 1];
+        let mut array = Vec::new();
+        for p in rem {
+            let mut slice: &[u8] = &p.data_bytes;
+            array.push(ZcashDeserialize::zcash_deserialize(&mut slice).unwrap());
+        }
+        Self {
+            value: BftPayload { headers: array },
+            extensions,
+        }
     }
 }
 
@@ -449,40 +474,43 @@ impl Protobuf for MalValue {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        let bytes = proto
+        use zebra_chain::serialization::ZcashDeserialize;
+        let value_bytes = proto
             .value
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?;
+        let extension_bytes = proto
+            .extensions
+            .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("extensions"))?;
 
-        let len: usize = *bytes.get(0).ok_or(ProtoError::Other(format!(
-            "Too few bytes, expected at least 1",
-        )))? as usize;
-
-        let string_utf8 = bytes.slice(1..1 + len);
-        let extensions = bytes.slice(1 + len..);
+        let mut slice: &[u8] = &value_bytes;
+        let mut array = Vec::new();
+        loop {
+            if let Ok(v) = ZcashDeserialize::zcash_deserialize(&mut slice) {
+                array.push(v);
+            } else {
+                break;
+            }
+        }
 
         Ok(MalValue {
-            value: String::from_utf8((&string_utf8).to_vec())
-                .map_err(|error| ProtoError::Other(format!("Not a string! {:?}", error)))?,
-            extensions,
+            value: BftPayload { headers: array },
+            extensions: extension_bytes,
         })
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
         use bytes::BufMut;
+        use zebra_chain::serialization::ZcashSerialize;
+
         let mut bytes = BytesMut::new();
-        if self.value.len() > 255 {
-            return Err(ProtoError::Other(format!(
-                "String too long!, {} > 255",
-                self.value.len()
-            )));
+        for header in &self.value.headers {
+            bytes.extend_from_slice(&header.zcash_serialize_to_vec().unwrap());
         }
-        bytes.put_u8(self.value.len() as u8);
-        bytes.extend_from_slice(&self.value.as_bytes());
-        bytes.extend_from_slice(&self.extensions);
 
         Ok(malctx_schema_proto::Value {
             value: Some(bytes.freeze()),
+            extensions: Some(self.extensions.clone()),
         })
     }
 }
