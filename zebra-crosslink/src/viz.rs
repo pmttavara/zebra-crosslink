@@ -774,18 +774,6 @@ impl ByHandle<Node, NodeRef> for [Node] {
     }
 }
 
-// TODO: extract impl Eq for Node?
-fn find_bc_node_by_hash(nodes: &[Node], hash: &BlockHash) -> NodeRef {
-    let _z = ZoneGuard::new("find_bc_node_by_hash");
-    nodes.iter().position(|node| {
-        node.kind == NodeKind::BC
-            && match node.id {
-                NodeId::Hash(h) => h == hash.0,
-                _ => false,
-            }
-    })
-}
-
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     let _z = ZoneGuard::new("find_bc_node_i_by_height");
     nodes
@@ -854,8 +842,6 @@ impl VizCtx {
         // TODO: dynamically update length & rad
         // TODO: could overlay internal circle/rings for shielded/transparent
         // TODO: track unfilled parents
-        let nodes = &mut self.nodes;
-
         let (mut new_node, needs_fixup): (Node, bool) = match node {
             NodeInit::Node { node, needs_fixup } => (node, needs_fixup),
 
@@ -909,7 +895,7 @@ impl VizCtx {
                 let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
 
                 // DUP
-                assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                assert!(parent.is_none() || self.nodes[parent.unwrap()].height + 1 == height);
 
                 (
                     Node {
@@ -949,10 +935,10 @@ impl VizCtx {
                 let rad = 10.;
                 // DUP
                 let height = if let Some(height) = height {
-                    assert!(parent.is_none() || nodes[parent.unwrap()].height + 1 == height);
+                    assert!(parent.is_none() || self.nodes[parent.unwrap()].height + 1 == height);
                     height
                 } else {
-                    nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+                    self.nodes[parent.expect("Need at least 1 of parent or height")].height + 1
                 };
 
                 (
@@ -981,19 +967,19 @@ impl VizCtx {
             }
         };
 
-        let i = nodes.len();
+        let i = self.nodes.len();
         let node_ref = Some(i);
 
         if new_node.kind == NodeKind::BC {
             // find & link possible parent
             if let Some(parent_hash) = parent_hash {
-                let parent = find_bc_node_by_hash(nodes, &BlockHash(parent_hash));
+                let parent = self.find_bc_node_by_hash(&BlockHash(parent_hash));
                 if let Some(parent_i) = parent {
                     assert!(new_node.parent.is_none() || new_node.parent.unwrap() == parent_i);
                     assert!(
-                        nodes[parent_i].height + 1 == new_node.height,
+                        self.nodes[parent_i].height + 1 == new_node.height,
                         "parent height: {}, new height: {}",
-                        nodes[parent_i].height,
+                        self.nodes[parent_i].height,
                         new_node.height
                     );
 
@@ -1007,23 +993,23 @@ impl VizCtx {
             if let Some(node_hash) = new_node.hash() {
                 if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
                     self.missing_bc_parents.remove(&node_hash);
-                    new_node.pt = nodes[child].pt + vec2(0., nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                    new_node.pt = self.nodes[child].pt + vec2(0., self.nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
-                    assert!(nodes[child].parent.is_none());
+                    assert!(self.nodes[child].parent.is_none());
                     assert!(
-                        nodes[child].height == new_node.height + 1,
+                        self.nodes[child].height == new_node.height + 1,
                         "child height: {}, new height: {}",
-                        nodes[child].height,
+                        self.nodes[child].height,
                         new_node.height
                     );
-                    nodes[child].parent = node_ref;
+                    self.nodes[child].parent = node_ref;
                 }
             }
         }
 
         if needs_fixup {
             if let Some(parent) = new_node.parent {
-                new_node.pt = nodes[parent].pt - vec2(0., nodes[parent].rad + new_node.rad + 30.);
+                new_node.pt = self.nodes[parent].pt - vec2(0., self.nodes[parent].rad + new_node.rad + 30.);
             }
         }
 
@@ -1036,11 +1022,11 @@ impl VizCtx {
                     self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
                 }
 
-                if self.bc_lo.is_none() || new_node.height < nodes[self.bc_lo.unwrap()].height {
+                if self.bc_lo.is_none() || new_node.height < self.nodes[self.bc_lo.unwrap()].height {
                     self.bc_lo = node_ref;
                 }
 
-                if self.bc_hi.is_none() || new_node.height > nodes[self.bc_hi.unwrap()].height {
+                if self.bc_hi.is_none() || new_node.height > self.nodes[self.bc_hi.unwrap()].height {
                     self.bc_hi = node_ref;
                 }
             }
@@ -1048,7 +1034,7 @@ impl VizCtx {
             NodeKind::BFT => {}
         }
 
-        nodes.push(new_node);
+        self.nodes.push(new_node);
         node_ref
     }
 
@@ -1058,6 +1044,19 @@ impl VizCtx {
         self.bc_work_max = 0;
         self.missing_bc_parents.clear();
         self.bft_block_hi_i = 0;
+    }
+
+
+    // TODO: extract impl Eq for Node?
+    fn find_bc_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
+        let _z = ZoneGuard::new("find_bc_node_by_hash");
+        self.nodes.iter().position(|node| {
+            node.kind == NodeKind::BC
+                && match node.id {
+                    NodeId::Hash(h) => h == hash.0,
+                    _ => false,
+                }
+        })
     }
 }
 
@@ -1557,7 +1556,7 @@ pub async fn viz_main(
             for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
                 let _z = ZoneGuard::new("cache block");
 
-                if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
+                if ctx.find_bc_node_by_hash(hash).is_none() {
                     let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
                         .as_ref()
                         .map_or((None, 0, None, None), |block| {
@@ -1588,7 +1587,7 @@ pub async fn viz_main(
             for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
                 let _z = ZoneGuard::new("cache block");
 
-                if find_bc_node_by_hash(&ctx.nodes, hash).is_none() {
+                if ctx.find_bc_node_by_hash(hash).is_none() {
                     let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
                         .as_ref()
                         .map_or((None, 0, None, None), |block| {
@@ -1634,8 +1633,8 @@ pub async fn viz_main(
                         (blocks[i].1.headers.last(), blocks[i].1.headers.first())
                     {
                         let (nominee_hash, finalized_hash) = (nominee.hash(), finalized.hash());
-                        let nominee = find_bc_node_by_hash(&ctx.nodes, &nominee_hash);
-                        let finalized = find_bc_node_by_hash(&ctx.nodes, &finalized_hash);
+                        let nominee = ctx.find_bc_node_by_hash(&nominee_hash);
+                        let finalized = ctx.find_bc_node_by_hash(&finalized_hash);
                         // NOTE: this is likely just that the PoW node is off-screen enough to
                         // not be requested
                         // TODO: lazy links
