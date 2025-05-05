@@ -14,9 +14,12 @@ use macroquad::{
     ui::{self, hash, root_ui, widgets},
     window,
 };
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::thread::JoinHandle;
+use std::{
+    cmp::{min, max},
+    collections::HashMap,
+    sync::Arc,
+    thread::JoinHandle,
+};
 use zebra_chain::{
     transaction::{LockTime, Transaction},
     work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
@@ -78,6 +81,68 @@ struct BBox {
     max: Vec2,
 }
 
+impl BBox {
+    fn min(a: f32, b: f32) -> f32 {
+        assert!(!a.is_nan());
+        assert!(!b.is_nan());
+
+        if a <= b {
+            a
+        } else {
+            b
+        }
+    }
+
+    fn max(a: f32, b: f32) -> f32 {
+        assert!(!a.is_nan());
+        assert!(!b.is_nan());
+
+        if a <= b {
+            b
+        } else {
+            a
+        }
+    }
+
+    fn min_max(a: f32, b: f32) -> (f32, f32) {
+        assert!(!a.is_nan());
+        assert!(!b.is_nan());
+
+        if a <= b {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    }
+
+    fn union(a: BBox, b: BBox) -> BBox {
+        assert!(a.min.x <= a.max.x);
+        assert!(a.min.y <= a.max.y);
+        assert!(b.min.x <= b.max.x);
+        assert!(b.min.y <= b.max.y);
+
+        BBox {
+            min: vec2(Self::min(a.min.x, b.min.x), Self::min(a.min.y, b.min.y)),
+            max: vec2(Self::max(a.max.x, b.max.x), Self::max(a.max.y, b.max.y)),
+        }
+    }
+
+    fn expand(a: BBox, v: Vec2) -> BBox {
+        BBox {
+            min: a.min - v,
+            max: a.max + v,
+        }
+    }
+
+    fn clamp(a: BBox, v: Vec2) -> Vec2 {
+        v.clamp(a.min, a.max)
+    }
+
+    fn update_union(&mut self, b: BBox) {
+        *self = Self::union(*self, b);
+    }
+}
+
 impl _0 for BBox {
     const _0: BBox = BBox {
         min: Vec2::_0,
@@ -94,6 +159,16 @@ impl From<Rect> for BBox {
         }
     }
 }
+
+impl From<Vec2> for BBox {
+    fn from(v: Vec2) -> Self {
+        BBox {
+            min: v,
+            max: v,
+        }
+    }
+}
+
 
 impl From<BBox> for Rect {
     fn from(bbox: BBox) -> Self {
@@ -554,11 +629,11 @@ pub async fn service_viz_requests(
             };
 
             let (h_lo, h_hi) = (
-                std::cmp::min(
+                min(
                     tip_height_hash.0,
                     abs_block_height(lo, Some(tip_height_hash)),
                 ),
-                std::cmp::min(
+                min(
                     tip_height_hash.0,
                     abs_block_height(hi, Some(tip_height_hash)),
                 ),
@@ -825,6 +900,7 @@ pub(crate) struct VizCtx {
     mouse_drag_d: Vec2,
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
+    nodes_bbox: BBox,
 
     bc_lo: NodeRef,
     bc_hi: NodeRef,
@@ -1048,6 +1124,7 @@ impl VizCtx {
         self.missing_bc_parents.clear();
         self.bft_block_hi_i = 0;
         self.bc_by_hash.clear();
+        self.nodes_bbox = BBox::_0;
     }
 
 
@@ -1067,6 +1144,7 @@ impl Default for VizCtx {
             mouse_drag_d: Vec2::_0,
             old_mouse_pt: Vec2::_0,
             nodes: Vec::with_capacity(512),
+            nodes_bbox: BBox::_0,
 
             bc_lo: None,
             bc_hi: None,
@@ -1491,7 +1569,7 @@ pub async fn viz_main(
                 let mut bids_c = 0;
                 let mut bids = [0u32; 2];
 
-                let req_o = std::cmp::min(5, h_hi.0 - h_lo.0);
+                let req_o = min(5, h_hi.0 - h_lo.0);
 
                 if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, ctx.bc_lo) {
                     if on_screen_lo <= ctx.nodes[bc_lo].height + req_o {
@@ -1686,6 +1764,9 @@ pub async fn viz_main(
             ..Default::default()
         };
 
+        let world_screen_size = world_camera.screen_to_world(vec2(window::screen_width(), window::screen_height())) -
+            world_camera.screen_to_world(Vec2::_0);
+
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
             let (x, y) = mouse_position();
@@ -1771,6 +1852,7 @@ pub async fn viz_main(
             );
         }
 
+        ctx.fix_screen_o = BBox::clamp(BBox::expand(ctx.nodes_bbox, 0.5 * world_screen_size), ctx.fix_screen_o);
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
 
         // WORLD SPACE DRAWING ////////////////////////////////////////
@@ -2366,6 +2448,8 @@ pub async fn viz_main(
             assert!(!node.acc.x.is_nan());
             assert!(!node.acc.y.is_nan());
 
+            ctx.nodes_bbox.update_union(BBox::from(node.pt));
+
             // NOTE: grows *upwards*
             let circle = node.circle();
 
@@ -2396,8 +2480,8 @@ pub async fn viz_main(
                 // node is on screen
 
                 let is_final = if node.kind == NodeKind::BC {
-                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| std::cmp::min(h, node.height)));
-                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| std::cmp::max(h, node.height)));
+                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
+                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
                     if let Some((final_h, _)) = g.state.latest_final_block {
                         node.height <= final_h.0
                     } else {
