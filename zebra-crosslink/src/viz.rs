@@ -830,6 +830,7 @@ pub(crate) struct VizCtx {
     bc_hi: NodeRef,
     bc_work_max: u128,
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
+    bc_by_hash: HashMap<[u8; 32], NodeRef>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
 
     bft_block_hi_i: usize,
     bft_last_added: NodeRef,
@@ -991,6 +992,8 @@ impl VizCtx {
 
             // find & link possible child
             if let Some(node_hash) = new_node.hash() {
+                self.bc_by_hash.insert(node_hash, node_ref);
+
                 if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
                     self.missing_bc_parents.remove(&node_hash);
                     new_node.pt = self.nodes[child].pt + vec2(0., self.nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
@@ -1044,19 +1047,13 @@ impl VizCtx {
         self.bc_work_max = 0;
         self.missing_bc_parents.clear();
         self.bft_block_hi_i = 0;
+        self.bc_by_hash.clear();
     }
 
 
-    // TODO: extract impl Eq for Node?
     fn find_bc_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
         let _z = ZoneGuard::new("find_bc_node_by_hash");
-        self.nodes.iter().position(|node| {
-            node.kind == NodeKind::BC
-                && match node.id {
-                    NodeId::Hash(h) => h == hash.0,
-                    _ => false,
-                }
-        })
+        *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
     }
 }
 
@@ -1075,6 +1072,7 @@ impl Default for VizCtx {
             bc_hi: None,
             bc_work_max: 0,
             missing_bc_parents: HashMap::new(),
+            bc_by_hash: HashMap::new(),
 
             bft_block_hi_i: 0,
             bft_last_added: None,
