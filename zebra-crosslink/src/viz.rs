@@ -81,40 +81,41 @@ struct BBox {
     max: Vec2,
 }
 
+fn flt_min(a: f32, b: f32) -> f32 {
+    assert!(!a.is_nan());
+    assert!(!b.is_nan());
+
+    if a <= b {
+        a
+    } else {
+        b
+    }
+}
+
+fn flt_max(a: f32, b: f32) -> f32 {
+    assert!(!a.is_nan());
+    assert!(!b.is_nan());
+
+    if a <= b {
+        b
+    } else {
+        a
+    }
+}
+
+fn flt_min_max(a: f32, b: f32) -> (f32, f32) {
+    assert!(!a.is_nan());
+    assert!(!b.is_nan());
+
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+
 impl BBox {
-    fn min(a: f32, b: f32) -> f32 {
-        assert!(!a.is_nan());
-        assert!(!b.is_nan());
-
-        if a <= b {
-            a
-        } else {
-            b
-        }
-    }
-
-    fn max(a: f32, b: f32) -> f32 {
-        assert!(!a.is_nan());
-        assert!(!b.is_nan());
-
-        if a <= b {
-            b
-        } else {
-            a
-        }
-    }
-
-    fn min_max(a: f32, b: f32) -> (f32, f32) {
-        assert!(!a.is_nan());
-        assert!(!b.is_nan());
-
-        if a <= b {
-            (a, b)
-        } else {
-            (b, a)
-        }
-    }
-
     fn union(a: BBox, b: BBox) -> BBox {
         assert!(a.min.x <= a.max.x);
         assert!(a.min.y <= a.max.y);
@@ -122,8 +123,8 @@ impl BBox {
         assert!(b.min.y <= b.max.y);
 
         BBox {
-            min: vec2(Self::min(a.min.x, b.min.x), Self::min(a.min.y, b.min.y)),
-            max: vec2(Self::max(a.max.x, b.max.x), Self::max(a.max.y, b.max.y)),
+            min: vec2(flt_min(a.min.x, b.min.x), flt_min(a.min.y, b.min.y)),
+            max: vec2(flt_max(a.max.x, b.max.x), flt_max(a.max.y, b.max.y)),
         }
     }
 
@@ -889,6 +890,20 @@ enum MouseDrag {
     },
 }
 
+#[derive(Debug, Clone)]
+struct AccelEntry {
+    nodes: Vec<NodeRef>,
+}
+
+/// (Spatial) Acceleration
+#[derive(Debug, Clone)]
+struct Accel {
+    y_to_nodes: HashMap<i64, AccelEntry>,
+}
+
+const ACCEL_GRP_SIZE : f32 = 1620.;
+
+
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
 pub(crate) struct VizCtx {
@@ -901,6 +916,7 @@ pub(crate) struct VizCtx {
     old_mouse_pt: Vec2,
     nodes: Vec<Node>,
     nodes_bbox: BBox,
+    accel: Accel,
 
     bc_lo: NodeRef,
     bc_hi: NodeRef,
@@ -1125,12 +1141,45 @@ impl VizCtx {
         self.bft_block_hi_i = 0;
         self.bc_by_hash.clear();
         self.nodes_bbox = BBox::_0;
+        self.accel.y_to_nodes.clear();
     }
 
 
     fn find_bc_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
         let _z = ZoneGuard::new("find_bc_node_by_hash");
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
+    }
+
+    fn move_node_to(&mut self, node_i: usize, new_pos: Vec2) {
+        let old_pos = self.nodes[node_i].pt;
+        self.nodes[node_i].pt = new_pos;
+
+        // find group
+        let old_y = (old_pos.y * (1./ACCEL_GRP_SIZE)).ceil() as i64;
+        let new_y = (new_pos.y * (1./ACCEL_GRP_SIZE)).ceil() as i64;
+
+        let node_ref = Some(node_i);
+
+        // remove from old location
+        if old_y != new_y {
+            if let Some(accel) = self.accel.y_to_nodes.get_mut(&old_y) {
+                let accel_i = accel.nodes.iter().position(|node| *node == node_ref);
+                if let Some(accel_i) = accel_i {
+                    accel.nodes.swap_remove(accel_i);
+                }
+
+                if accel.nodes.is_empty() {
+                    self.accel.y_to_nodes.remove(&old_y);
+                }
+            }
+        }
+
+        // add to new location
+        self.accel.y_to_nodes.entry(new_y).and_modify(|accel| {
+            if let None = accel.nodes.iter().position(|node| *node == node_ref) {
+                accel.nodes.push(node_ref);
+            }
+        }).or_insert(AccelEntry { nodes: vec![node_ref] });
     }
 }
 
@@ -1145,6 +1194,9 @@ impl Default for VizCtx {
             old_mouse_pt: Vec2::_0,
             nodes: Vec::with_capacity(512),
             nodes_bbox: BBox::_0,
+            accel: Accel {
+                y_to_nodes: HashMap::new(),
+            },
 
             bc_lo: None,
             bc_hi: None,
@@ -1863,6 +1915,7 @@ pub async fn viz_main(
                 .screen_to_world(vec2(window::screen_width(), window::screen_height())),
         };
 
+
         const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
         let world_bbox = if TEST_BBOX {
             // test bounding box functionality by shrinking it on screen
@@ -1887,6 +1940,36 @@ pub async fn viz_main(
         if TEST_BBOX {
             draw_rect_lines(world_rect, 2., MAGENTA);
         }
+
+        if dev(true) {
+            let col = LIGHTGRAY;
+            for (y_grp, accel) in &ctx.accel.y_to_nodes {
+                let y = *y_grp as f32 * ACCEL_GRP_SIZE; // draw at top of section
+                let ol = (flt_max(world_bbox.min.y, y - ACCEL_GRP_SIZE), flt_min(world_bbox.max.y, y));
+                if ol.0 < ol.1 {
+                    let mut l = vec2(world_bbox.min.x, y);
+                    let mut r = vec2(world_bbox.max.x, y);
+                    draw_line(l, r, 1., col);
+                    l.y -= ACCEL_GRP_SIZE;
+                    r.y -= ACCEL_GRP_SIZE;
+                    draw_line(l, r, 1., col);
+
+                    let mut str = format!("y: {}, {} [ ", y, accel.nodes.len());
+                    for node_ref in &accel.nodes {
+                        let new_str = if let Some(node_i) = node_ref {
+                            &format!("{} (h: {:?}), ", node_i, ctx.nodes[*node_i].height)
+                        } else {
+                            "None, "
+                        };
+                        str.push_str(new_str);
+                    }
+                    str.push_str("]");
+
+                    draw_text(&str, l + vec2(ch_w, ch_w), 14., col);
+                }
+            }
+        }
+
 
         if dev(false) {
             ui_camera_window(
@@ -2069,9 +2152,10 @@ pub async fn viz_main(
             mouse_to_node,
         } = ctx.mouse_drag
         {
-            let drag_node = &mut ctx.nodes[node.unwrap()];
+            let node_i = node.unwrap();
+            let drag_node = &mut ctx.nodes[node_i];
             drag_node.vel = world_mouse_pt - old_world_mouse_pt;
-            drag_node.pt = world_mouse_pt + mouse_to_node;
+            ctx.move_node_to(node_i, world_mouse_pt + mouse_to_node);
             node
         } else {
             None
@@ -2376,13 +2460,13 @@ pub async fn viz_main(
 
         if true {
             // apply forces
-            for node in &mut *ctx.nodes {
-                node.vel += node.acc * DT;
-                node.pt += node.vel * DT;
+            for node_i in 0..ctx.nodes.len() {
+                ctx.nodes[node_i].vel = ctx.nodes[node_i].vel + ctx.nodes[node_i].acc * DT;
+                ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
 
                 match spring_method {
-                    SpringMethod::Old => node.acc = -0.5 * spring_stiffness * node.vel, // TODO: or slight drag?
-                    _ => node.acc = Vec2::_0,
+                    SpringMethod::Old => ctx.nodes[node_i].acc = -0.5 * spring_stiffness * ctx.nodes[node_i].vel, // TODO: or slight drag?
+                    _ => ctx.nodes[node_i].acc = Vec2::_0,
                 }
             }
         }
