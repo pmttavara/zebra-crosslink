@@ -902,6 +902,7 @@ struct Accel {
 }
 
 const ACCEL_GRP_SIZE : f32 = 1620.;
+// const ACCEL_GRP_SIZE : f32 = 220.;
 
 
 /// Common GUI state that may need to be passed around
@@ -1129,7 +1130,10 @@ impl VizCtx {
             NodeKind::BFT => {}
         }
 
+        let pos = new_node.pt;
         self.nodes.push(new_node);
+
+        self.move_node_to(i, pos);
         node_ref
     }
 
@@ -2295,9 +2299,24 @@ pub async fn viz_main(
         }
         let spring_method = SpringMethod::Coeff;
 
+        let min_grp = (world_bbox.min.y * (1./ACCEL_GRP_SIZE)).ceil() as i64 - 1;
+        let max_grp = (world_bbox.max.y * (1./ACCEL_GRP_SIZE)).ceil() as i64 + 1;
+        let mut on_screen_node_idxs: Vec<usize> = Vec::with_capacity(ctx.nodes.len());
+        for grp in min_grp..=max_grp {
+            if let Some(accel) = ctx.accel.y_to_nodes.get(&grp) {
+                for node_ref in &accel.nodes {
+                    if let Some(node_i) = node_ref {
+                        on_screen_node_idxs.push(*node_i);
+                    }
+                }
+            }
+        }
+
+
         // calculate forces
         let spring_stiffness = 160.;
-        for node_i in 0..ctx.nodes.len() {
+        for node_i in &on_screen_node_idxs {
+            let node_i = *node_i;
             if Some(node_i) == drag_node_ref {
                 continue;
             }
@@ -2374,7 +2393,8 @@ pub async fn viz_main(
 
             // any-node/any-edge distance - O(n^2) //////////////////////////////
             // TODO: spatial partitioning
-            for node_i2 in 0..ctx.nodes.len() {
+            for node_i2 in &on_screen_node_idxs {
+                let node_i2 = *node_i2;
                 if Some(node_i2) == drag_node_ref {
                     continue;
                 }
@@ -2460,7 +2480,8 @@ pub async fn viz_main(
 
         if true {
             // apply forces
-            for node_i in 0..ctx.nodes.len() {
+            for node_i in &on_screen_node_idxs {
+                let node_i = *node_i;
                 ctx.nodes[node_i].vel = ctx.nodes[node_i].vel + ctx.nodes[node_i].acc * DT;
                 ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
 
