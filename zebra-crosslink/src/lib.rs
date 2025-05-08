@@ -698,8 +698,17 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                 if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
                                     let mut internal = internal_handle.internal.lock().await;
                                     let insert_i = certificate.height.as_u64() as usize - 1;
-                                    let parent_i = insert_i.saturating_sub(1); // just a simple chain
-                                    internal.bft_blocks.insert(insert_i, (parent_i, decided_value.value.value.clone()));
+
+                                    // HACK: ensure there are enough blocks to overwrite this at the correct index
+                                    for i in internal.bft_blocks.len()..=insert_i {
+                                        let parent_i = i.saturating_sub(1); // just a simple chain
+                                        internal.bft_blocks.push((parent_i, BftPayload {
+                                            headers: Vec::new()
+                                        }));
+                                    }
+
+                                    assert!(internal.bft_blocks[insert_i].1.headers.is_empty());
+                                    internal.bft_blocks[insert_i].1 = decided_value.value.value.clone();
                                     internal.latest_final_block = Some((new_final_height, new_final_hash));
                                 } else {
                                     warn!("Didn't have hash available for confirmation: {}", new_final_hash);
