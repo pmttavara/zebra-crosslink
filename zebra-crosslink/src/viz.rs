@@ -833,6 +833,7 @@ enum NodeInit {
         id: usize,
         links: VizBFTLinks,
         text: String,
+        payload: BftPayload,
         height: Option<u32>, // if None, works out from parent
         is_real: bool,
     },
@@ -1063,6 +1064,7 @@ impl VizCtx {
                 parent,
                 links,
                 height,
+                payload,
                 id,
                 text,
                 is_real,
@@ -1087,7 +1089,7 @@ impl VizCtx {
 
                         kind: NodeKind::BFT,
                         height,
-                        header: VizHeader::None,
+                        header: VizHeader::BftPayload(payload),
                         text,
 
                         is_real,
@@ -1792,7 +1794,7 @@ pub async fn viz_main(
         let blocks = &g.state.bft_blocks;
         for i in ctx.bft_block_hi_i..blocks.len() {
             if find_bft_node_by_id(&ctx.nodes, i).is_none() {
-                let bft_parent_i = blocks[i].0;
+                let (bft_parent_i, payload) = (blocks[i].0, blocks[i].1.clone());
                 let bft_parent = if i == 0 && bft_parent_i == 0 {
                     None
                 } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
@@ -1838,6 +1840,7 @@ pub async fn viz_main(
 
                         id: i,
 
+                        payload,
                         text: "".to_string(),
                         links,
                         height: bft_parent.map_or(Some(0), |_| None),
@@ -2099,6 +2102,9 @@ pub async fn viz_main(
 
                             id,
 
+                            payload: BftPayload {
+                                headers: Vec::new(),
+                            },
                             text: node_str.clone(),
                             links: {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
