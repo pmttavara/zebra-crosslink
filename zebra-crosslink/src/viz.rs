@@ -340,7 +340,7 @@ pub mod serialization {
 
                         bft_blocks.push((
                             parent_id,
-                            node.header.as_bft().clone(),
+                            node.header.as_bft().unwrap().clone(),
                         ));
                     }
                 }
@@ -721,17 +721,17 @@ enum VizHeader {
 }
 
 impl VizHeader {
-    fn as_bft(&self) -> &BftPayload {
+    fn as_bft(&self) -> Option<&BftPayload> {
         match self {
-            VizHeader::BftPayload(val) => val,
-            _ => panic!("does not contain a BFT header"),
+            VizHeader::BftPayload(val) => Some(val),
+            _ => None,
         }
     }
 
-    fn as_pow(&self) -> &BlockHeader {
+    fn as_pow(&self) -> Option<&BlockHeader> {
         match self {
-            VizHeader::BlockHeader(val) => val,
-            _ => panic!("does not contain a PoW header"),
+            VizHeader::BlockHeader(val) => Some(val),
+            _ => None,
         }
     }
 }
@@ -2686,18 +2686,19 @@ pub async fn viz_main(
         end_zone(z_draw_nodes);
 
         if let Some(node_i) = hover_node_i {
-            let hdrs = &ctx.nodes[node_i].header.as_bft().headers;
-            for i in 0..hdrs.len() {
-                let link = ctx.find_bc_node_by_hash(&hdrs[i].hash());
-                if link.is_none() {
-                    break;
-                }
-                let node = &ctx.nodes[link.unwrap()];
+            if let Some(bft) = &ctx.nodes[node_i].header.as_bft() {
+                for i in 0..bft.headers.len() {
+                    let link = ctx.find_bc_node_by_hash(&bft.headers[i].hash());
+                    if link.is_none() {
+                        break;
+                    }
+                    let node = &ctx.nodes[link.unwrap()];
 
-                if i as u64 == g.params.bc_confirmation_depth_sigma {
-                    draw_circle(node.circle(), PINK);
-                } else {
-                    draw_ring(node.circle(), 3., 1., PINK);
+                    if i as u64 == g.params.bc_confirmation_depth_sigma {
+                        draw_circle(node.circle(), PINK);
+                    } else {
+                        draw_ring(node.circle(), 3., 1., PINK);
+                    }
                 }
             }
         }
