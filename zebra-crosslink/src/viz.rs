@@ -340,23 +340,7 @@ pub mod serialization {
 
                         bft_blocks.push((
                             parent_id,
-                            BftPayload {
-                                headers: node.links.nominee.map_or(Vec::new(), |link| {
-                                    let mut block = &nodes[link];
-                                    let mut headers: Vec<BlockHeader> = Vec::new();
-                                    for i in 0..params.bc_confirmation_depth_sigma {
-                                        headers.push(
-                                            *block.header.as_pow(),
-                                        );
-                                        if block.parent.is_none() {
-                                            break;
-                                        }
-                                        block = &nodes[block.parent.unwrap()];
-                                    }
-                                    headers.reverse();
-                                    headers
-                                }),
-                            },
+                            node.header.as_bft().clone(),
                         ));
                     }
                 }
@@ -733,7 +717,7 @@ struct VizBFTLinks {
 enum VizHeader {
     None,
     BlockHeader(BlockHeader),
-    BftPayload(BftPayload),
+    BftPayload(BftPayload), // ALT: just keep an array of *hashes*
 }
 
 impl VizHeader {
@@ -776,7 +760,7 @@ impl From<Option<BlockHeader>> for VizHeader {
 struct Node {
     // structure
     parent: NodeRef, // TODO: do we need explicit edges?
-    links: VizBFTLinks,
+    // links: VizBFTLinks, // TODO: cache?
 
     // data
     kind: NodeKind,
@@ -796,6 +780,35 @@ struct Node {
     rad: f32,
 }
 
+fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BftPayload(payload) => {
+            if let Some(block) = payload.headers.last() {
+                ctx.find_bc_node_by_hash(&block.hash())
+           } else {
+                None
+            }
+        }
+
+        _ => None,
+    }
+}
+
+fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BftPayload(payload) => {
+            if let Some(block) = payload.headers.first() {
+                ctx.find_bc_node_by_hash(&block.hash())
+            } else {
+                None
+            }
+        }
+
+        _ => None,
+    }
+}
+
+
 enum NodeInit {
     Node {
         node: Node,
@@ -804,7 +817,6 @@ enum NodeInit {
 
     Dyn {
         parent: NodeRef, // TODO: do we need explicit edges?
-        links: VizBFTLinks,
 
         // data
         kind: NodeKind,
@@ -831,7 +843,6 @@ enum NodeInit {
     BFT {
         parent: NodeRef, // TODO: do we need explicit edges?
         id: usize,
-        links: VizBFTLinks,
         text: String,
         payload: BftPayload,
         height: Option<u32>, // if None, works out from parent
@@ -983,7 +994,6 @@ impl VizCtx {
 
             NodeInit::Dyn {
                 parent,
-                links,
                 kind,
                 text,
                 id,
@@ -996,7 +1006,6 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        links,
                         kind,
                         text,
                         id,
@@ -1036,10 +1045,6 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        links: VizBFTLinks {
-                            nominee: None,
-                            finalized: None,
-                        },
 
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
@@ -1062,7 +1067,6 @@ impl VizCtx {
 
             NodeInit::BFT {
                 parent,
-                links,
                 height,
                 payload,
                 id,
@@ -1081,7 +1085,6 @@ impl VizCtx {
                 (
                     Node {
                         parent,
-                        links,
 
                         id: NodeId::Index(id),
                         difficulty: None,
@@ -1803,35 +1806,6 @@ pub async fn viz_main(
                     None
                 };
 
-                let links: VizBFTLinks = {
-                    if let (Some(nominee), Some(finalized)) =
-                        (blocks[i].1.headers.last(), blocks[i].1.headers.first())
-                    {
-                        let (nominee_hash, finalized_hash) = (nominee.hash(), finalized.hash());
-                        let nominee = ctx.find_bc_node_by_hash(&nominee_hash);
-                        let finalized = ctx.find_bc_node_by_hash(&finalized_hash);
-                        // NOTE: this is likely just that the PoW node is off-screen enough to
-                        // not be requested
-                        // TODO: lazy links
-                        if nominee.is_none() {
-                            warn!("Could not find BFT-linked block with hash {}", nominee_hash);
-                        }
-                        if finalized.is_none() {
-                            warn!(
-                                "Could not find BFT-linked block with hash {}",
-                                finalized_hash
-                            );
-                        }
-                        VizBFTLinks { nominee, finalized }
-                    } else {
-                        warn!("BFT block does not have associated headers");
-                        VizBFTLinks {
-                            nominee: None,
-                            finalized: None,
-                        }
-                    }
-                };
-
                 ctx.bft_last_added = ctx.push_node(
                     NodeInit::BFT {
                         // TODO: distance should be proportional to difficulty of newer block
@@ -1842,7 +1816,6 @@ pub async fn viz_main(
 
                         payload,
                         text: "".to_string(),
-                        links,
                         height: bft_parent.map_or(Some(0), |_| None),
                     },
                     None,
@@ -2103,21 +2076,25 @@ pub async fn viz_main(
                             id,
 
                             payload: BftPayload {
-                                headers: Vec::new(),
+                                headers: loop {
+                                    let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                    if bc.is_none() {
+                                        break Vec::new();
+                                    }
+
+                                    let node_i = find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc.unwrap()));
+                                    if node_i.is_none() {
+                                        break Vec::new();
+                                    }
+
+                                    let node = &ctx.nodes[node_i.unwrap()];
+                                    break match node.header {
+                                        VizHeader::BlockHeader(hdr) => vec![hdr],
+                                        _ => Vec::new(),
+                                    };
+                                },
                             },
                             text: node_str.clone(),
-                            links: {
-                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                let node = if let Some(bc_i) = bc {
-                                    find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc_i))
-                                } else {
-                                    None
-                                };
-                                VizBFTLinks {
-                                    nominee: node,
-                                    finalized: node,
-                                } // TODO: account for non-sigma distances
-                            },
                             height: ctx.bft_last_added.map_or(Some(0), |_| None),
                         },
                         None,
@@ -2309,10 +2286,6 @@ pub async fn viz_main(
                 let node_ref = ctx.push_node(
                     NodeInit::Dyn {
                         parent: hover_node_i,
-                        links: VizBFTLinks {
-                            nominee: None,
-                            finalized: None,
-                        },
 
                         kind: hover_node.kind,
                         height: hover_node.height + 1,
@@ -2390,7 +2363,7 @@ pub async fn viz_main(
             let mut y_counterpart = None;
 
             // match heights across links for BFT
-            let a_link = ctx.nodes[node_i].links.nominee;
+            let a_link = tfl_nominee_from_node(&ctx, &ctx.nodes[node_i]);
             if a_link.is_some() && a_link != drag_node_ref && a_link.unwrap() < ctx.nodes.len() {
                 let link = &ctx.nodes[a_link.unwrap()];
                 target_pt.y = link.pt.y;
@@ -2626,9 +2599,9 @@ pub async fn viz_main(
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = if false {
-                    node.links.nominee
+                    tfl_nominee_from_node(&ctx, &node)
                 } else {
-                    node.links.finalized
+                    tfl_finalized_from_node(&ctx, &node)
                 } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
@@ -2713,21 +2686,19 @@ pub async fn viz_main(
         end_zone(z_draw_nodes);
 
         if let Some(node_i) = hover_node_i {
-            let mut link = ctx.nodes[node_i].links.nominee;
-            for i in 0..g.params.bc_confirmation_depth_sigma + 1 {
+            let hdrs = &ctx.nodes[node_i].header.as_bft().headers;
+            for i in 0..hdrs.len() {
+                let link = ctx.find_bc_node_by_hash(&hdrs[i].hash());
                 if link.is_none() {
                     break;
                 }
                 let node = &ctx.nodes[link.unwrap()];
 
-                if i == g.params.bc_confirmation_depth_sigma {
+                if i as u64 == g.params.bc_confirmation_depth_sigma {
                     draw_circle(node.circle(), PINK);
-                    assert!(link == ctx.nodes[node_i].links.finalized);
                 } else {
                     draw_ring(node.circle(), 3., 1., PINK);
                 }
-
-                link = node.parent;
             }
         }
 
