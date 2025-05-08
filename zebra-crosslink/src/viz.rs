@@ -346,7 +346,7 @@ pub mod serialization {
                                     let mut headers: Vec<BlockHeader> = Vec::new();
                                     for i in 0..params.bc_confirmation_depth_sigma {
                                         headers.push(
-                                            block.header.expect("BC blocks should have a header"),
+                                            *block.header.as_pow(),
                                         );
                                         if block.parent.is_none() {
                                             break;
@@ -729,6 +729,47 @@ struct VizBFTLinks {
     finalized: NodeRef,
 }
 
+#[derive(Clone, Debug)]
+enum VizHeader {
+    None,
+    BlockHeader(BlockHeader),
+    BftPayload(BftPayload),
+}
+
+impl VizHeader {
+    fn as_bft(&self) -> &BftPayload {
+        match self {
+            VizHeader::BftPayload(val) => val,
+            _ => panic!("does not contain a BFT header"),
+        }
+    }
+
+    fn as_pow(&self) -> &BlockHeader {
+        match self {
+            VizHeader::BlockHeader(val) => val,
+            _ => panic!("does not contain a PoW header"),
+        }
+    }
+}
+
+impl From<Option<BftPayload>> for VizHeader {
+    fn from(v: Option<BftPayload>) -> VizHeader {
+        match v {
+            Some(val) => VizHeader::BftPayload(val),
+            None => VizHeader::None,
+        }
+    }
+}
+
+impl From<Option<BlockHeader>> for VizHeader {
+    fn from(v: Option<BlockHeader>) -> VizHeader {
+        match v {
+            Some(val) => VizHeader::BlockHeader(val),
+            None => VizHeader::None,
+        }
+    }
+}
+
 /// A node on the graph/network diagram.
 /// Contains a bundle of attributes that can represent PoW or BFT blocks.
 #[derive(Clone, Debug)]
@@ -744,7 +785,7 @@ struct Node {
     height: u32,
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
-    header: Option<BlockHeader>,
+    header: VizHeader,
 
     is_real: bool,
 
@@ -770,7 +811,7 @@ enum NodeInit {
         text: String,
         id: NodeId,
         height: u32,
-        header: Option<BlockHeader>,
+        header: VizHeader,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
 
@@ -1002,7 +1043,7 @@ impl VizCtx {
                         kind: NodeKind::BC,
                         id: NodeId::Hash(hash),
                         height,
-                        header: Some(header),
+                        header: VizHeader::BlockHeader(header),
                         difficulty,
                         txs_n,
                         is_real,
@@ -1046,7 +1087,7 @@ impl VizCtx {
 
                         kind: NodeKind::BFT,
                         height,
-                        header: None,
+                        header: VizHeader::None,
                         text,
 
                         is_real,
@@ -2229,27 +2270,33 @@ pub async fn viz_main(
                 // create new node
                 let hover_node = &ctx.nodes[hover_node_i.unwrap()];
                 let is_bft = hover_node.kind == NodeKind::BFT;
-                let header = if hover_node.kind == NodeKind::BC {
-                    Some(BlockHeader {
-                        version: 0,
-                        previous_block_hash: BlockHash(
-                            hover_node.hash().expect("should have a hash"),
-                        ),
-                        merkle_root: zebra_chain::block::merkle::Root([0; 32]),
-                        commitment_bytes: zebra_chain::fmt::HexDebug([0; 32]),
-                        time: chrono::Utc::now(),
-                        difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
-                        nonce: zebra_chain::fmt::HexDebug([0; 32]),
-                        solution: zebra_chain::work::equihash::Solution::for_proposal(),
-                    })
-                } else {
-                    None
-                };
-                let id = match hover_node.kind {
-                    NodeKind::BC => NodeId::Hash(header.unwrap().hash().0),
+                let (header, id) = match hover_node.kind {
+                    NodeKind::BC => {
+                        let header = BlockHeader {
+                            version: 0,
+                            previous_block_hash: BlockHash(
+                                hover_node.hash().expect("should have a hash"),
+                            ),
+                            merkle_root: zebra_chain::block::merkle::Root([0; 32]),
+                            commitment_bytes: zebra_chain::fmt::HexDebug([0; 32]),
+                            time: chrono::Utc::now(),
+                            difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
+                            nonce: zebra_chain::fmt::HexDebug([0; 32]),
+                            solution: zebra_chain::work::equihash::Solution::for_proposal(),
+                        };
+                        let id = NodeId::Hash(header.hash().0);
+                        (VizHeader::BlockHeader(header), id)
+                    },
+
                     NodeKind::BFT => {
+                        let header = BftPayload {
+                            headers: Vec::new(),
+                        };
+
+                        // TODO: hash for id
                         ctx.bft_fake_id -= 1;
-                        NodeId::Index(ctx.bft_fake_id + 1)
+                        let id = NodeId::Index(ctx.bft_fake_id + 1);
+                        (VizHeader::BftPayload(header), id)
                     }
                 };
 

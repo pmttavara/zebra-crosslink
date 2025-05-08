@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{error};
 use zebra_chain::block::Header as BcBlockHeader;
 
 /// The BFT block content for Crosslink
