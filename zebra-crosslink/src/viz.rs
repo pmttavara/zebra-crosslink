@@ -15,7 +15,7 @@ use macroquad::{
     window,
 };
 use std::{
-    cmp::{min, max},
+    cmp::{max, min},
     collections::HashMap,
     sync::Arc,
     thread::JoinHandle,
@@ -114,7 +114,6 @@ fn flt_min_max(a: f32, b: f32) -> (f32, f32) {
     }
 }
 
-
 impl BBox {
     fn union(a: BBox, b: BBox) -> BBox {
         assert!(a.min.x <= a.max.x);
@@ -163,13 +162,9 @@ impl From<Rect> for BBox {
 
 impl From<Vec2> for BBox {
     fn from(v: Vec2) -> Self {
-        BBox {
-            min: v,
-            max: v,
-        }
+        BBox { min: v, max: v }
     }
 }
-
 
 impl From<BBox> for Rect {
     fn from(bbox: BBox) -> Self {
@@ -338,10 +333,7 @@ pub mod serialization {
                             0
                         };
 
-                        bft_blocks.push((
-                            parent_id,
-                            node.header.as_bft().unwrap().clone(),
-                        ));
+                        bft_blocks.push((parent_id, node.header.as_bft().unwrap().clone()));
                     }
                 }
             }
@@ -785,7 +777,7 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         VizHeader::BftPayload(payload) => {
             if let Some(block) = payload.headers.last() {
                 ctx.find_bc_node_by_hash(&block.hash())
-           } else {
+            } else {
                 None
             }
         }
@@ -807,7 +799,6 @@ fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         _ => None,
     }
 }
-
 
 enum NodeInit {
     Node {
@@ -954,9 +945,8 @@ struct Accel {
     y_to_nodes: HashMap<i64, AccelEntry>,
 }
 
-const ACCEL_GRP_SIZE : f32 = 1620.;
+const ACCEL_GRP_SIZE: f32 = 1620.;
 // const ACCEL_GRP_SIZE : f32 = 220.;
-
 
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
@@ -1135,7 +1125,8 @@ impl VizCtx {
 
                 if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
                     self.missing_bc_parents.remove(&node_hash);
-                    new_node.pt = self.nodes[child].pt + vec2(0., self.nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                    new_node.pt =
+                        self.nodes[child].pt + vec2(0., self.nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
                     assert!(self.nodes[child].parent.is_none());
                     assert!(
@@ -1151,7 +1142,8 @@ impl VizCtx {
 
         if needs_fixup {
             if let Some(parent) = new_node.parent {
-                new_node.pt = self.nodes[parent].pt - vec2(0., self.nodes[parent].rad + new_node.rad + 30.);
+                new_node.pt =
+                    self.nodes[parent].pt - vec2(0., self.nodes[parent].rad + new_node.rad + 30.);
             }
         }
 
@@ -1164,11 +1156,13 @@ impl VizCtx {
                     self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
                 }
 
-                if self.bc_lo.is_none() || new_node.height < self.nodes[self.bc_lo.unwrap()].height {
+                if self.bc_lo.is_none() || new_node.height < self.nodes[self.bc_lo.unwrap()].height
+                {
                     self.bc_lo = node_ref;
                 }
 
-                if self.bc_hi.is_none() || new_node.height > self.nodes[self.bc_hi.unwrap()].height {
+                if self.bc_hi.is_none() || new_node.height > self.nodes[self.bc_hi.unwrap()].height
+                {
                     self.bc_hi = node_ref;
                 }
             }
@@ -1194,7 +1188,6 @@ impl VizCtx {
         self.accel.y_to_nodes.clear();
     }
 
-
     fn find_bc_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
         let _z = ZoneGuard::new("find_bc_node_by_hash");
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
@@ -1205,8 +1198,8 @@ impl VizCtx {
         self.nodes[node_i].pt = new_pos;
 
         // find group
-        let old_y = (old_pos.y * (1./ACCEL_GRP_SIZE)).ceil() as i64;
-        let new_y = (new_pos.y * (1./ACCEL_GRP_SIZE)).ceil() as i64;
+        let old_y = (old_pos.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64;
+        let new_y = (new_pos.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64;
 
         let node_ref = Some(node_i);
 
@@ -1225,11 +1218,17 @@ impl VizCtx {
         }
 
         // add to new location
-        self.accel.y_to_nodes.entry(new_y).and_modify(|accel| {
-            if let None = accel.nodes.iter().position(|node| *node == node_ref) {
-                accel.nodes.push(node_ref);
-            }
-        }).or_insert(AccelEntry { nodes: vec![node_ref] });
+        self.accel
+            .y_to_nodes
+            .entry(new_y)
+            .and_modify(|accel| {
+                if let None = accel.nodes.iter().position(|node| *node == node_ref) {
+                    accel.nodes.push(node_ref);
+                }
+            })
+            .or_insert(AccelEntry {
+                nodes: vec![node_ref],
+            });
     }
 }
 
@@ -1837,8 +1836,9 @@ pub async fn viz_main(
             ..Default::default()
         };
 
-        let world_screen_size = world_camera.screen_to_world(vec2(window::screen_width(), window::screen_height())) -
-            world_camera.screen_to_world(Vec2::_0);
+        let world_screen_size = world_camera
+            .screen_to_world(vec2(window::screen_width(), window::screen_height()))
+            - world_camera.screen_to_world(Vec2::_0);
 
         // INPUT ////////////////////////////////////////
         let mouse_pt = {
@@ -1925,7 +1925,10 @@ pub async fn viz_main(
             );
         }
 
-        ctx.fix_screen_o = BBox::clamp(BBox::expand(ctx.nodes_bbox, 0.5 * world_screen_size), ctx.fix_screen_o);
+        ctx.fix_screen_o = BBox::clamp(
+            BBox::expand(ctx.nodes_bbox, 0.5 * world_screen_size),
+            ctx.fix_screen_o,
+        );
         ctx.screen_o = ctx.fix_screen_o - ctx.mouse_drag_d; // preview drag
 
         // WORLD SPACE DRAWING ////////////////////////////////////////
@@ -1935,7 +1938,6 @@ pub async fn viz_main(
             max: world_camera
                 .screen_to_world(vec2(window::screen_width(), window::screen_height())),
         };
-
 
         const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
         let world_bbox = if TEST_BBOX {
@@ -1966,7 +1968,10 @@ pub async fn viz_main(
             let col = LIGHTGRAY;
             for (y_grp, accel) in &ctx.accel.y_to_nodes {
                 let y = *y_grp as f32 * ACCEL_GRP_SIZE; // draw at top of section
-                let ol = (flt_max(world_bbox.min.y, y - ACCEL_GRP_SIZE), flt_min(world_bbox.max.y, y));
+                let ol = (
+                    flt_max(world_bbox.min.y, y - ACCEL_GRP_SIZE),
+                    flt_min(world_bbox.max.y, y),
+                );
                 if ol.0 < ol.1 {
                     let mut l = vec2(world_bbox.min.x, y);
                     let mut r = vec2(world_bbox.max.x, y);
@@ -1990,7 +1995,6 @@ pub async fn viz_main(
                 }
             }
         }
-
 
         if dev(false) {
             ui_camera_window(
@@ -2082,7 +2086,10 @@ pub async fn viz_main(
                                         break Vec::new();
                                     }
 
-                                    let node_i = find_bc_node_i_by_height(&ctx.nodes, BlockHeight(bc.unwrap()));
+                                    let node_i = find_bc_node_i_by_height(
+                                        &ctx.nodes,
+                                        BlockHeight(bc.unwrap()),
+                                    );
                                     if node_i.is_none() {
                                         break Vec::new();
                                     }
@@ -2269,7 +2276,7 @@ pub async fn viz_main(
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id)
-                    },
+                    }
 
                     NodeKind::BFT => {
                         let header = BftPayload {
@@ -2325,8 +2332,8 @@ pub async fn viz_main(
         }
         let spring_method = SpringMethod::Coeff;
 
-        let min_grp = (world_bbox.min.y * (1./ACCEL_GRP_SIZE)).ceil() as i64 - 1;
-        let max_grp = (world_bbox.max.y * (1./ACCEL_GRP_SIZE)).ceil() as i64 + 1;
+        let min_grp = (world_bbox.min.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64 - 1;
+        let max_grp = (world_bbox.max.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64 + 1;
         let mut on_screen_node_idxs: Vec<usize> = Vec::with_capacity(ctx.nodes.len());
         for grp in min_grp..=max_grp {
             if let Some(accel) = ctx.accel.y_to_nodes.get(&grp) {
@@ -2337,7 +2344,6 @@ pub async fn viz_main(
                 }
             }
         }
-
 
         // calculate forces
         let spring_stiffness = 160.;
@@ -2512,7 +2518,9 @@ pub async fn viz_main(
                 ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
 
                 match spring_method {
-                    SpringMethod::Old => ctx.nodes[node_i].acc = -0.5 * spring_stiffness * ctx.nodes[node_i].vel, // TODO: or slight drag?
+                    SpringMethod::Old => {
+                        ctx.nodes[node_i].acc = -0.5 * spring_stiffness * ctx.nodes[node_i].vel
+                    } // TODO: or slight drag?
                     _ => ctx.nodes[node_i].acc = Vec2::_0,
                 }
             }

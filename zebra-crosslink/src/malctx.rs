@@ -21,6 +21,7 @@ use malachitebft_core_types::{
 pub use malachitebft_app::types::Keypair as MalKeyPair;
 pub use malachitebft_core_consensus::{
     LocallyProposedValue as MalLocallyProposedValue, ProposedValue as MalProposedValue,
+    VoteExtensionError as MalVoteExtensionError,
 };
 pub use malachitebft_core_types::{
     Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions,
@@ -406,11 +407,8 @@ pub struct MalValue {
 }
 
 impl MalValue {
-    pub fn new(value: BftPayload) -> Self {
-        Self {
-            value,
-            extensions: Bytes::new(),
-        }
+    pub fn new(value: BftPayload, extensions: Bytes) -> Self {
+        Self { value, extensions }
     }
 
     pub fn id(&self) -> MalValueId {
