@@ -690,14 +690,20 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                 decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
 
-                                let new_final_hash   = decided_value.value.value.headers.first().expect("at least 1 header").hash();
-                                let new_final_height = block_height_from_hash(&call, new_final_hash).await.expect("hash should map to a height");
-
-                                let mut internal = internal_handle.internal.lock().await;
-                                let insert_i = certificate.height.as_u64() as usize - 1;
-                                let parent_i = insert_i.saturating_sub(1); // just a simple chain
-                                internal.bft_blocks.insert(insert_i, (parent_i, decided_value.value.value.clone()));
-                                internal.latest_final_block = Some((new_final_height, new_final_hash));
+                                // NOTE: our node may not yet be aware of the PoW block
+                                // TODO: do we need some other handling here? Track
+                                // TODO: reject earlier as well, but that doesn't prevent this case
+                                // from happening
+                                let new_final_hash = decided_value.value.value.headers.first().expect("at least 1 header").hash();
+                                if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+                                    let mut internal = internal_handle.internal.lock().await;
+                                    let insert_i = certificate.height.as_u64() as usize - 1;
+                                    let parent_i = insert_i.saturating_sub(1); // just a simple chain
+                                    internal.bft_blocks.insert(insert_i, (parent_i, decided_value.value.value.clone()));
+                                    internal.latest_final_block = Some((new_final_height, new_final_hash));
+                                } else {
+                                    warn!("Didn't have hash available for confirmation: {}", new_final_hash);
+                                }
 
                                 // When that happens, we store the decided value in our store
                                 // TODO: state.commit(certificate, extensions).await?;
