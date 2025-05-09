@@ -2703,7 +2703,7 @@ pub async fn viz_main(
                     }
                     let node = &ctx.nodes[link.unwrap()];
 
-                    if i as u64 == g.params.bc_confirmation_depth_sigma {
+                    if i == 0 {
                         draw_circle(node.circle(), PINK);
                     } else {
                         draw_ring(node.circle(), 3., 1., PINK);
