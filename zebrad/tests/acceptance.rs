@@ -113,13 +113,13 @@
 //! Example of how to run the get_block_template test:
 //!
 //! ```console
-//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test get_block_template --features getblocktemplate-rpcs --release -- --ignored --nocapture
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test get_block_template --release -- --ignored --nocapture
 //! ```
 //!
 //! Example of how to run the submit_block test:
 //!
 //! ```console
-//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test submit_block --features getblocktemplate-rpcs --release -- --ignored --nocapture
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test submit_block --release -- --ignored --nocapture
 //! ```
 //!
 //! Example of how to run the has_spending_transaction_ids test:
@@ -170,7 +170,20 @@ use zebra_chain::{
 };
 use zebra_consensus::ParameterCheckpoint;
 use zebra_node_services::rpc_client::RpcRequestClient;
-use zebra_rpc::server::OPENED_RPC_ENDPOINT_MSG;
+use zebra_rpc::{
+    methods::{
+        types::{
+            get_block_template::{
+                self, fetch_state_tip_and_local_time, generate_coinbase_and_roots,
+                proposal::proposal_block_from_template, GetBlockTemplate,
+                GetBlockTemplateRequestMode,
+            },
+            submit_block::{self, SubmitBlockChannel},
+        },
+        RpcImpl, RpcServer,
+    },
+    server::OPENED_RPC_ENDPOINT_MSG,
+};
 use zebra_state::{constants::LOCK_FILE_ERROR, state_database_format_version_in_code};
 
 #[cfg(not(target_os = "windows"))]
@@ -218,9 +231,6 @@ use crate::common::cached_state::{
 ///
 /// This limit only applies to some tests.
 pub const MAX_ASYNC_BLOCKING_TIME: Duration = zebra_test::mock_service::DEFAULT_MAX_REQUEST_DELAY;
-
-/// The test config file prefix for `--feature getblocktemplate-rpcs` configs.
-pub const GET_BLOCK_TEMPLATE_CONFIG_PREFIX: &str = "getblocktemplate-";
 
 /// The test config file prefix for `--feature shielded-scan` configs.
 pub const SHIELDED_SCAN_CONFIG_PREFIX: &str = "shieldedscan-";
@@ -949,17 +959,6 @@ fn stored_configs_parsed_correctly() -> Result<()> {
             continue;
         }
 
-        // ignore files starting with getblocktemplate prefix
-        // if we were not built with the getblocktemplate-rpcs feature.
-        #[cfg(not(feature = "getblocktemplate-rpcs"))]
-        if config_file_name.starts_with(GET_BLOCK_TEMPLATE_CONFIG_PREFIX) {
-            tracing::info!(
-                ?config_file_path,
-                "skipping getblocktemplate-rpcs config file path"
-            );
-            continue;
-        }
-
         // ignore files starting with shieldedscan prefix
         // if we were not built with the shielded-scan feature.
         if config_file_name.starts_with(SHIELDED_SCAN_CONFIG_PREFIX) {
@@ -1004,17 +1003,6 @@ fn stored_configs_work() -> Result<()> {
             tracing::info!(
                 ?config_file_path,
                 "skipping hidden/temporary config file path"
-            );
-            continue;
-        }
-
-        // ignore files starting with getblocktemplate prefix
-        // if we were not built with the getblocktemplate-rpcs feature.
-        #[cfg(not(feature = "getblocktemplate-rpcs"))]
-        if config_file_name.starts_with(GET_BLOCK_TEMPLATE_CONFIG_PREFIX) {
-            tracing::info!(
-                ?config_file_path,
-                "skipping getblocktemplate-rpcs config file path"
             );
             continue;
         }
@@ -1974,6 +1962,21 @@ fn lightwalletd_integration_test(test_type: TestType) -> Result<()> {
         )?;
     }
 
+    // Wait for zebrad to sync the genesis block before launching lightwalletd,
+    // if lightwalletd is launched and zebrad starts with an empty state.
+    // This prevents lightwalletd from exiting early due to an empty state.
+    if test_type.launches_lightwalletd() && !test_type.needs_zebra_cached_state() {
+        tracing::info!(
+            ?test_type,
+            "waiting for zebrad to sync genesis block before launching lightwalletd...",
+        );
+        // Wait for zebrad to commit the genesis block to the state.
+        // Use the syncer's state tip log message, as the specific commit log might not appear reliably.
+        zebrad.expect_stdout_line_matches(
+            "starting sync, obtaining new tips state_tip=Some\\(Height\\(0\\)\\)",
+        )?;
+    }
+
     // Launch lightwalletd, if needed
     let lightwalletd_and_port = if test_type.launches_lightwalletd() {
         tracing::info!(
@@ -2271,7 +2274,7 @@ fn zebra_rpc_conflict() -> Result<()> {
     // But they will have different Zcash listeners (auto port) and states (ephemeral)
     let dir2 = testdir()?.with_config(&mut config)?;
 
-    check_config_conflict(dir1, regex1.as_str(), dir2, "Unable to start RPC server")?;
+    check_config_conflict(dir1, regex1.as_str(), dir2, "Address already in use")?;
 
     Ok(())
 }
@@ -2537,7 +2540,6 @@ async fn lightwalletd_wallet_grpc_tests() -> Result<()> {
 ///
 /// See [`common::get_block_template_rpcs::get_peer_info`] for more information.
 #[tokio::test]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn get_peer_info() -> Result<()> {
     common::get_block_template_rpcs::get_peer_info::run().await
 }
@@ -2546,8 +2548,6 @@ async fn get_peer_info() -> Result<()> {
 ///
 /// See [`common::get_block_template_rpcs::get_block_template`] for more information.
 #[tokio::test]
-#[ignore]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn get_block_template() -> Result<()> {
     common::get_block_template_rpcs::get_block_template::run().await
 }
@@ -2556,8 +2556,6 @@ async fn get_block_template() -> Result<()> {
 ///
 /// See [`common::get_block_template_rpcs::submit_block`] for more information.
 #[tokio::test]
-#[ignore]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn submit_block() -> Result<()> {
     common::get_block_template_rpcs::submit_block::run().await
 }
@@ -2914,7 +2912,7 @@ async fn fully_synced_rpc_z_getsubtreesbyindex_snapshot_test() -> Result<()> {
 async fn validate_regtest_genesis_block() {
     let _init_guard = zebra_test::init();
 
-    let network = Network::new_regtest(None, None);
+    let network = Network::new_regtest(Default::default());
     let state = zebra_state::init_test(&network);
     let (
         block_verifier_router,
@@ -2968,14 +2966,12 @@ fn external_address() -> Result<()> {
 /// See [`common::regtest::submit_blocks`] for more information.
 // TODO: Test this with an NU5 activation height too once config can be serialized.
 #[tokio::test]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn regtest_block_templates_are_valid_block_submissions() -> Result<()> {
     common::regtest::submit_blocks_test().await?;
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
     use std::sync::Arc;
 
@@ -2990,7 +2986,7 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
     use zebra_state::{ReadResponse, Response};
 
     let _init_guard = zebra_test::init();
-    let mut config = os_assigned_rpc_port_config(false, &Network::new_regtest(None, None))?;
+    let mut config = os_assigned_rpc_port_config(false, &Network::new_regtest(Default::default()))?;
     config.state.ephemeral = false;
     let network = config.network.network.clone();
 
@@ -3109,8 +3105,7 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
 
         header.previous_block_hash = chain_info.tip_hash;
         header.commitment_bytes = chain_info
-            .history_tree
-            .hash()
+            .chain_history_root
             .or(is_chain_history_activation_height.then_some([0; 32].into()))
             .expect("history tree can't be empty")
             .bytes_in_serialized_order()
@@ -3248,9 +3243,8 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
 /// Test successful block template submission as a block proposal or submission on a custom Testnet.
 ///
 /// This test can be run locally with:
-/// `cargo test --package zebrad --test acceptance --features getblocktemplate-rpcs -- nu6_funding_streams_and_coinbase_balance --exact --show-output`
+/// `cargo test --package zebrad --test acceptance -- nu6_funding_streams_and_coinbase_balance --exact --show-output`
 #[tokio::test(flavor = "multi_thread")]
-#[cfg(feature = "getblocktemplate-rpcs")]
 async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     use zebra_chain::{
         chain_sync_status::MockSyncStatus,
@@ -3267,21 +3261,9 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     };
     use zebra_network::address_book_peers::MockAddressBookPeers;
     use zebra_node_services::mempool;
-    use zebra_rpc::methods::{
-        get_block_template_rpcs::{
-            get_block_template::{
-                fetch_state_tip_and_local_time, generate_coinbase_and_roots,
-                proposal_block_from_template, GetBlockTemplate, GetBlockTemplateRequestMode,
-            },
-            types::{
-                get_block_template,
-                submit_block::{self, SubmitBlockChannel},
-            },
-        },
-        hex_data::HexData,
-        GetBlockTemplateRpcImpl, GetBlockTemplateRpcServer,
-    };
+    use zebra_rpc::methods::hex_data::HexData;
     use zebra_test::mock_service::MockService;
+
     let _init_guard = zebra_test::init();
 
     tracing::info!("running nu6_funding_streams_and_coinbase_balance test");
@@ -3319,12 +3301,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let (state, read_state, latest_chain_tip, _chain_tip_change) =
         zebra_state::init_test_services(&network);
 
-    let (
-        block_verifier_router,
-        _transaction_verifier,
-        _parameter_download_task_handle,
-        _max_checkpoint_height,
-    ) = zebra_consensus::router::init_test(
+    let (block_verifier_router, _, _, _) = zebra_consensus::router::init_test(
         zebra_consensus::Config::default(),
         &network,
         state.clone(),
@@ -3347,15 +3324,21 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     let submitblock_channel = SubmitBlockChannel::new();
 
-    let get_block_template_rpc_impl = GetBlockTemplateRpcImpl::new(
-        &network,
+    let (_tx, rx) = tokio::sync::watch::channel(None);
+
+    let (rpc, _) = RpcImpl::new(
+        network,
         mining_config,
+        false,
+        "0.0.1",
+        "Zebra tests",
         mempool.clone(),
         read_state.clone(),
-        latest_chain_tip,
         block_verifier_router,
         mock_sync_status,
+        latest_chain_tip,
         MockAddressBookPeers::default(),
+        rx,
         Some(submitblock_channel.sender()),
     );
 
@@ -3371,27 +3354,28 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
             });
     };
 
-    let block_template_fut = get_block_template_rpc_impl.get_block_template(None);
+    let block_template_fut = rpc.get_block_template(None);
     let mock_mempool_request_handler = make_mock_mempool_request_handler.clone()();
     let (block_template, _) = tokio::join!(block_template_fut, mock_mempool_request_handler);
     let get_block_template::Response::TemplateMode(block_template) =
         block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
-        panic!("this getblocktemplate call without parameters should return the `TemplateMode` variant of the response")
+        panic!(
+            "this getblocktemplate call without parameters should return the `TemplateMode` variant of the response"
+        )
     };
 
     let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
     let hex_proposal_block = HexData(proposal_block.zcash_serialize_to_vec()?);
 
     // Check that the block template is a valid block proposal
-    let get_block_template::Response::ProposalMode(block_proposal_result) =
-        get_block_template_rpc_impl
-            .get_block_template(Some(get_block_template::JsonParameters {
-                mode: GetBlockTemplateRequestMode::Proposal,
-                data: Some(hex_proposal_block),
-                ..Default::default()
-            }))
-            .await?
+    let get_block_template::Response::ProposalMode(block_proposal_result) = rpc
+        .get_block_template(Some(get_block_template::JsonParameters {
+            mode: GetBlockTemplateRequestMode::Proposal,
+            data: Some(hex_proposal_block),
+            ..Default::default()
+        }))
+        .await?
     else {
         panic!(
             "this getblocktemplate call should return the `ProposalMode` variant of the response"
@@ -3404,7 +3388,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     );
 
     // Submit the same block
-    let submit_block_response = get_block_template_rpc_impl
+    let submit_block_response = rpc
         .submit_block(HexData(proposal_block.zcash_serialize_to_vec()?), None)
         .await?;
 
@@ -3447,19 +3431,22 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     };
 
     // Gets the next block template
-    let block_template_fut = get_block_template_rpc_impl.get_block_template(None);
+    let block_template_fut = rpc.get_block_template(None);
     let mock_mempool_request_handler = make_mock_mempool_request_handler.clone()();
     let (block_template, _) = tokio::join!(block_template_fut, mock_mempool_request_handler);
     let get_block_template::Response::TemplateMode(block_template) =
         block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
-        panic!("this getblocktemplate call without parameters should return the `TemplateMode` variant of the response")
+        panic!(
+            "this getblocktemplate call without parameters should return the `TemplateMode` variant of the response"
+        )
     };
 
     let valid_original_block_template = block_template.clone();
 
-    let zebra_state::GetBlockTemplateChainInfo { history_tree, .. } =
-        fetch_state_tip_and_local_time(read_state.clone()).await?;
+    let zebra_state::GetBlockTemplateChainInfo {
+        chain_history_root, ..
+    } = fetch_state_tip_and_local_time(read_state.clone()).await?;
 
     let network = base_network_params
         .clone()
@@ -3474,7 +3461,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         Height(block_template.height),
         &miner_address,
         &[],
-        history_tree.clone(),
+        chain_history_root,
         true,
         vec![],
     );
@@ -3491,7 +3478,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
 
     // Submit the invalid block with an excessive coinbase output value
-    let submit_block_response = get_block_template_rpc_impl
+    let submit_block_response = rpc
         .submit_block(HexData(proposal_block.zcash_serialize_to_vec()?), None)
         .await?;
 
@@ -3517,7 +3504,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         Height(block_template.height),
         &miner_address,
         &[],
-        history_tree.clone(),
+        chain_history_root,
         true,
         vec![],
     );
@@ -3534,7 +3521,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
 
     // Submit the invalid block with an excessive coinbase input value
-    let submit_block_response = get_block_template_rpc_impl
+    let submit_block_response = rpc
         .submit_block(HexData(proposal_block.zcash_serialize_to_vec()?), None)
         .await?;
 
@@ -3549,7 +3536,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     // Check that the original block template can be submitted successfully
     let proposal_block =
         proposal_block_from_template(&valid_original_block_template, None, NetworkUpgrade::Nu6)?;
-    let submit_block_response = get_block_template_rpc_impl
+    let submit_block_response = rpc
         .submit_block(HexData(proposal_block.zcash_serialize_to_vec()?), None)
         .await?;
 
@@ -3721,7 +3708,7 @@ fn check_no_git_refs_in_cargo_lock() {
 
 // /// Check that Zebra will disconnect from misbehaving peers.
 // #[tokio::test]
-// #[cfg(all(feature = "getblocktemplate-rpcs", not(target_os = "windows")))]
+// #[cfg(not(target_os = "windows"))]
 // async fn disconnects_from_misbehaving_peers() -> Result<()> {
 //     use std::sync::{atomic::AtomicBool, Arc};
 

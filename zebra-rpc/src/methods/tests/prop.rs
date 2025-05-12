@@ -1,45 +1,45 @@
 //! Randomised property tests for RPC methods.
 
-#[cfg(feature = "getblocktemplate-rpcs")]
-use std::collections::HashMap;
-use std::{collections::HashSet, fmt::Debug, sync::Arc};
+use crate::methods::{
+    self,
+    types::{
+        get_blockchain_info,
+        get_raw_mempool::{GetRawMempool, MempoolObject},
+    },
+};
 
+use super::super::{
+    AddressBalance, AddressStrings, NetworkUpgradeStatus, RpcImpl, RpcServer, SentTransactionHash,
+};
 use futures::{join, FutureExt, TryFutureExt};
 use hex::{FromHex, ToHex};
 use jsonrpsee_types::{ErrorCode, ErrorObject};
 use proptest::{collection::vec, prelude::*};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    sync::Arc,
+};
 use thiserror::Error;
 use tokio::sync::oneshot;
 use tower::buffer::Buffer;
-
 use zebra_chain::{
     amount::{Amount, NonNegative},
-    block::{Block, Height},
+    block::{self, Block, Height},
+    chain_sync_status::MockSyncStatus,
     chain_tip::{mock::MockChainTip, ChainTip, NoChainTip},
+    history_tree::HistoryTree,
     parameters::{ConsensusBranchId, Network, NetworkUpgrade},
     serialization::{DateTime32, ZcashDeserialize, ZcashDeserializeInto, ZcashSerialize},
     transaction::{self, Transaction, UnminedTx, VerifiedUnminedTx},
     transparent,
     value_balance::ValueBalance,
 };
-
 use zebra_consensus::ParameterCheckpoint;
 use zebra_network::address_book_peers::MockAddressBookPeers;
 use zebra_node_services::mempool;
 use zebra_state::{BoxError, GetBlockTemplateChainInfo};
-
 use zebra_test::mock_service::MockService;
-
-#[cfg(feature = "getblocktemplate-rpcs")]
-use crate::methods::types::MempoolObject;
-use crate::methods::{
-    self,
-    types::{Balance, GetRawMempool},
-};
-
-use super::super::{
-    AddressBalance, AddressStrings, NetworkUpgradeStatus, RpcImpl, RpcServer, SentTransactionHash,
-};
 
 proptest! {
     /// Test that when sending a raw transaction, it is received by the mempool service.
@@ -246,28 +246,7 @@ proptest! {
         tokio::time::pause();
 
         runtime.block_on(async move {
-            #[cfg(not(feature = "getblocktemplate-rpcs"))]
-            let (expected_response, mempool_query) = {
-                let transaction_ids: HashSet<_> = transactions
-                    .iter()
-                    .map(|tx| tx.transaction.id)
-                    .collect();
-
-                let mut expected_response: Vec<String> = transaction_ids
-                    .iter()
-                    .map(|id| id.mined_id().encode_hex())
-                    .collect();
-                expected_response.sort();
-
-                let mempool_query = mempool
-                    .expect_request(mempool::Request::TransactionIds)
-                    .map_ok(|r|r.respond(mempool::Response::TransactionIds(transaction_ids)));
-
-                (GetRawMempool::TxIds(expected_response), mempool_query)
-            };
-
             // Note: this depends on `SHOULD_USE_ZCASHD_ORDER` being true.
-            #[cfg(feature = "getblocktemplate-rpcs")]
             let (expected_response, mempool_query) = {
                 let mut expected_response = transactions.clone();
 
@@ -417,7 +396,7 @@ proptest! {
                         .respond(zebra_state::ReadResponse::ChainInfo(GetBlockTemplateChainInfo {
                             tip_hash: genesis_hash,
                             tip_height: Height::MIN,
-                            history_tree: Default::default(),
+                            chain_history_root: HistoryTree::default().hash(),
                             expected_difficulty: Default::default(),
                             cur_time: DateTime32::now(),
                             min_time: DateTime32::now(),
@@ -491,7 +470,7 @@ proptest! {
                         .respond(zebra_state::ReadResponse::ChainInfo(GetBlockTemplateChainInfo {
                             tip_hash: block_hash,
                             tip_height: block_height,
-                            history_tree: Default::default(),
+                            chain_history_root: HistoryTree::default().hash(),
                             expected_difficulty: Default::default(),
                             cur_time: DateTime32::now(),
                             min_time: DateTime32::now(),
@@ -605,7 +584,7 @@ proptest! {
             prop_assert_eq!(response.best_block_hash, genesis_block.header.hash());
             prop_assert_eq!(response.chain, network.bip70_network_name());
             prop_assert_eq!(response.blocks, Height::MIN);
-            prop_assert_eq!(response.value_pools, Balance::value_pools(ValueBalance::zero()));
+            prop_assert_eq!(response.value_pools, get_blockchain_info::Balance::value_pools(ValueBalance::zero()));
 
             let genesis_branch_id = NetworkUpgrade::current(&network, Height::MIN).branch_id().unwrap_or(ConsensusBranchId::RPC_MISSING_ID);
             let next_height = (Height::MIN + 1).expect("genesis height plus one is next height and valid");
@@ -980,6 +959,12 @@ fn mock_services<Tip>(
         >,
         Tip,
         MockAddressBookPeers,
+        zebra_test::mock_service::MockService<
+            zebra_consensus::Request,
+            block::Hash,
+            zebra_test::mock_service::PropTestAssertion,
+        >,
+        MockSyncStatus,
     >,
     tokio::task::JoinHandle<()>,
 )
@@ -994,20 +979,24 @@ where
     //     _
     // > = crosslink;
     let state = MockService::build().for_prop_tests();
+    let block_verifier_router = MockService::build().for_prop_tests();
 
     let (_tx, rx) = tokio::sync::watch::channel(None);
     let (rpc, mempool_tx_queue) = RpcImpl::new(
+        network,
+        Default::default(),
+        Default::default(),
         "0.0.1",
         "RPC test",
-        network,
-        false,
-        true,
         mempool.clone(),
         crosslink.clone(),
         Buffer::new(state.clone(), 1),
+        block_verifier_router,
+        MockSyncStatus::default(),
         chain_tip,
-        MockAddressBookPeers::new(vec![]),
+        MockAddressBookPeers::default(),
         rx,
+        None,
     );
 
     (mempool, crosslink, state, rpc, mempool_tx_queue)

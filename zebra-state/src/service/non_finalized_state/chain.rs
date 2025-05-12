@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use chrono::{DateTime, Utc};
 use mset::MultiSet;
 use tracing::instrument;
 
@@ -425,11 +426,12 @@ impl Chain {
     pub fn transaction(
         &self,
         hash: transaction::Hash,
-    ) -> Option<(&Arc<Transaction>, block::Height)> {
+    ) -> Option<(&Arc<Transaction>, block::Height, DateTime<Utc>)> {
         self.tx_loc_by_hash.get(&hash).map(|tx_loc| {
             (
                 &self.blocks[&tx_loc.height].block.transactions[tx_loc.index.as_usize()],
                 tx_loc.height,
+                self.blocks[&tx_loc.height].block.header.time,
             )
         })
     }
@@ -1563,6 +1565,22 @@ impl Chain {
                     sapling_shielded_data,
                     orchard_shielded_data,
                 ),
+                #[cfg(feature="tx_v6")]
+                V6 {
+                    inputs,
+                    outputs,
+                    sapling_shielded_data,
+                    orchard_shielded_data,
+                    ..
+                } => (
+                    inputs,
+                    outputs,
+                    &None,
+                    &None,
+                    sapling_shielded_data,
+                    orchard_shielded_data,
+                ),
+
                 V1 { .. } | V2 { .. } | V3 { .. } => unreachable!(
                     "older transaction versions only exist in finalized blocks, because of the mandatory canopy checkpoint",
                 ),
@@ -1731,6 +1749,22 @@ impl UpdateWith<ContextuallyVerifiedBlock> for Chain {
                     sapling_shielded_data,
                     orchard_shielded_data,
                 ),
+                #[cfg(feature="tx_v6")]
+                V6 {
+                    inputs,
+                    outputs,
+                    sapling_shielded_data,
+                    orchard_shielded_data,
+                    ..
+                } => (
+                    inputs,
+                    outputs,
+                    &None,
+                    &None,
+                    sapling_shielded_data,
+                    orchard_shielded_data,
+                ),
+
                 V1 { .. } | V2 { .. } | V3 { .. } => unreachable!(
                     "older transaction versions only exist in finalized blocks, because of the mandatory canopy checkpoint",
                 ),
