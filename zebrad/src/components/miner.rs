@@ -75,6 +75,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -122,6 +131,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -234,6 +252,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -344,6 +371,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,

@@ -1,6 +1,7 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
 #![allow(clippy::print_stdout)]
+#![allow(unexpected_cfgs, unused, missing_docs)]
 
 use malachitebft_codec::Codec;
 

@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs, unused, missing_docs)]
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};

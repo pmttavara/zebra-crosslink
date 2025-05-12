@@ -1,4 +1,5 @@
 //! Internal vizualization
+#![allow(unexpected_cfgs, unused, missing_docs)]
 
 use crate::*;
 use macroquad::{
