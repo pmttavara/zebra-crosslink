@@ -1623,8 +1623,24 @@ pub async fn viz_main(
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
     let mut new_h_rng: Option<(i32, i32)> = None;
 
+    let mut tray_is_open = true;
+    let mut tray_x = 0.;
+
     let mut dbg = VizDbg {
         nodes_forces: HashMap::new(),
+    };
+
+    struct VizConfig {
+        test_bbox: bool,
+        show_top_info: bool,
+        show_mouse_info: bool,
+        show_profiler: bool,
+    }
+    let mut config = VizConfig {
+        test_bbox: false,
+        show_top_info: true,
+        show_mouse_info: false,
+        show_profiler: true,
     };
 
     init_audio().await;
@@ -1940,8 +1956,7 @@ pub async fn viz_main(
                 .screen_to_world(vec2(window::screen_width(), window::screen_height())),
         };
 
-        const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
-        let world_bbox = if TEST_BBOX {
+        let world_bbox = if config.test_bbox {
             // test bounding box functionality by shrinking it on screen
             let t = 0.25;
             BBox {
@@ -1961,7 +1976,7 @@ pub async fn viz_main(
         assert!(world_bbox.min.y < world_bbox.max.y);
         let world_rect = Rect::from(world_bbox);
 
-        if TEST_BBOX {
+        if config.test_bbox {
             draw_rect_lines(world_rect, 2., MAGENTA);
         }
 
@@ -2738,8 +2753,35 @@ pub async fn viz_main(
         draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
+        // control tray
+        {
+            let tray_w = 28. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let target_tray_x = if tray_is_open {tray_w} else {0.};
+            tray_x = tray_x.lerp(target_tray_x, 0.2);
+
+            let tray_pt = vec2(tray_x, 0.5 * font_size);
+            let tray_button_size = 1.2 * font_size;
+            let tray_button_rect = Rect{ x: tray_pt.x, y: tray_pt.y, w: tray_button_size, h: tray_button_size };
+
+            let is_hover = tray_button_rect.contains(mouse_pt);
+            tray_is_open ^= is_hover && mouse_l_is_pressed;
+            draw_rect(tray_button_rect, if is_hover { GRAY } else { LIGHTGRAY });
+            draw_text(if tray_is_open { "<" } else { ">" }, tray_pt + vec2(0.33 * font_size, 0.8*font_size), font_size, WHITE);
+
+            ui_dynamic_window(
+                hash!(),
+                vec2(tray_x - tray_w, 0.),
+                vec2(tray_x, window::screen_height()),
+                |ui| {
+                    ui.checkbox(hash!(), "Test window bounds", &mut config.test_bbox);
+                    ui.checkbox(hash!(), "Show top info", &mut config.show_top_info);
+                    ui.checkbox(hash!(), "Show mouse info", &mut config.show_mouse_info);
+                    ui.checkbox(hash!(), "Show profiler", &mut config.show_profiler);
+                });
+        }
+
         // VIZ DEBUG INFO ////////////////////
-        if IS_DEV {
+        if dev(config.show_top_info) {
             let dbg_str = format!(
                 "{:2.3} ms\n\
                 target: {}, offset: {}, zoom: {}\n\
@@ -2767,7 +2809,7 @@ pub async fn viz_main(
                 track_node_h,
                 g.state.latest_final_block,
                 g.state.bc_tip,
-            );
+                );
             draw_multiline_text(
                 &dbg_str,
                 vec2(0.5 * font_size, font_size),
@@ -2775,7 +2817,9 @@ pub async fn viz_main(
                 None,
                 WHITE,
             );
+        }
 
+        if dev(config.show_mouse_info) {
             // draw mouse point's world location
             draw_multiline_text(
                 &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_world_mouse_pt),
@@ -2784,7 +2828,9 @@ pub async fn viz_main(
                 None,
                 WHITE,
             );
+        }
 
+        if dev(config.show_profiler) {
             macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
                 fps_counter_pos: vec2(window::screen_width() - 120., 10.),
             });
