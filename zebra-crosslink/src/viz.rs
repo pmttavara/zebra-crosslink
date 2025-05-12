@@ -951,6 +951,7 @@ const ACCEL_GRP_SIZE: f32 = 1620.;
 
 struct VizConfig {
     test_bbox: bool,
+    show_bft_ui: bool,
     show_top_info: bool,
     show_mouse_info: bool,
     show_profiler: bool,
@@ -1680,6 +1681,7 @@ pub async fn viz_main(
 
     let mut config = VizConfig {
         test_bbox: false,
+        show_bft_ui: false,
         show_top_info: true,
         show_mouse_info: false,
         show_profiler: true,
@@ -2104,87 +2106,89 @@ pub async fn viz_main(
         }
 
         // DEBUG NODE/BFT INPUTS ////////////////////////////////////////////////////////////
-        let text_size = vec2(32. * ch_w, 1.2 * font_size);
-        let bc_i_size = vec2(15. * ch_w, text_size.y);
-        // TODO: is there a nicer way of sizing windows to multiple items?
-        let text_wnd_size =
-            text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
-        ui_dynamic_window(
-            hash!(),
-            vec2(
-                0.5 * font_size,
-                window::screen_height() - (text_wnd_size.y + 0.5 * font_size),
-            ),
-            text_wnd_size,
-            |ui| {
-                let mut enter_pressed = false;
-                enter_pressed |= widgets::Editbox::new(hash!(), text_size)
-                    .multiline(false)
-                    .ui(ui, &mut node_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+        if config.show_bft_ui {
+            let text_size = vec2(32. * ch_w, 1.2 * font_size);
+            let bc_i_size = vec2(15. * ch_w, text_size.y);
+            // TODO: is there a nicer way of sizing windows to multiple items?
+            let text_wnd_size =
+                text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
+            ui_dynamic_window(
+                hash!(),
+                vec2(
+                    0.5 * font_size,
+                    window::screen_height() - (text_wnd_size.y + 0.5 * font_size),
+                ),
+                text_wnd_size,
+                |ui| {
+                    let mut enter_pressed = false;
+                    enter_pressed |= widgets::Editbox::new(hash!(), text_size)
+                        .multiline(false)
+                        .ui(ui, &mut node_str)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
-                ui.same_line(text_size.x + font_size);
+                    ui.same_line(text_size.x + font_size);
 
-                enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
-                    .multiline(false)
-                    .filter(&|ch| char::is_ascii_digit(&ch))
-                    .ui(ui, &mut target_bc_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+                    enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
+                        .multiline(false)
+                        .filter(&|ch| char::is_ascii_digit(&ch))
+                        .ui(ui, &mut target_bc_str)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
-                if enter_pressed {
-                    let id = {
-                        ctx.bft_fake_id -= 1;
-                        ctx.bft_fake_id + 1
-                    };
-                    ctx.bft_last_added = ctx.push_node(
-                        &config,
-                        NodeInit::BFT {
-                            parent: ctx.bft_last_added,
-                            is_real: false,
+                    if enter_pressed {
+                        let id = {
+                            ctx.bft_fake_id -= 1;
+                            ctx.bft_fake_id + 1
+                        };
+                        ctx.bft_last_added = ctx.push_node(
+                            &config,
+                            NodeInit::BFT {
+                                parent: ctx.bft_last_added,
+                                is_real: false,
 
-                            id,
+                                id,
 
-                            payload: BftPayload {
-                                headers: loop {
-                                    let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                    if bc.is_none() {
-                                        break Vec::new();
-                                    }
+                                payload: BftPayload {
+                                    headers: loop {
+                                        let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                        if bc.is_none() {
+                                            break Vec::new();
+                                        }
 
-                                    let node_i = find_bc_node_i_by_height(
-                                        &ctx.nodes,
-                                        BlockHeight(bc.unwrap()),
-                                    );
-                                    if node_i.is_none() {
-                                        break Vec::new();
-                                    }
+                                        let node_i = find_bc_node_i_by_height(
+                                            &ctx.nodes,
+                                            BlockHeight(bc.unwrap()),
+                                        );
+                                        if node_i.is_none() {
+                                            break Vec::new();
+                                        }
 
-                                    let node = &ctx.nodes[node_i.unwrap()];
-                                    break match node.header {
-                                        VizHeader::BlockHeader(hdr) => vec![hdr],
-                                        _ => Vec::new(),
-                                    };
+                                        let node = &ctx.nodes[node_i.unwrap()];
+                                        break match node.header {
+                                            VizHeader::BlockHeader(hdr) => vec![hdr],
+                                            _ => Vec::new(),
+                                        };
+                                    },
                                 },
+                                text: node_str.clone(),
+                                height: ctx.bft_last_added.map_or(Some(0), |_| None),
                             },
-                            text: node_str.clone(),
-                            height: ctx.bft_last_added.map_or(Some(0), |_| None),
-                        },
-                        None,
-                    );
+                            None,
+                        );
 
-                    node_str = "".to_string();
-                    target_bc_str = "".to_string();
-                }
+                        node_str = "".to_string();
+                        target_bc_str = "".to_string();
+                    }
 
-                if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
-                    .multiline(false)
-                    .ui(ui, &mut edit_proposed_bft_string)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
-                {
-                    proposed_bft_string = Some(edit_proposed_bft_string.clone())
-                }
-            },
-        );
+                    if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
+                        .multiline(false)
+                        .ui(ui, &mut edit_proposed_bft_string)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
+                    {
+                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
+                    }
+                },
+            );
+        }
 
         // UI CONTROLS ////////////////////////////////////////////////////////////
         let track_button_txt = "Track height";
@@ -2835,6 +2839,7 @@ pub async fn viz_main(
                         &mut config.pause_incoming_blocks,
                     );
                     checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
+                    checkbox(ui, hash!(), "Show BFT creation UI", &mut config.show_bft_ui);
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
