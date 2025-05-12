@@ -59,10 +59,10 @@ pub const BLOCK_MINING_WAIT_TIME: Duration = Duration::from_secs(3);
 /// mining thread.
 ///
 /// See [`run_mining_solver()`] for more details.
-pub fn spawn_init<Mempool, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>(
+pub fn spawn_init<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>(
     network: &Network,
     config: &Config,
-    rpc: RpcImpl<Mempool, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> JoinHandle<Result<(), Report>>
 // TODO: simplify or avoid repeating these generics (how?)
 where
@@ -107,10 +107,10 @@ where
 /// mining thread.
 ///
 /// See [`run_mining_solver()`] for more details.
-pub async fn init<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub async fn init<Mempool, TFLService, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
     network: Network,
     _config: Config,
-    rpc: RpcImpl<Mempool, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> Result<(), Report>
 where
     Mempool: Service<
@@ -213,6 +213,7 @@ where
 #[instrument(skip(rpc, template_sender, network))]
 pub async fn generate_block_templates<
     Mempool,
+    TFLService,
     State,
     Tip,
     BlockVerifierRouter,
@@ -220,7 +221,7 @@ pub async fn generate_block_templates<
     AddressBook,
 >(
     network: Network,
-    rpc: RpcImpl<Mempool, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
     template_sender: watch::Sender<Option<Arc<Block>>>,
 ) -> Result<(), Report>
 where
@@ -328,10 +329,10 @@ where
 /// It can run for minutes or hours if the network difficulty is high. Mining uses a thread with
 /// low CPU priority.
 #[instrument(skip(template_receiver, rpc))]
-pub async fn run_mining_solver<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub async fn run_mining_solver<Mempool, TFLService, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
     solver_id: u8,
     mut template_receiver: WatchReceiver<Option<Arc<Block>>>,
-    rpc: RpcImpl<Mempool, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> Result<(), Report>
 where
     Mempool: Service<
