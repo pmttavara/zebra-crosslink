@@ -955,6 +955,7 @@ struct VizConfig {
     show_mouse_info: bool,
     show_profiler: bool,
     pause_incoming_blocks: bool,
+    new_node_ratio: f32,
 }
 
 /// Common GUI state that may need to be passed around
@@ -1156,8 +1157,24 @@ impl VizCtx {
 
         if needs_fixup {
             if let Some(parent) = new_node.parent {
-                new_node.pt =
-                    self.nodes[parent].pt - vec2(0., self.nodes[parent].rad + new_node.rad + 30.);
+                new_node.pt = self.nodes[parent].pt;
+            }
+
+            let (rel_node_ref, dy) = match new_node.kind {
+                NodeKind::BC => (new_node.parent, node_dy_from_work(&new_node, self.bc_work_max)),
+                NodeKind::BFT => (tfl_nominee_from_node(self, &new_node), 0.),
+            };
+
+            let target_y = if let Some(rel_node) = rel_node_ref {
+                self.nodes[rel_node].pt.y - dy
+            } else {
+                new_node.pt.y - 100.
+            };
+
+            new_node.pt.y = if new_node.parent.is_none() {
+                target_y // init the first BFT node in the right place
+            } else {
+                new_node.pt.y.lerp(target_y, config.new_node_ratio)
             }
         }
 
@@ -1555,6 +1572,24 @@ fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
     (line.0 + t_clamped * len * norm, norm)
 }
 
+fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
+    let ch_w = ui.calc_size("#").x;
+    widgets::Checkbox::new(hash!())
+        .label(label)
+        .pos(vec2(3.*ch_w, 0.))
+        .ratio(0.)
+        .ui(ui, data);
+}
+
+fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
+    node
+        .difficulty
+        .and_then(|difficulty| difficulty.to_work())
+        .map_or(100., |work| {
+            150. * work.as_u128() as f32 / bc_work_max as f32
+        })
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -1649,6 +1684,7 @@ pub async fn viz_main(
         show_mouse_info: false,
         show_profiler: true,
         pause_incoming_blocks: false,
+        new_node_ratio: 0.8,
     };
 
     init_audio().await;
@@ -2417,12 +2453,7 @@ pub async fn viz_main(
                 target_pt.x = parent.pt.x;
 
                 if !y_is_set {
-                    let intended_dy = ctx.nodes[node_i]
-                        .difficulty
-                        .and_then(|difficulty| difficulty.to_work())
-                        .map_or(100., |work| {
-                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
-                        });
+                    let intended_dy = node_dy_from_work(&ctx.nodes[node_i], ctx.bc_work_max);
                     target_pt.y = parent.pt.y - intended_dy;
                     y_counterpart = a_parent;
                     y_is_set = true;
@@ -2795,17 +2826,21 @@ pub async fn viz_main(
             ui_dynamic_window(
                 hash!(),
                 vec2(tray_x - tray_w, 0.),
-                vec2(tray_x, window::screen_height()),
+                vec2(tray_w, window::screen_height()),
                 |ui| {
-                    ui.checkbox(
+                    checkbox(
+                        ui,
                         hash!(),
                         "Pause incoming blocks",
                         &mut config.pause_incoming_blocks,
                     );
-                    ui.checkbox(hash!(), "Test window bounds", &mut config.test_bbox);
-                    ui.checkbox(hash!(), "Show top info", &mut config.show_top_info);
-                    ui.checkbox(hash!(), "Show mouse info", &mut config.show_mouse_info);
-                    ui.checkbox(hash!(), "Show profiler", &mut config.show_profiler);
+                    checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
+                    checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
+                    checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
+                    checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+
+                    ui.label(None, "Spawn spring/stable ratio");
+                    ui.slider(hash!(), "", 0. .. 1., &mut config.new_node_ratio);
                 },
             );
         }
