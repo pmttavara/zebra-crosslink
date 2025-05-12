@@ -295,7 +295,7 @@ pub mod serialization {
 
             let mut bft_blocks = state.bft_blocks.clone();
 
-            for (i, node) in nodes.into_iter().enumerate() {
+            for (i, node) in nodes.iter().enumerate() {
                 match node.kind {
                     NodeKind::BC => {
                         height_hashes.push((
@@ -304,9 +304,7 @@ pub mod serialization {
                         ));
                         blocks.push(Some(MinimalBlockExport {
                             difficulty: u32_from_compact_difficulty(
-                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| {
-                                    CompactDifficulty::from(d)
-                                }),
+                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| d),
                             ),
                             txs_n: node.txs_n,
                             previous_block_hash: if let Some(parent) = node.parent {
@@ -384,15 +382,14 @@ pub mod serialization {
                                     solution: Solution::for_proposal(),
                                 }),
                                 // dummy transactions, just so we have txs_n
-                                transactions: vec![
-                                    Arc::new(Transaction::V1 {
+                                transactions: {
+                                    let tx = Arc::new(Transaction::V1 {
                                         lock_time: LockTime::Height(BlockHeight(0)),
                                         inputs: Vec::new(),
                                         outputs: Vec::new(),
                                     });
-                                    b.txs_n as usize
-                                ]
-                                .into(),
+                                    vec![tx; b.txs_n as usize]
+                                },
                             })
                         })
                     })
@@ -1162,7 +1159,10 @@ impl VizCtx {
             }
 
             let (rel_node_ref, dy) = match new_node.kind {
-                NodeKind::BC => (new_node.parent, node_dy_from_work(&new_node, self.bc_work_max)),
+                NodeKind::BC => (
+                    new_node.parent,
+                    node_dy_from_work(&new_node, self.bc_work_max),
+                ),
                 NodeKind::BFT => (tfl_nominee_from_node(self, &new_node), 0.),
             };
 
@@ -1577,14 +1577,13 @@ fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
     let ch_w = ui.calc_size("#").x;
     widgets::Checkbox::new(hash!())
         .label(label)
-        .pos(vec2(3.*ch_w, 0.))
+        .pos(vec2(3. * ch_w, 0.))
         .ratio(0.)
         .ui(ui, data);
 }
 
 fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
-    node
-        .difficulty
+    node.difficulty
         .and_then(|difficulty| difficulty.to_work())
         .map_or(100., |work| {
             150. * work.as_u128() as f32 / bc_work_max as f32
@@ -2744,7 +2743,7 @@ pub async fn viz_main(
                 end_zone(z_hash_string);
 
                 let z_node_text = begin_zone("node text");
-                if node.text.len() > 0 {
+                if !node.text.is_empty() {
                     draw_text_align(
                         &format!("{} - {}", node.height, node.text),
                         vec2(circle.x + circle_text_o, circle.y),
@@ -2845,7 +2844,7 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
 
                     ui.label(None, "Spawn spring/stable ratio");
-                    ui.slider(hash!(), "", 0. .. 1., &mut config.new_node_ratio);
+                    ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
                 },
             );
         }

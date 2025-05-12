@@ -953,7 +953,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         quiet = false;
                     }
                 }
-                if quiet == false {
+                if !quiet {
                     tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
                 }
 
@@ -1026,7 +1026,7 @@ impl malachitebft_app_channel::app::node::NodeHandle<MalContext> for DummyHandle
     }
 }
 
-static temp_dir_for_wal: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::new(None);
+static TEMP_DIR_FOR_WAL: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::new(None);
 
 #[async_trait]
 impl malachitebft_app_channel::app::node::Node for BFTNode {
@@ -1037,7 +1037,7 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
-        let mut td = temp_dir_for_wal.lock().unwrap();
+        let mut td = TEMP_DIR_FOR_WAL.lock().unwrap();
         if td.is_none() {
             *td = Some(
                 tempfile::Builder::new()

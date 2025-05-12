@@ -356,7 +356,15 @@ where
 /// It can run for minutes or hours if the network difficulty is high. Mining uses a thread with
 /// low CPU priority.
 #[instrument(skip(template_receiver, rpc))]
-pub async fn run_mining_solver<Mempool, TFLService, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub async fn run_mining_solver<
+    Mempool,
+    TFLService,
+    State,
+    Tip,
+    BlockVerifierRouter,
+    SyncStatus,
+    AddressBook,
+>(
     solver_id: u8,
     mut template_receiver: WatchReceiver<Option<Arc<Block>>>,
     rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
