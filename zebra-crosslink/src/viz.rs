@@ -1555,6 +1555,15 @@ fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
     (line.0 + t_clamped * len * norm, norm)
 }
 
+fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
+    let ch_w = ui.calc_size("#").x;
+    widgets::Checkbox::new(hash!())
+        .label(label)
+        .pos(vec2(3.*ch_w, 0.))
+        .ratio(0.)
+        .ui(ui, data);
+    }
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -2797,15 +2806,16 @@ pub async fn viz_main(
                 vec2(tray_x - tray_w, 0.),
                 vec2(tray_x, window::screen_height()),
                 |ui| {
-                    ui.checkbox(
+                    checkbox(
+                        ui,
                         hash!(),
                         "Pause incoming blocks",
                         &mut config.pause_incoming_blocks,
                     );
-                    ui.checkbox(hash!(), "Test window bounds", &mut config.test_bbox);
-                    ui.checkbox(hash!(), "Show top info", &mut config.show_top_info);
-                    ui.checkbox(hash!(), "Show mouse info", &mut config.show_mouse_info);
-                    ui.checkbox(hash!(), "Show profiler", &mut config.show_profiler);
+                    checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
+                    checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
+                    checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
+                    checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
                 },
             );
         }
