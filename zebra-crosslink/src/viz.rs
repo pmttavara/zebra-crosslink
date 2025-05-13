@@ -2671,9 +2671,9 @@ pub async fn viz_main(
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = if false {
-                    tfl_nominee_from_node(&ctx, &node)
+                    tfl_nominee_from_node(&ctx, node)
                 } else {
-                    tfl_finalized_from_node(&ctx, &node)
+                    tfl_finalized_from_node(&ctx, node)
                 } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }

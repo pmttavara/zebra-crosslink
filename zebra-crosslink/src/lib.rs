@@ -302,7 +302,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let (mut rng, my_private_key, my_public_key) = if let Some(ref address) = config.public_address
     {
-        rng_private_public_key_from_address(&address)
+        rng_private_public_key_from_address(address)
     } else {
         rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1")
     };
@@ -311,7 +311,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         let mut array = Vec::with_capacity(config.malachite_peers.len());
 
         for peer in config.malachite_peers.iter() {
-            let (_, _, public_key) = rng_private_public_key_from_address(&peer);
+            let (_, _, public_key) = rng_private_public_key_from_address(peer);
             array.push(MalValidator::new(public_key, 1));
         }
 

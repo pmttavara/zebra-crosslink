@@ -57,7 +57,7 @@ hex                = { version = "0.4.3", features = ["serde"] }
 zebra-test = { path = "../zebra-test", version = "1.0.0-beta.45" }
 
 [features]
-default = ["viz_gui"]
+default = []
 viz_gui = ["macroquad", "macroquad-profiler", "image", "miniquad"]
 audio   = ["macroquad/audio"]
 
