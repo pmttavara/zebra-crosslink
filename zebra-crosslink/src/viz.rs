@@ -961,6 +961,8 @@ struct VizConfig {
     new_node_ratio: f32,
     audio_on: bool,
     audio_volume: f32,
+    draw_resultant_forces: bool,
+    draw_component_forces: bool,
 }
 
 /// Common GUI state that may need to be passed around
@@ -1695,6 +1697,8 @@ pub async fn viz_main(
         new_node_ratio: 0.8,
         audio_on: false,
         audio_volume: 0.6,
+        draw_resultant_forces: false,
+        draw_component_forces: false,
     };
 
     init_audio(&config).await;
@@ -2590,6 +2594,19 @@ pub async fn viz_main(
                 ctx.nodes[node_i].vel = ctx.nodes[node_i].vel + ctx.nodes[node_i].acc * DT;
                 ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
 
+                // NOTE: after moving; before resetting acc to 0
+                if config.draw_resultant_forces {
+                    if ctx.nodes[node_i].acc != Vec2::_0 {
+                        draw_arrow_lines(
+                            ctx.nodes[node_i].pt,
+                            ctx.nodes[node_i].pt + ctx.nodes[node_i].acc,
+                            1.,
+                            9.,
+                            PURPLE,
+                        );
+                    }
+                }
+
                 match spring_method {
                     SpringMethod::Old => {
                         ctx.nodes[node_i].acc = -0.5 * spring_stiffness * ctx.nodes[node_i].vel
@@ -2784,16 +2801,7 @@ pub async fn viz_main(
             }
         }
 
-        if dev(false) {
-            // draw forces
-            // draw resultant force
-            for node in &mut *ctx.nodes {
-                if node.acc != Vec2::_0 {
-                    draw_arrow_lines(node.pt, node.pt + node.acc * DT, 1., 9., PURPLE);
-                }
-            }
-
-            // draw component forces
+        if config.draw_component_forces {
             for (node_i, forces) in dbg.nodes_forces.iter() {
                 let node = &ctx.nodes[*node_i];
                 for force in forces {
@@ -2810,9 +2818,9 @@ pub async fn viz_main(
         draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
-        // control tray
+        // CONTROL TRAY
         {
-            let tray_w = 28. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let tray_w = 32. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
             let target_tray_x = if tray_is_open { tray_w } else { 0. };
             tray_x = tray_x.lerp(target_tray_x, 0.1);
 
@@ -2851,6 +2859,9 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+
+                    checkbox(ui, hash!(), "Draw node forces", &mut config.draw_resultant_forces);
+                    checkbox(ui, hash!(), "Draw component node forces", &mut config.draw_component_forces);
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
