@@ -472,7 +472,7 @@ const SOUNDS_N: usize = 2; // TODO: get automatically from enum?
 static G_SOUNDS: std::sync::Mutex<[Option<macroquad::audio::Sound>; SOUNDS_N]> =
     std::sync::Mutex::new([const { None }; SOUNDS_N]);
 
-async fn init_audio() {
+async fn init_audio(config: &VizConfig) {
     #[cfg(feature = "audio")]
     {
         let mut lock = G_SOUNDS.lock();
@@ -489,10 +489,15 @@ async fn init_audio() {
     }
 }
 
-fn play_sound_once(sound: Sound) {
+fn play_sound_once(config: &VizConfig, sound: Sound) {
     #[cfg(feature = "audio")]
-    if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
-        macroquad::audio::play_sound_once(sound);
+    if config.audio_on {
+        if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
+            macroquad::audio::play_sound(sound, macroquad::audio::PlaySoundParams {
+                looped: false,
+                volume: config.audio_volume * config.audio_volume, // scale better than linear
+            });
+        }
     }
 }
 
@@ -954,6 +959,8 @@ struct VizConfig {
     show_profiler: bool,
     pause_incoming_blocks: bool,
     new_node_ratio: f32,
+    audio_on: bool,
+    audio_volume: f32,
 }
 
 /// Common GUI state that may need to be passed around
@@ -988,7 +995,7 @@ impl VizCtx {
         node: NodeInit,
         parent_hash: Option<[u8; 32]>,
     ) -> NodeRef {
-        play_sound_once(Sound::NewNode);
+        play_sound_once(config, Sound::NewNode);
         // TODO: dynamically update length & rad
         // TODO: could overlay internal circle/rings for shielded/transparent
         // TODO: track unfilled parents
@@ -1686,9 +1693,11 @@ pub async fn viz_main(
         show_profiler: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.8,
+        audio_on: false,
+        audio_volume: 0.6,
     };
 
-    init_audio().await;
+    init_audio(&config).await;
 
     loop {
         dbg.nodes_forces.clear();
@@ -2309,7 +2318,7 @@ pub async fn viz_main(
         }
 
         if old_hover_node_i != hover_node_i && hover_node_i.is_some() {
-            play_sound_once(Sound::HoverNode);
+            play_sound_once(&config, Sound::HoverNode);
         }
         old_hover_node_i = hover_node_i;
 
@@ -2845,6 +2854,13 @@ pub async fn viz_main(
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
+
+                    #[cfg(feature = "audio")]
+                    {
+                        checkbox(ui, hash!(), "Audio enabled", &mut config.audio_on);
+                        ui.label(None, "Audio volume");
+                        ui.slider(hash!(), "", 0. ..1., &mut config.audio_volume);
+                    }
                 },
             );
         }
