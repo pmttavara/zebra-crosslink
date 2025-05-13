@@ -234,6 +234,8 @@ pub struct VizState {
 
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
+    /// Flags of the BFT messages
+    pub bft_msg_flags: u64,
     /// Vector of all decided BFT block payloads, indexed by height.
     pub bft_blocks: Vec<(usize, BftPayload)>,
 }
@@ -395,6 +397,7 @@ pub mod serialization {
                     })
                     .collect(),
                 internal_proposed_bft_string: Some("From Export".into()),
+                bft_msg_flags: 0,
                 bft_blocks: export.bft_blocks,
             });
 
@@ -493,10 +496,13 @@ fn play_sound_once(config: &VizConfig, sound: Sound) {
     #[cfg(feature = "audio")]
     if config.audio_on {
         if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
-            macroquad::audio::play_sound(sound, macroquad::audio::PlaySoundParams {
-                looped: false,
-                volume: config.audio_volume * config.audio_volume, // scale better than linear
-            });
+            macroquad::audio::play_sound(
+                sound,
+                macroquad::audio::PlaySoundParams {
+                    looped: false,
+                    volume: config.audio_volume * config.audio_volume, // scale better than linear
+                },
+            );
         }
     }
 }
@@ -561,6 +567,7 @@ pub async fn service_viz_requests(
             blocks: Vec::new(),
 
             internal_proposed_bft_string: None,
+            bft_msg_flags: 0,
             bft_blocks: Vec::new(),
         }),
 
@@ -660,9 +667,12 @@ pub async fn service_viz_requests(
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
-        let (bft_blocks, internal_proposed_bft_string) = {
-            let internal = tfl_handle.internal.lock().await;
+        let (bft_msg_flags, bft_blocks, internal_proposed_bft_string) = {
+            let mut internal = tfl_handle.internal.lock().await;
+            let bft_msg_flags = internal.bft_msg_flags;
+            internal.bft_msg_flags = 0;
             (
+                bft_msg_flags,
                 internal.bft_blocks.clone(),
                 internal.proposed_bft_string.clone(),
             )
@@ -679,6 +689,7 @@ pub async fn service_viz_requests(
             height_hashes,
             blocks,
             internal_proposed_bft_string,
+            bft_msg_flags,
             bft_blocks,
         };
 
@@ -957,6 +968,7 @@ struct VizConfig {
     show_top_info: bool,
     show_mouse_info: bool,
     show_profiler: bool,
+    show_bft_msgs: bool,
     pause_incoming_blocks: bool,
     new_node_ratio: f32,
     audio_on: bool,
@@ -1599,6 +1611,16 @@ fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
         })
 }
 
+// naive lerp in existing color-space
+fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
+    color::Color {
+        r: a.r.lerp(b.r, t),
+        g: a.g.lerp(b.g, t),
+        b: a.b.lerp(b.b, t),
+        a: a.a.lerp(b.a, t),
+    }
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -1693,6 +1715,7 @@ pub async fn viz_main(
         show_top_info: true,
         show_mouse_info: false,
         show_profiler: true,
+        show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.8,
         audio_on: false,
@@ -1700,6 +1723,9 @@ pub async fn viz_main(
         draw_resultant_forces: false,
         draw_component_forces: false,
     };
+
+    let mut bft_msg_flags = 0;
+    let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
     init_audio(&config).await;
 
@@ -1871,6 +1897,8 @@ pub async fn viz_main(
                     }
                 }
             }
+
+            bft_msg_flags |= g.state.bft_msg_flags;
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
@@ -2859,9 +2887,23 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+                    checkbox(ui, hash!(), "Show BFT messages", &mut config.show_bft_msgs);
+                    if !config.show_bft_msgs {
+                        bft_msg_flags = 0; // prevent buildup
+                    }
 
-                    checkbox(ui, hash!(), "Draw node forces", &mut config.draw_resultant_forces);
-                    checkbox(ui, hash!(), "Draw component node forces", &mut config.draw_component_forces);
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Draw node forces",
+                        &mut config.draw_resultant_forces,
+                    );
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Draw component node forces",
+                        &mut config.draw_component_forces,
+                    );
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
@@ -2874,6 +2916,49 @@ pub async fn viz_main(
                     }
                 },
             );
+        }
+
+        if config.show_bft_msgs {
+            for variant in BFTMsgFlag::iter() {
+                // animates up, stays lit for a bit, then animates down
+                let i = variant as usize;
+                if !config.pause_incoming_blocks {
+                    let target_val = ((bft_msg_flags >> i) & 1) * 255; // number of frames each direction
+
+                    if target_val > bft_msg_vals[i] as u64 {
+                        bft_msg_vals[i] += 1;
+                    } else if target_val < bft_msg_vals[i] as u64 {
+                        bft_msg_vals[i] -= 1;
+                    } else {
+                        bft_msg_flags &= !(1 << i);
+                    }
+                }
+
+                let t = min(bft_msg_vals[i], 30) as f32 / 30.;
+                let col = color_lerp(DARKGREEN, GREEN, t);
+                let w = 0.6 * font_size;
+                let y_pad = 2.;
+                let min_y = 150.;
+                let y = min_y + i as f32 * (w + y_pad);
+                let mut rect = Rect {
+                    x: window::screen_width() - w,
+                    y,
+                    w,
+                    h: w,
+                };
+                draw_rect(rect, col);
+
+                rect.h += y_pad; // prevent gaps in hover target
+                if rect.contains(mouse_pt) {
+                    draw_text_right_align(
+                        &format!("{:?}", variant),
+                        vec2(rect.x - ch_w, rect.y + 0.9 * w),
+                        font_size,
+                        WHITE,
+                        ch_w,
+                    );
+                }
+            }
         }
 
         // VIZ DEBUG INFO ////////////////////
