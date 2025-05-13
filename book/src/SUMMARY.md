@@ -2,7 +2,14 @@
 
 [Zebra](README.md)
 
-- [Crosslink](crosslink.md)
+# Crosslink
+
+- [The Zebra Crosslink Implementation](crosslink.md)
+  - [The Crosslink Roadmap](crosslink/roadmap.md)
+  - [Implementation Overview](crosslink/impl-overview.md)
+
+# User Documentation
+
 - [User Documentation](user.md)
   - [System Requirements](user/requirements.md)
   - [Supported Platforms](user/supported-platforms.md)
@@ -25,6 +32,9 @@
     - [Regtest with Zebra](user/regtest.md)
   - [OpenAPI specification](user/openapi.md)
   - [Troubleshooting](user/troubleshooting.md)
+
+# Developer Documentation
+
 - [Developer Documentation](dev.md)
   - [Contribution Guide](CONTRIBUTING.md)
   - [Design Overview](dev/overview.md)
@@ -52,4 +62,7 @@
     - [V5 Transaction](dev/rfcs/0010-v5-transaction.md)
     - [Async Rust in Zebra](dev/rfcs/0011-async-rust-in-zebra.md)
     - [Value Pools](dev/rfcs/0012-value-pools.md)
+
+# API Reference
+
 - [API Reference](api.md)
