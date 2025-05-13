@@ -295,7 +295,7 @@ pub mod serialization {
 
             let mut bft_blocks = state.bft_blocks.clone();
 
-            for (i, node) in nodes.into_iter().enumerate() {
+            for (i, node) in nodes.iter().enumerate() {
                 match node.kind {
                     NodeKind::BC => {
                         height_hashes.push((
@@ -304,9 +304,7 @@ pub mod serialization {
                         ));
                         blocks.push(Some(MinimalBlockExport {
                             difficulty: u32_from_compact_difficulty(
-                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| {
-                                    CompactDifficulty::from(d)
-                                }),
+                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| d),
                             ),
                             txs_n: node.txs_n,
                             previous_block_hash: if let Some(parent) = node.parent {
@@ -384,15 +382,14 @@ pub mod serialization {
                                     solution: Solution::for_proposal(),
                                 }),
                                 // dummy transactions, just so we have txs_n
-                                transactions: vec![
-                                    Arc::new(Transaction::V1 {
+                                transactions: {
+                                    let tx = Arc::new(Transaction::V1 {
                                         lock_time: LockTime::Height(BlockHeight(0)),
                                         inputs: Vec::new(),
                                         outputs: Vec::new(),
                                     });
-                                    b.txs_n as usize
-                                ]
-                                .into(),
+                                    vec![tx; b.txs_n as usize]
+                                },
                             })
                         })
                     })
@@ -475,7 +472,7 @@ const SOUNDS_N: usize = 2; // TODO: get automatically from enum?
 static G_SOUNDS: std::sync::Mutex<[Option<macroquad::audio::Sound>; SOUNDS_N]> =
     std::sync::Mutex::new([const { None }; SOUNDS_N]);
 
-async fn init_audio() {
+async fn init_audio(config: &VizConfig) {
     #[cfg(feature = "audio")]
     {
         let mut lock = G_SOUNDS.lock();
@@ -492,10 +489,15 @@ async fn init_audio() {
     }
 }
 
-fn play_sound_once(sound: Sound) {
+fn play_sound_once(config: &VizConfig, sound: Sound) {
     #[cfg(feature = "audio")]
-    if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
-        macroquad::audio::play_sound_once(sound);
+    if config.audio_on {
+        if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
+            macroquad::audio::play_sound(sound, macroquad::audio::PlaySoundParams {
+                looped: false,
+                volume: config.audio_volume * config.audio_volume, // scale better than linear
+            });
+        }
     }
 }
 
@@ -949,6 +951,18 @@ struct Accel {
 const ACCEL_GRP_SIZE: f32 = 1620.;
 // const ACCEL_GRP_SIZE : f32 = 220.;
 
+struct VizConfig {
+    test_bbox: bool,
+    show_bft_ui: bool,
+    show_top_info: bool,
+    show_mouse_info: bool,
+    show_profiler: bool,
+    pause_incoming_blocks: bool,
+    new_node_ratio: f32,
+    audio_on: bool,
+    audio_volume: f32,
+}
+
 /// Common GUI state that may need to be passed around
 #[derive(Debug)]
 pub(crate) struct VizCtx {
@@ -975,8 +989,13 @@ pub(crate) struct VizCtx {
 }
 
 impl VizCtx {
-    fn push_node(&mut self, node: NodeInit, parent_hash: Option<[u8; 32]>) -> NodeRef {
-        play_sound_once(Sound::NewNode);
+    fn push_node(
+        &mut self,
+        config: &VizConfig,
+        node: NodeInit,
+        parent_hash: Option<[u8; 32]>,
+    ) -> NodeRef {
+        play_sound_once(config, Sound::NewNode);
         // TODO: dynamically update length & rad
         // TODO: could overlay internal circle/rings for shielded/transparent
         // TODO: track unfilled parents
@@ -1143,8 +1162,27 @@ impl VizCtx {
 
         if needs_fixup {
             if let Some(parent) = new_node.parent {
-                new_node.pt =
-                    self.nodes[parent].pt - vec2(0., self.nodes[parent].rad + new_node.rad + 30.);
+                new_node.pt = self.nodes[parent].pt;
+            }
+
+            let (rel_node_ref, dy) = match new_node.kind {
+                NodeKind::BC => (
+                    new_node.parent,
+                    node_dy_from_work(&new_node, self.bc_work_max),
+                ),
+                NodeKind::BFT => (tfl_nominee_from_node(self, &new_node), 0.),
+            };
+
+            let target_y = if let Some(rel_node) = rel_node_ref {
+                self.nodes[rel_node].pt.y - dy
+            } else {
+                new_node.pt.y - 100.
+            };
+
+            new_node.pt.y = if new_node.parent.is_none() {
+                target_y // init the first BFT node in the right place
+            } else {
+                new_node.pt.y.lerp(target_y, config.new_node_ratio)
             }
         }
 
@@ -1542,6 +1580,23 @@ fn closest_pt_on_line(line: (Vec2, Vec2), pt: Vec2) -> (Vec2, Vec2) {
     (line.0 + t_clamped * len * norm, norm)
 }
 
+fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
+    let ch_w = ui.calc_size("#").x;
+    widgets::Checkbox::new(hash!())
+        .label(label)
+        .pos(vec2(3. * ch_w, 0.))
+        .ratio(0.)
+        .ui(ui, data);
+}
+
+fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
+    node.difficulty
+        .and_then(|difficulty| difficulty.to_work())
+        .map_or(100., |work| {
+            150. * work.as_u128() as f32 / bc_work_max as f32
+        })
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -1623,11 +1678,26 @@ pub async fn viz_main(
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
     let mut new_h_rng: Option<(i32, i32)> = None;
 
+    let mut tray_is_open = true;
+    let mut tray_x = 0.;
+
     let mut dbg = VizDbg {
         nodes_forces: HashMap::new(),
     };
 
-    init_audio().await;
+    let mut config = VizConfig {
+        test_bbox: false,
+        show_bft_ui: false,
+        show_top_info: true,
+        show_mouse_info: false,
+        show_profiler: true,
+        pause_incoming_blocks: false,
+        new_node_ratio: 0.8,
+        audio_on: false,
+        audio_volume: 0.6,
+    };
+
+    init_audio(&config).await;
 
     loop {
         dbg.nodes_forces.clear();
@@ -1718,113 +1788,117 @@ pub async fn viz_main(
 
         // Cache nodes
         // TODO: handle non-contiguous chunks
-        let z_cache_blocks = begin_zone("cache blocks");
-        // TODO: safer access
-        let is_new_bc_hi = ctx.bc_lo.map_or(false, |i| {
-            if let Some((lo_height, _)) = g.state.height_hashes.get(0) {
-                let lo_node = &ctx.nodes[i];
-                lo_node.height <= lo_height.0
-            } else {
-                false
-            }
-        });
+        if !config.pause_incoming_blocks {
+            let _z = ZoneGuard::new("cache blocks");
 
-        if is_new_bc_hi {
-            // TODO: extract common code
-            for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
-                let _z = ZoneGuard::new("cache block");
-
-                if ctx.find_bc_node_by_hash(hash).is_none() {
-                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                        .as_ref()
-                        .map_or((None, 0, None, None), |block| {
-                            (
-                                Some(block.header.difficulty_threshold),
-                                block.transactions.len() as u32,
-                                Some(block.header.previous_block_hash.0),
-                                Some(*block.header),
-                            )
-                        });
-
-                    ctx.push_node(
-                        NodeInit::BC {
-                            parent: None,
-
-                            hash: hash.0,
-                            height: height.0,
-                            header: header.expect("valid header for BC"),
-                            difficulty,
-                            txs_n,
-                            is_real: true,
-                        },
-                        parent_hash,
-                    );
-                }
-            }
-        } else {
-            for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
-                let _z = ZoneGuard::new("cache block");
-
-                if ctx.find_bc_node_by_hash(hash).is_none() {
-                    let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                        .as_ref()
-                        .map_or((None, 0, None, None), |block| {
-                            (
-                                Some(block.header.difficulty_threshold),
-                                block.transactions.len() as u32,
-                                Some(block.header.previous_block_hash.0),
-                                Some(*block.header),
-                            )
-                        });
-
-                    ctx.push_node(
-                        NodeInit::BC {
-                            parent: None, // new lowest
-
-                            hash: hash.0,
-                            header: header.expect("valid header for BC"),
-                            height: height.0,
-                            difficulty,
-                            txs_n,
-                            is_real: true,
-                        },
-                        parent_hash,
-                    );
-                }
-            }
-        }
-
-        let blocks = &g.state.bft_blocks;
-        for i in ctx.bft_block_hi_i..blocks.len() {
-            if find_bft_node_by_id(&ctx.nodes, i).is_none() {
-                let (bft_parent_i, payload) = (blocks[i].0, blocks[i].1.clone());
-                let bft_parent = if i == 0 && bft_parent_i == 0 {
-                    None
-                } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
-                    Some(bft_parent)
+            // TODO: safer access
+            let is_new_bc_hi = ctx.bc_lo.map_or(false, |i| {
+                if let Some((lo_height, _)) = g.state.height_hashes.get(0) {
+                    let lo_node = &ctx.nodes[i];
+                    lo_node.height <= lo_height.0
                 } else {
-                    None
-                };
+                    false
+                }
+            });
 
-                ctx.bft_last_added = ctx.push_node(
-                    NodeInit::BFT {
-                        // TODO: distance should be proportional to difficulty of newer block
-                        parent: bft_parent,
-                        is_real: true,
+            if is_new_bc_hi {
+                // TODO: extract common code
+                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
+                    let _z = ZoneGuard::new("cache block");
 
-                        id: i,
+                    if ctx.find_bc_node_by_hash(hash).is_none() {
+                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                            .as_ref()
+                            .map_or((None, 0, None, None), |block| {
+                                (
+                                    Some(block.header.difficulty_threshold),
+                                    block.transactions.len() as u32,
+                                    Some(block.header.previous_block_hash.0),
+                                    Some(*block.header),
+                                )
+                            });
 
-                        payload,
-                        text: "".to_string(),
-                        height: bft_parent.map_or(Some(0), |_| None),
-                    },
-                    None,
-                );
+                        ctx.push_node(
+                            &config,
+                            NodeInit::BC {
+                                parent: None,
+
+                                hash: hash.0,
+                                height: height.0,
+                                header: header.expect("valid header for BC"),
+                                difficulty,
+                                txs_n,
+                                is_real: true,
+                            },
+                            parent_hash,
+                        );
+                    }
+                }
+            } else {
+                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
+                    let _z = ZoneGuard::new("cache block");
+
+                    if ctx.find_bc_node_by_hash(hash).is_none() {
+                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
+                            .as_ref()
+                            .map_or((None, 0, None, None), |block| {
+                                (
+                                    Some(block.header.difficulty_threshold),
+                                    block.transactions.len() as u32,
+                                    Some(block.header.previous_block_hash.0),
+                                    Some(*block.header),
+                                )
+                            });
+
+                        ctx.push_node(
+                            &config,
+                            NodeInit::BC {
+                                parent: None, // new lowest
+
+                                hash: hash.0,
+                                header: header.expect("valid header for BC"),
+                                height: height.0,
+                                difficulty,
+                                txs_n,
+                                is_real: true,
+                            },
+                            parent_hash,
+                        );
+                    }
+                }
             }
-        }
-        ctx.bft_block_hi_i = blocks.len();
 
-        end_zone(z_cache_blocks);
+            let blocks = &g.state.bft_blocks;
+            for i in ctx.bft_block_hi_i..blocks.len() {
+                if find_bft_node_by_id(&ctx.nodes, i).is_none() {
+                    let (bft_parent_i, payload) = (blocks[i].0, blocks[i].1.clone());
+                    let bft_parent = if i == 0 && bft_parent_i == 0 {
+                        None
+                    } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
+                        Some(bft_parent)
+                    } else {
+                        None
+                    };
+
+                    ctx.bft_last_added = ctx.push_node(
+                        &config,
+                        NodeInit::BFT {
+                            // TODO: distance should be proportional to difficulty of newer block
+                            parent: bft_parent,
+                            is_real: true,
+
+                            id: i,
+
+                            payload,
+                            text: "".to_string(),
+                            height: bft_parent.map_or(Some(0), |_| None),
+                        },
+                        None,
+                    );
+                }
+            }
+            ctx.bft_block_hi_i = blocks.len();
+        }
 
         let world_camera = Camera2D {
             target: ctx.screen_o,
@@ -1940,8 +2014,7 @@ pub async fn viz_main(
                 .screen_to_world(vec2(window::screen_width(), window::screen_height())),
         };
 
-        const TEST_BBOX: bool = false; // TODO: add to a DEBUG menu
-        let world_bbox = if TEST_BBOX {
+        let world_bbox = if config.test_bbox {
             // test bounding box functionality by shrinking it on screen
             let t = 0.25;
             BBox {
@@ -1961,7 +2034,7 @@ pub async fn viz_main(
         assert!(world_bbox.min.y < world_bbox.max.y);
         let world_rect = Rect::from(world_bbox);
 
-        if TEST_BBOX {
+        if config.test_bbox {
             draw_rect_lines(world_rect, 2., MAGENTA);
         }
 
@@ -2041,86 +2114,89 @@ pub async fn viz_main(
         }
 
         // DEBUG NODE/BFT INPUTS ////////////////////////////////////////////////////////////
-        let text_size = vec2(32. * ch_w, 1.2 * font_size);
-        let bc_i_size = vec2(15. * ch_w, text_size.y);
-        // TODO: is there a nicer way of sizing windows to multiple items?
-        let text_wnd_size =
-            text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
-        ui_dynamic_window(
-            hash!(),
-            vec2(
-                0.5 * font_size,
-                window::screen_height() - (text_wnd_size.y + 0.5 * font_size),
-            ),
-            text_wnd_size,
-            |ui| {
-                let mut enter_pressed = false;
-                enter_pressed |= widgets::Editbox::new(hash!(), text_size)
-                    .multiline(false)
-                    .ui(ui, &mut node_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+        if config.show_bft_ui {
+            let text_size = vec2(32. * ch_w, 1.2 * font_size);
+            let bc_i_size = vec2(15. * ch_w, text_size.y);
+            // TODO: is there a nicer way of sizing windows to multiple items?
+            let text_wnd_size =
+                text_size + vec2(bc_i_size.x + 1.5 * font_size, 6.) + vec2(0., 1.2 * font_size);
+            ui_dynamic_window(
+                hash!(),
+                vec2(
+                    0.5 * font_size,
+                    window::screen_height() - (text_wnd_size.y + 0.5 * font_size),
+                ),
+                text_wnd_size,
+                |ui| {
+                    let mut enter_pressed = false;
+                    enter_pressed |= widgets::Editbox::new(hash!(), text_size)
+                        .multiline(false)
+                        .ui(ui, &mut node_str)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
-                ui.same_line(text_size.x + font_size);
+                    ui.same_line(text_size.x + font_size);
 
-                enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
-                    .multiline(false)
-                    .filter(&|ch| char::is_ascii_digit(&ch))
-                    .ui(ui, &mut target_bc_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+                    enter_pressed |= widgets::Editbox::new(hash!(), bc_i_size)
+                        .multiline(false)
+                        .filter(&|ch| char::is_ascii_digit(&ch))
+                        .ui(ui, &mut target_bc_str)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
-                if enter_pressed {
-                    let id = {
-                        ctx.bft_fake_id -= 1;
-                        ctx.bft_fake_id + 1
-                    };
-                    ctx.bft_last_added = ctx.push_node(
-                        NodeInit::BFT {
-                            parent: ctx.bft_last_added,
-                            is_real: false,
+                    if enter_pressed {
+                        let id = {
+                            ctx.bft_fake_id -= 1;
+                            ctx.bft_fake_id + 1
+                        };
+                        ctx.bft_last_added = ctx.push_node(
+                            &config,
+                            NodeInit::BFT {
+                                parent: ctx.bft_last_added,
+                                is_real: false,
 
-                            id,
+                                id,
 
-                            payload: BftPayload {
-                                headers: loop {
-                                    let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                    if bc.is_none() {
-                                        break Vec::new();
-                                    }
+                                payload: BftPayload {
+                                    headers: loop {
+                                        let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                        if bc.is_none() {
+                                            break Vec::new();
+                                        }
 
-                                    let node_i = find_bc_node_i_by_height(
-                                        &ctx.nodes,
-                                        BlockHeight(bc.unwrap()),
-                                    );
-                                    if node_i.is_none() {
-                                        break Vec::new();
-                                    }
+                                        let node_i = find_bc_node_i_by_height(
+                                            &ctx.nodes,
+                                            BlockHeight(bc.unwrap()),
+                                        );
+                                        if node_i.is_none() {
+                                            break Vec::new();
+                                        }
 
-                                    let node = &ctx.nodes[node_i.unwrap()];
-                                    break match node.header {
-                                        VizHeader::BlockHeader(hdr) => vec![hdr],
-                                        _ => Vec::new(),
-                                    };
+                                        let node = &ctx.nodes[node_i.unwrap()];
+                                        break match node.header {
+                                            VizHeader::BlockHeader(hdr) => vec![hdr],
+                                            _ => Vec::new(),
+                                        };
+                                    },
                                 },
+                                text: node_str.clone(),
+                                height: ctx.bft_last_added.map_or(Some(0), |_| None),
                             },
-                            text: node_str.clone(),
-                            height: ctx.bft_last_added.map_or(Some(0), |_| None),
-                        },
-                        None,
-                    );
+                            None,
+                        );
 
-                    node_str = "".to_string();
-                    target_bc_str = "".to_string();
-                }
+                        node_str = "".to_string();
+                        target_bc_str = "".to_string();
+                    }
 
-                if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
-                    .multiline(false)
-                    .ui(ui, &mut edit_proposed_bft_string)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
-                {
-                    proposed_bft_string = Some(edit_proposed_bft_string.clone())
-                }
-            },
-        );
+                    if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
+                        .multiline(false)
+                        .ui(ui, &mut edit_proposed_bft_string)
+                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
+                    {
+                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
+                    }
+                },
+            );
+        }
 
         // UI CONTROLS ////////////////////////////////////////////////////////////
         let track_button_txt = "Track height";
@@ -2242,7 +2318,7 @@ pub async fn viz_main(
         }
 
         if old_hover_node_i != hover_node_i && hover_node_i.is_some() {
-            play_sound_once(Sound::HoverNode);
+            play_sound_once(&config, Sound::HoverNode);
         }
         old_hover_node_i = hover_node_i;
 
@@ -2292,6 +2368,7 @@ pub async fn viz_main(
                 };
 
                 let node_ref = ctx.push_node(
+                    &config,
                     NodeInit::Dyn {
                         parent: hover_node_i,
 
@@ -2388,12 +2465,7 @@ pub async fn viz_main(
                 target_pt.x = parent.pt.x;
 
                 if !y_is_set {
-                    let intended_dy = ctx.nodes[node_i]
-                        .difficulty
-                        .and_then(|difficulty| difficulty.to_work())
-                        .map_or(100., |work| {
-                            150. * work.as_u128() as f32 / ctx.bc_work_max as f32
-                        });
+                    let intended_dy = node_dy_from_work(&ctx.nodes[node_i], ctx.bc_work_max);
                     target_pt.y = parent.pt.y - intended_dy;
                     y_counterpart = a_parent;
                     y_is_set = true;
@@ -2608,9 +2680,9 @@ pub async fn viz_main(
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = if false {
-                    tfl_nominee_from_node(&ctx, &node)
+                    tfl_nominee_from_node(&ctx, node)
                 } else {
-                    tfl_finalized_from_node(&ctx, &node)
+                    tfl_finalized_from_node(&ctx, node)
                 } {
                     draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
                 }
@@ -2680,7 +2752,7 @@ pub async fn viz_main(
                 end_zone(z_hash_string);
 
                 let z_node_text = begin_zone("node text");
-                if node.text.len() > 0 {
+                if !node.text.is_empty() {
                     draw_text_align(
                         &format!("{} - {}", node.height, node.text),
                         vec2(circle.x + circle_text_o, circle.y),
@@ -2703,7 +2775,7 @@ pub async fn viz_main(
                     }
                     let node = &ctx.nodes[link.unwrap()];
 
-                    if i as u64 == g.params.bc_confirmation_depth_sigma {
+                    if i == 0 {
                         draw_circle(node.circle(), PINK);
                     } else {
                         draw_ring(node.circle(), 3., 1., PINK);
@@ -2738,8 +2810,63 @@ pub async fn viz_main(
         draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
+        // control tray
+        {
+            let tray_w = 28. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let target_tray_x = if tray_is_open { tray_w } else { 0. };
+            tray_x = tray_x.lerp(target_tray_x, 0.1);
+
+            let tray_pt = vec2(tray_x, 0.5 * font_size);
+            let tray_button_size = 1.2 * font_size;
+            let tray_button_rect = Rect {
+                x: tray_pt.x,
+                y: tray_pt.y,
+                w: tray_button_size,
+                h: tray_button_size,
+            };
+
+            let is_hover = tray_button_rect.contains(mouse_pt);
+            tray_is_open ^= is_hover && mouse_l_is_pressed;
+            draw_rect(tray_button_rect, if is_hover { GRAY } else { LIGHTGRAY });
+            draw_text(
+                if tray_is_open { "<" } else { ">" },
+                tray_pt + vec2(0.33 * font_size, 0.8 * font_size),
+                font_size,
+                WHITE,
+            );
+
+            ui_dynamic_window(
+                hash!(),
+                vec2(tray_x - tray_w, 0.),
+                vec2(tray_w, window::screen_height()),
+                |ui| {
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Pause incoming blocks",
+                        &mut config.pause_incoming_blocks,
+                    );
+                    checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
+                    checkbox(ui, hash!(), "Show BFT creation UI", &mut config.show_bft_ui);
+                    checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
+                    checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
+                    checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+
+                    ui.label(None, "Spawn spring/stable ratio");
+                    ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
+
+                    #[cfg(feature = "audio")]
+                    {
+                        checkbox(ui, hash!(), "Audio enabled", &mut config.audio_on);
+                        ui.label(None, "Audio volume");
+                        ui.slider(hash!(), "", 0. ..1., &mut config.audio_volume);
+                    }
+                },
+            );
+        }
+
         // VIZ DEBUG INFO ////////////////////
-        if IS_DEV {
+        if dev(config.show_top_info) {
             let dbg_str = format!(
                 "{:2.3} ms\n\
                 target: {}, offset: {}, zoom: {}\n\
@@ -2775,7 +2902,9 @@ pub async fn viz_main(
                 None,
                 WHITE,
             );
+        }
 
+        if dev(config.show_mouse_info) {
             // draw mouse point's world location
             draw_multiline_text(
                 &format!("{}\n{}\n{}", mouse_pt, world_mouse_pt, old_world_mouse_pt),
@@ -2784,7 +2913,9 @@ pub async fn viz_main(
                 None,
                 WHITE,
             );
+        }
 
+        if dev(config.show_profiler) {
             macroquad_profiler::profiler(macroquad_profiler::ProfilerParams {
                 fps_counter_pos: vec2(window::screen_width() - 120., 10.),
             });
@@ -2808,6 +2939,7 @@ pub fn main(tokio_root_thread_handle: Option<JoinHandle<()>>) {
         fullscreen: false,
         window_width: 1200,
         window_height: 800,
+        sample_count: 8,
         icon: Some({
             let icon16 = png.thumbnail_exact(16, 16);
             let icon32 = png.thumbnail_exact(32, 32);

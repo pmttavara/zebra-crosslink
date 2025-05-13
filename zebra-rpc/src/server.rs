@@ -91,7 +91,15 @@ impl RpcServer {
     // TODO:
     // - replace VersionString with semver::Version, and update the tests to provide valid versions
     #[allow(clippy::too_many_arguments)]
-    pub async fn start<Mempool, TFLService, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+    pub async fn start<
+        Mempool,
+        TFLService,
+        State,
+        Tip,
+        BlockVerifierRouter,
+        SyncStatus,
+        AddressBook,
+    >(
         rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
         conf: config::rpc::Config,
     ) -> Result<ServerTask, tower::BoxError>
