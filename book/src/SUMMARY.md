@@ -6,6 +6,7 @@
 
 - [The Zebra Crosslink Implementation](crosslink.md)
   - [The Crosslink Roadmap](crosslink/roadmap.md)
+  - [Protocols Overview](crosslink/protocols.md)
   - [Implementation Overview](crosslink/impl-overview.md)
 
 # User Documentation

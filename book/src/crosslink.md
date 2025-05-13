@@ -4,6 +4,8 @@ This [zebra-crosslink](https://github.com/ShieldedLabs/zebra-crosslink) codebase
 
 We refer to the general protocol design as "Zcash Crosslink" and we call this implementation "the Zebra Crosslink Implementation" when we need to distinguish. Whenever this book refers to just "Crosslink" it's safer to assume we mean only this implementation which may have specifics, including flaws or bugs, which are not part of the general protocol design.
 
+[Shielded Labs](https://shieldedlabs.net) is creating this Crosslink Implementation in support of our mission of expanding human freedom and autonomy via Zcash. 
+
 **Status:** Early Prototype; see [The Crosslink Roadmap](crosslink/roadmap.md).
 
 ## For Users
