@@ -300,12 +300,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         (rng, private_key, public_key)
     }
 
-    let (mut rng, my_private_key, my_public_key) = if let Some(ref address) = config.public_address
-    {
-        rng_private_public_key_from_address(&address)
-    } else {
-        rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1")
-    };
+    let public_ip_string = config.public_address.unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+
+    let (mut rng, my_private_key, my_public_key) = rng_private_public_key_from_address(&public_ip_string);
 
     let initial_validator_set = {
         let mut array = Vec::with_capacity(config.malachite_peers.len());
@@ -317,7 +314,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
         if array.is_empty() {
             let (_, _, public_key) =
-                rng_private_public_key_from_address("/ip4/127.0.0.1/udp/45869/quic-v1");
+                rng_private_public_key_from_address(&public_ip_string);
             array.push(MalValidator::new(public_key, 1));
         }
 
@@ -351,15 +348,16 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .consensus
             .p2p
             .persistent_peers
-            .push(Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+            .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
+    bft_config.consensus.p2p.persistent_peers.remove(bft_config.consensus.p2p.persistent_peers.iter().position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap()).unwrap());
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
     if let Some(listen_addr) = config.listen_address {
         bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
     } else {
         bft_config.consensus.p2p.listen_addr =
-            Multiaddr::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap();
+            Multiaddr::from_str(&public_ip_string).unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
@@ -1027,8 +1025,6 @@ impl malachitebft_app_channel::app::node::NodeHandle<MalContext> for DummyHandle
     }
 }
 
-static temp_dir_for_wal: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::new(None);
-
 #[async_trait]
 impl malachitebft_app_channel::app::node::Node for BFTNode {
     type Context = MalContext;
@@ -1038,19 +1034,7 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
-        let mut td = temp_dir_for_wal.lock().unwrap();
-        if td.is_none() {
-            *td = Some(
-                tempfile::Builder::new()
-                    .prefix(&format!(
-                        "aah_very_annoying_that_the_wal_is_required_id_is_{}",
-                        rand::random::<u32>()
-                    ))
-                    .tempdir()
-                    .unwrap(),
-            );
-        }
-        std::path::PathBuf::from(td.as_ref().unwrap().path())
+        std::path::PathBuf::from("./wal/")
     }
 
     fn get_address(&self, pk: &MalPublicKey) -> MalAddress {
