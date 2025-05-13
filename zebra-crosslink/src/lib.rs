@@ -357,14 +357,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
     } else {
         bft_config.consensus.p2p.listen_addr =
-            Multiaddr::from_str(&public_ip_string).unwrap();
+            Multiaddr::from_str(&format!("/ip4/127.0.0.1/tcp/{}", 45869 + rand::random::<u32>() % 1000)).unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
         bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
         num_outbound_peers: 10,
         num_inbound_peers: 30,
-        ephemeral_connection_timeout: Duration::from_secs(5),
+        ephemeral_connection_timeout: Duration::from_secs(10),
         enabled: true,
     };
 
@@ -660,8 +660,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                         prev_bft_values.insert((height.as_u64(), round.as_i64()), proposed_value.clone());
 
-                                        if reply.send(proposed_value).is_err() {
-                                            tracing::error!("Failed to send ProcessSyncedValue reply");
+                                        let new_final_hash = proposed_value.value.value.headers.first().expect("at least 1 header").hash();
+                                        if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+                                            if reply.send(proposed_value).is_err() {
+                                                tracing::error!("Failed to send ProcessSyncedValue reply");
+                                            }
                                         }
                                     },
 
