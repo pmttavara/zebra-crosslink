@@ -1831,23 +1831,20 @@ pub async fn viz_main(
                 }
             });
 
-            if is_new_bc_hi {
-                // TODO: extract common code
-                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
-                    let _z = ZoneGuard::new("cache block");
+            fn push_bc_block(
+                ctx: &mut VizCtx,
+                config: &VizConfig,
+                state: &VizState,
+                block_i: usize,
+                height: &BlockHeight,
+                hash: &BlockHash,
+            ) {
+                let _z = ZoneGuard::new("push BC block");
 
-                    if ctx.find_bc_node_by_hash(hash).is_none() {
-                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                            .as_ref()
-                            .map_or((None, 0, None, None), |block| {
-                                (
-                                    Some(block.header.difficulty_threshold),
-                                    block.transactions.len() as u32,
-                                    Some(block.header.previous_block_hash.0),
-                                    Some(*block.header),
-                                )
-                            });
-
+                if ctx.find_bc_node_by_hash(hash).is_none() {
+                    // NOTE: ignore if we don't have block (header) data; we can add it later if we
+                    // have all the data then.
+                    if let Some(block) = state.blocks[block_i].as_ref() {
                         ctx.push_node(
                             &config,
                             NodeInit::BC {
@@ -1855,46 +1852,26 @@ pub async fn viz_main(
 
                                 hash: hash.0,
                                 height: height.0,
-                                header: header.expect("valid header for BC"),
-                                difficulty,
-                                txs_n,
+                                header: *block.header,
+                                difficulty: Some(block.header.difficulty_threshold),
+                                txs_n: block.transactions.len() as u32,
                                 is_real: true,
                             },
-                            parent_hash,
+                            Some(block.header.previous_block_hash.0),
                         );
+                    } else {
+                        warn!("No data currently associated with PoW block {:?}", hash);
                     }
+                }
+            }
+
+            if is_new_bc_hi {
+                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
+                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
                 }
             } else {
                 for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
-                    let _z = ZoneGuard::new("cache block");
-
-                    if ctx.find_bc_node_by_hash(hash).is_none() {
-                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                            .as_ref()
-                            .map_or((None, 0, None, None), |block| {
-                                (
-                                    Some(block.header.difficulty_threshold),
-                                    block.transactions.len() as u32,
-                                    Some(block.header.previous_block_hash.0),
-                                    Some(*block.header),
-                                )
-                            });
-
-                        ctx.push_node(
-                            &config,
-                            NodeInit::BC {
-                                parent: None, // new lowest
-
-                                hash: hash.0,
-                                header: header.expect("valid header for BC"),
-                                height: height.0,
-                                difficulty,
-                                txs_n,
-                                is_real: true,
-                            },
-                            parent_hash,
-                        );
-                    }
+                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
                 }
             }
 
