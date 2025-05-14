@@ -2308,21 +2308,23 @@ pub async fn viz_main(
         };
 
         if let Some(recent_hover_node_i) = recent_hover_node_i {
-            let old_hover_node = &ctx.nodes[recent_hover_node_i];
-            let target_rad = old_hover_node.rad * rad_mul;
-            hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
-            if hover_circle_rad > old_hover_node.rad {
-                let col = if mouse_l_is_world_down {
-                    YELLOW
-                } else {
-                    SKYBLUE
-                };
-                draw_ring(
-                    make_circle(old_hover_node.pt, hover_circle_rad),
-                    2.,
-                    1.,
-                    col,
-                );
+            if recent_hover_node_i < ctx.nodes.len() { // Note(Sam): Crash protector.
+                let old_hover_node = &ctx.nodes[recent_hover_node_i];
+                let target_rad = old_hover_node.rad * rad_mul;
+                hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
+                if hover_circle_rad > old_hover_node.rad {
+                    let col = if mouse_l_is_world_down {
+                        YELLOW
+                    } else {
+                        SKYBLUE
+                    };
+                    draw_ring(
+                        make_circle(old_hover_node.pt, hover_circle_rad),
+                        2.,
+                        1.,
+                        col,
+                    );
+                }
             }
         }
 
