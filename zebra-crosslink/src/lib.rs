@@ -1522,6 +1522,7 @@ where
 }
 
 fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
+return; // Note(Sam), very noisy and not connected to malachite right now.
     let highlight_chars_n = block_hash_unique_chars_n(blocks);
 
     let print_color = true;
