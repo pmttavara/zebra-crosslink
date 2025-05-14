@@ -903,13 +903,22 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                     let pieces : Vec<MalStreamedProposalData> = parts.parts.iter().filter_map(|part| part.as_data()).cloned().collect();
                                                     let value = MalValue::reconstruct_from_pieces(&pieces);
 
+                                                    let new_final_hash = value.value.headers.first().expect("at least 1 header").hash();
+
+                                                    let validity = if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+                                                        MalValidity::Valid
+                                                    } else {
+                                                        error!("Voting against proposal. I do not know of PoW hash {}", new_final_hash);
+                                                        MalValidity::Invalid
+                                                    };
+
                                                     MalProposedValue {
                                                         height: parts.height,
                                                         round: parts.round,
                                                         valid_round: init.pol_round,
                                                         proposer: parts.proposer,
                                                         value,
-                                                        validity: MalValidity::Valid,
+                                                        validity,
                                                     }
                                                 };
 
