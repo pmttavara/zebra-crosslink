@@ -12,6 +12,8 @@ use malachitebft_app_channel::app::node::NodeConfig;
 use malachitebft_app_channel::app::types::sync::RawDecidedValue;
 use malachitebft_app_channel::AppMsg as BFTAppMsg;
 use malachitebft_app_channel::NetworkMsg;
+use strum::{EnumCount, IntoEnumIterator};
+use strum_macros::EnumIter;
 
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
@@ -77,6 +79,21 @@ use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResp
 /// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
 
+#[derive(Debug, Copy, Clone, EnumCount, EnumIter)]
+enum BFTMsgFlag {
+    ConsensusReady,
+    StartedRound,
+    GetValue,
+    ProcessSyncedValue,
+    GetValidatorSet,
+    Decided,
+    GetHistoryMinHeight,
+    GetDecidedValue,
+    ExtendVote,
+    VerifyVoteExtension,
+    ReceivedProposalPart,
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
@@ -88,6 +105,7 @@ pub(crate) struct TFLServiceInternal {
     // channels
     final_change_tx: broadcast::Sender<BlockHash>,
 
+    bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
     bft_blocks: Vec<(usize, BftPayload)>,
     proposed_bft_string: Option<String>,
 }
@@ -414,11 +432,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                             }
                             ret = channels.consensus.recv() => {
                                 let msg = ret.expect("Channel to Malachite has been closed.");
+                                let mut bft_msg_flags = 0;
                                 match msg {
                                     // The first message to handle is the `ConsensusReady` message, signaling to the app
                                     // that Malachite is ready to start consensus
                                     BFTAppMsg::ConsensusReady { reply } => {
                                         info!("BFT Consensus is ready");
+                                        bft_msg_flags |= 1 << BFTMsgFlag::ConsensusReady as u64;
 
                                         if reply.send((current_bft_height, initial_validator_set.clone())).is_err() {
                                             tracing::error!("Failed to send ConsensusReady reply");
@@ -434,6 +454,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         reply_value,
                                     } => {
                                         info!(%height, %round, %proposer, "Started round");
+                                        bft_msg_flags |= 1 << BFTMsgFlag::StartedRound as u64;
 
                                         current_bft_height   = height;
                                         current_bft_round    = round;
@@ -460,6 +481,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         timeout,
                                         reply,
                                     } => {
+                                        bft_msg_flags |= 1 << BFTMsgFlag::GetValue as u64;
                                         // Here it is important that, if we have previously built a value for this height and round,
                                         // we send back the very same value.
                                         let proposal = if let Some(val) = prev_bft_values.get(&(height.as_u64(), round.as_i64())) {
@@ -647,6 +669,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         reply,
                                     } => {
                                         info!(%height, %round, "Processing synced value");
+                                        bft_msg_flags |= 1 << BFTMsgFlag::ProcessSyncedValue as u64;
 
                                         let value : MalValue = codec.decode(value_bytes).unwrap();
                                         let proposed_value = MalProposedValue {
@@ -678,6 +701,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     // send back the validator set found in our genesis state.
                                     BFTAppMsg::GetValidatorSet { height: _, reply } => {
                                         // TODO: parameterize by height
+                                        bft_msg_flags |= 1 << BFTMsgFlag::GetValidatorSet as u64;
                                         if reply.send(initial_validator_set.clone()).is_err() {
                                             tracing::error!("Failed to send GetValidatorSet reply");
                                         }
@@ -699,6 +723,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             value = %certificate.value_id,
                                             "Consensus has decided on value"
                                         );
+                                        bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
                                         let decided_value = prev_bft_values.get(&(certificate.height.as_u64(), certificate.round.as_i64())).unwrap();
 
@@ -755,6 +780,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                     BFTAppMsg::GetHistoryMinHeight { reply } => {
                                         // TODO: min height from DB
+                                        bft_msg_flags |= 1 << BFTMsgFlag::GetHistoryMinHeight as u64;
                                         let min_height = init_bft_height;
                                         if reply.send(min_height).is_err() {
                                             tracing::error!("Failed to send GetHistoryMinHeight reply");
@@ -762,6 +788,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     },
 
                                     BFTAppMsg::GetDecidedValue { height, reply } => {
+                                        bft_msg_flags |= 1 << BFTMsgFlag::GetDecidedValue as u64;
                                         let raw_decided_value = decided_bft_values.get(&height.as_u64()).cloned();
 
                                         if reply.send(raw_decided_value).is_err() {
@@ -775,6 +802,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         value_id: _,
                                         reply,
                                     } => {
+                                        bft_msg_flags |= 1 << BFTMsgFlag::ExtendVote as u64;
                                         if reply.send(Some(Bytes::new())).is_err() {
                                             tracing::error!("Failed to send ExtendVote reply");
                                         }
@@ -787,6 +815,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         extension,
                                         reply,
                                     } => {
+                                        bft_msg_flags |= 1 << BFTMsgFlag::VerifyVoteExtension as u64;
                                         let response = if extension.len() == 0 {
                                             Ok(())
                                         } else {
@@ -803,6 +832,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                     // have all its constituent parts. Then we send that value back to consensus for it to
                                     // consider and vote for or against it (ie. vote `nil`), depending on its validity.
                                     BFTAppMsg::ReceivedProposalPart { from, part, reply } => {
+                                        bft_msg_flags |= 1 << BFTMsgFlag::ReceivedProposalPart as u64;
                                         let part_type = match &part.content {
                                             malachitebft_app_channel::app::streaming::StreamContent::Data(part) => part.get_type(),
                                             malachitebft_app_channel::app::streaming::StreamContent::Fin => "end of stream",
@@ -901,6 +931,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                     _ => tracing::error!(?msg, "Unhandled message from Malachite"),
                                 }
+
+                                let mut internal = internal_handle.internal.lock().await;
+                                internal.bft_msg_flags |= bft_msg_flags;
                             }
                         }
 

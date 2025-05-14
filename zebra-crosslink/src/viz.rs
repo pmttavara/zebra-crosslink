@@ -234,6 +234,8 @@ pub struct VizState {
 
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
+    /// Flags of the BFT messages
+    pub bft_msg_flags: u64,
     /// Vector of all decided BFT block payloads, indexed by height.
     pub bft_blocks: Vec<(usize, BftPayload)>,
 }
@@ -395,6 +397,7 @@ pub mod serialization {
                     })
                     .collect(),
                 internal_proposed_bft_string: Some("From Export".into()),
+                bft_msg_flags: 0,
                 bft_blocks: export.bft_blocks,
             });
 
@@ -493,10 +496,13 @@ fn play_sound_once(config: &VizConfig, sound: Sound) {
     #[cfg(feature = "audio")]
     if config.audio_on {
         if let Some(sound) = &G_SOUNDS.lock().unwrap()[sound as usize] {
-            macroquad::audio::play_sound(sound, macroquad::audio::PlaySoundParams {
-                looped: false,
-                volume: config.audio_volume * config.audio_volume, // scale better than linear
-            });
+            macroquad::audio::play_sound(
+                sound,
+                macroquad::audio::PlaySoundParams {
+                    looped: false,
+                    volume: config.audio_volume * config.audio_volume, // scale better than linear
+                },
+            );
         }
     }
 }
@@ -561,6 +567,7 @@ pub async fn service_viz_requests(
             blocks: Vec::new(),
 
             internal_proposed_bft_string: None,
+            bft_msg_flags: 0,
             bft_blocks: Vec::new(),
         }),
 
@@ -660,9 +667,12 @@ pub async fn service_viz_requests(
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
-        let (bft_blocks, internal_proposed_bft_string) = {
-            let internal = tfl_handle.internal.lock().await;
+        let (bft_msg_flags, bft_blocks, internal_proposed_bft_string) = {
+            let mut internal = tfl_handle.internal.lock().await;
+            let bft_msg_flags = internal.bft_msg_flags;
+            internal.bft_msg_flags = 0;
             (
+                bft_msg_flags,
                 internal.bft_blocks.clone(),
                 internal.proposed_bft_string.clone(),
             )
@@ -679,6 +689,7 @@ pub async fn service_viz_requests(
             height_hashes,
             blocks,
             internal_proposed_bft_string,
+            bft_msg_flags,
             bft_blocks,
         };
 
@@ -957,10 +968,13 @@ struct VizConfig {
     show_top_info: bool,
     show_mouse_info: bool,
     show_profiler: bool,
+    show_bft_msgs: bool,
     pause_incoming_blocks: bool,
     new_node_ratio: f32,
     audio_on: bool,
     audio_volume: f32,
+    draw_resultant_forces: bool,
+    draw_component_forces: bool,
 }
 
 /// Common GUI state that may need to be passed around
@@ -1597,6 +1611,16 @@ fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
         })
 }
 
+// naive lerp in existing color-space
+fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
+    color::Color {
+        r: a.r.lerp(b.r, t),
+        g: a.g.lerp(b.g, t),
+        b: a.b.lerp(b.b, t),
+        a: a.a.lerp(b.a, t),
+    }
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -1691,11 +1715,17 @@ pub async fn viz_main(
         show_top_info: true,
         show_mouse_info: false,
         show_profiler: true,
+        show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.8,
         audio_on: false,
         audio_volume: 0.6,
+        draw_resultant_forces: false,
+        draw_component_forces: false,
     };
+
+    let mut bft_msg_flags = 0;
+    let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
     init_audio(&config).await;
 
@@ -1801,23 +1831,20 @@ pub async fn viz_main(
                 }
             });
 
-            if is_new_bc_hi {
-                // TODO: extract common code
-                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
-                    let _z = ZoneGuard::new("cache block");
+            fn push_bc_block(
+                ctx: &mut VizCtx,
+                config: &VizConfig,
+                state: &VizState,
+                block_i: usize,
+                height: &BlockHeight,
+                hash: &BlockHash,
+            ) {
+                let _z = ZoneGuard::new("push BC block");
 
-                    if ctx.find_bc_node_by_hash(hash).is_none() {
-                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                            .as_ref()
-                            .map_or((None, 0, None, None), |block| {
-                                (
-                                    Some(block.header.difficulty_threshold),
-                                    block.transactions.len() as u32,
-                                    Some(block.header.previous_block_hash.0),
-                                    Some(*block.header),
-                                )
-                            });
-
+                if ctx.find_bc_node_by_hash(hash).is_none() {
+                    // NOTE: ignore if we don't have block (header) data; we can add it later if we
+                    // have all the data then.
+                    if let Some(block) = state.blocks[block_i].as_ref() {
                         ctx.push_node(
                             &config,
                             NodeInit::BC {
@@ -1825,48 +1852,30 @@ pub async fn viz_main(
 
                                 hash: hash.0,
                                 height: height.0,
-                                header: header.expect("valid header for BC"),
-                                difficulty,
-                                txs_n,
+                                header: *block.header,
+                                difficulty: Some(block.header.difficulty_threshold),
+                                txs_n: block.transactions.len() as u32,
                                 is_real: true,
                             },
-                            parent_hash,
+                            Some(block.header.previous_block_hash.0),
                         );
-                    }
-                }
-            } else {
-                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
-                    let _z = ZoneGuard::new("cache block");
-
-                    if ctx.find_bc_node_by_hash(hash).is_none() {
-                        let (difficulty, txs_n, parent_hash, header) = g.state.blocks[i]
-                            .as_ref()
-                            .map_or((None, 0, None, None), |block| {
-                                (
-                                    Some(block.header.difficulty_threshold),
-                                    block.transactions.len() as u32,
-                                    Some(block.header.previous_block_hash.0),
-                                    Some(*block.header),
-                                )
-                            });
-
-                        ctx.push_node(
-                            &config,
-                            NodeInit::BC {
-                                parent: None, // new lowest
-
-                                hash: hash.0,
-                                header: header.expect("valid header for BC"),
-                                height: height.0,
-                                difficulty,
-                                txs_n,
-                                is_real: true,
-                            },
-                            parent_hash,
-                        );
+                    } else {
+                        warn!("No data currently associated with PoW block {:?}", hash);
                     }
                 }
             }
+
+            if is_new_bc_hi {
+                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
+                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
+                }
+            } else {
+                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
+                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
+                }
+            }
+
+            bft_msg_flags |= g.state.bft_msg_flags;
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
@@ -2511,7 +2520,16 @@ pub async fn viz_main(
                     let target_dist = 75.;
                     if dist_sq < (target_dist * target_dist) {
                         // fallback to push coincident nodes apart horizontally
-                        let dir = b_to_a.normalize_or(vec2(1., 0.));
+                        let mut dir = b_to_a.normalize_or(vec2(1., 0.));
+                        if ctx.nodes[node_i].kind != ctx.nodes[node_i2].kind {
+                            let mul = if ctx.nodes[node_i].kind == NodeKind::BC {
+                                -1.
+                            } else {
+                                1.
+                            };
+
+                            dir.x = mul * dir.x.abs();
+                        }
                         let target_pt = b_pt + dir * target_dist;
                         let v = a_pt - target_pt;
                         let force = match spring_method {
@@ -2589,6 +2607,19 @@ pub async fn viz_main(
                 let node_i = *node_i;
                 ctx.nodes[node_i].vel = ctx.nodes[node_i].vel + ctx.nodes[node_i].acc * DT;
                 ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
+
+                // NOTE: after moving; before resetting acc to 0
+                if config.draw_resultant_forces {
+                    if ctx.nodes[node_i].acc != Vec2::_0 {
+                        draw_arrow_lines(
+                            ctx.nodes[node_i].pt,
+                            ctx.nodes[node_i].pt + ctx.nodes[node_i].acc,
+                            1.,
+                            9.,
+                            PURPLE,
+                        );
+                    }
+                }
 
                 match spring_method {
                     SpringMethod::Old => {
@@ -2784,16 +2815,7 @@ pub async fn viz_main(
             }
         }
 
-        if dev(false) {
-            // draw forces
-            // draw resultant force
-            for node in &mut *ctx.nodes {
-                if node.acc != Vec2::_0 {
-                    draw_arrow_lines(node.pt, node.pt + node.acc * DT, 1., 9., PURPLE);
-                }
-            }
-
-            // draw component forces
+        if config.draw_component_forces {
             for (node_i, forces) in dbg.nodes_forces.iter() {
                 let node = &ctx.nodes[*node_i];
                 for force in forces {
@@ -2810,9 +2832,9 @@ pub async fn viz_main(
         draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
         draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
 
-        // control tray
+        // CONTROL TRAY
         {
-            let tray_w = 28. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let tray_w = 32. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
             let target_tray_x = if tray_is_open { tray_w } else { 0. };
             tray_x = tray_x.lerp(target_tray_x, 0.1);
 
@@ -2851,6 +2873,23 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+                    checkbox(ui, hash!(), "Show BFT messages", &mut config.show_bft_msgs);
+                    if !config.show_bft_msgs {
+                        bft_msg_flags = 0; // prevent buildup
+                    }
+
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Draw node forces",
+                        &mut config.draw_resultant_forces,
+                    );
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Draw component node forces",
+                        &mut config.draw_component_forces,
+                    );
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
@@ -2863,6 +2902,49 @@ pub async fn viz_main(
                     }
                 },
             );
+        }
+
+        if config.show_bft_msgs {
+            for variant in BFTMsgFlag::iter() {
+                // animates up, stays lit for a bit, then animates down
+                let i = variant as usize;
+                if !config.pause_incoming_blocks {
+                    let target_val = ((bft_msg_flags >> i) & 1) * 255; // number of frames each direction
+
+                    if target_val > bft_msg_vals[i] as u64 {
+                        bft_msg_vals[i] += 1;
+                    } else if target_val < bft_msg_vals[i] as u64 {
+                        bft_msg_vals[i] -= 1;
+                    } else {
+                        bft_msg_flags &= !(1 << i);
+                    }
+                }
+
+                let t = min(bft_msg_vals[i], 30) as f32 / 30.;
+                let col = color_lerp(DARKGREEN, GREEN, t);
+                let w = 0.6 * font_size;
+                let y_pad = 2.;
+                let min_y = 150.;
+                let y = min_y + i as f32 * (w + y_pad);
+                let mut rect = Rect {
+                    x: window::screen_width() - w,
+                    y,
+                    w,
+                    h: w,
+                };
+                draw_rect(rect, col);
+
+                rect.h += y_pad; // prevent gaps in hover target
+                if rect.contains(mouse_pt) {
+                    draw_text_right_align(
+                        &format!("{:?}", variant),
+                        vec2(rect.x - ch_w, rect.y + 0.9 * w),
+                        font_size,
+                        WHITE,
+                        ch_w,
+                    );
+                }
+            }
         }
 
         // VIZ DEBUG INFO ////////////////////
