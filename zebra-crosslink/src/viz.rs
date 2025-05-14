@@ -2520,7 +2520,16 @@ pub async fn viz_main(
                     let target_dist = 75.;
                     if dist_sq < (target_dist * target_dist) {
                         // fallback to push coincident nodes apart horizontally
-                        let dir = b_to_a.normalize_or(vec2(1., 0.));
+                        let mut dir = b_to_a.normalize_or(vec2(1., 0.));
+                        if ctx.nodes[node_i].kind != ctx.nodes[node_i2].kind {
+                            let mul = if ctx.nodes[node_i].kind == NodeKind::BC {
+                                -1.
+                            } else {
+                                1.
+                            };
+
+                            dir.x = mul * dir.x.abs();
+                        }
                         let target_pt = b_pt + dir * target_dist;
                         let v = a_pt - target_pt;
                         let force = match spring_method {
