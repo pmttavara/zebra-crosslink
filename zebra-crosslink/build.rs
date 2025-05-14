@@ -1,3 +1,5 @@
+//! Build script for Zebra Crosslink.
+
 use std::io::Result;
 
 fn main() -> Result<()> {

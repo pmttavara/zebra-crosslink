@@ -35,7 +35,7 @@ mod integration_tests {
 
         #[cfg(feature = "viz_gui")]
         {
-            zebra_crosslink::viz::serialization::write_to_file("viz_state.json", &state);
+            zebra_crosslink::viz::serialization::write_to_file("viz_state.json", &state, false);
 
             eprintln!("🖼  Run `cargo run --bin viz_test_driver` to view visualization");
         }
