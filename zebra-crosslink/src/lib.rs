@@ -985,8 +985,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     let a = first_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
                     let b = last_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
                     if a != b {
-                        println!("Height change: {} => {}:", a, b);
-                        quiet = false;
+                        // Note(Sam), very noisy and not connected to malachite right now.
+                        // println!("Height change: {} => {}:", a, b);
+                        // quiet = false;
                     }
                 }
                 if !quiet {
@@ -1522,7 +1523,6 @@ where
 }
 
 fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
-return; // Note(Sam), very noisy and not connected to malachite right now.
     let highlight_chars_n = block_hash_unique_chars_n(blocks);
 
     let print_color = true;
