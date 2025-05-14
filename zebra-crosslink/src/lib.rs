@@ -665,6 +665,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             if reply.send(proposed_value).is_err() {
                                                 tracing::error!("Failed to send ProcessSyncedValue reply");
                                             }
+                                        } else {
+                                            error!("Could not accept synced value. I do not know of PoW hash {}", new_final_hash);
                                         }
                                     },
 
