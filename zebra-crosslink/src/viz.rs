@@ -1183,7 +1183,7 @@ impl VizCtx {
         // NOTE: currently referencing OOB until this is added
         let node_ref = Some(NodeHdl { idx: i as u32 });
 
-        if new_node.kind == NodeKind::BC {
+        let child_ref: NodeRef = if new_node.kind == NodeKind::BC {
             if let Some(hi_node) = self.get_node(self.bc_hi) {
                 new_node.pt = hi_node.pt;
             }
@@ -1210,8 +1210,8 @@ impl VizCtx {
             if let Some(node_hash) = new_node.hash() {
                 self.bc_by_hash.insert(node_hash, node_ref);
 
-                let do_remove = if let Some(child_ref) = self.missing_bc_parents.get(&node_hash) {
-                    if let Some(child) = self.node(*child_ref) {
+                let child_ref: NodeRef = if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
+                    if let Some(child) = self.node(child_ref) {
                         new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
                         assert!(child.parent.is_none());
@@ -1223,16 +1223,22 @@ impl VizCtx {
                         );
                         child.parent = node_ref;
                     }
-                    true
+                    child_ref
                 } else {
-                    false
+                    None
                 };
 
-                if do_remove {
+                if child_ref.is_some() {
                     self.missing_bc_parents.remove(&node_hash);
                 }
+
+                child_ref
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         if needs_fixup {
             if let Some(parent) = self.get_node(new_node.parent) {
@@ -1241,16 +1247,26 @@ impl VizCtx {
                 // new_node.vel = self.nodes[parent].vel;
             }
 
-            let (rel_node_ref, dy) = match new_node.kind {
-                NodeKind::BC => (
-                    new_node.parent,
-                    node_dy_from_work(&new_node, self.bc_work_max),
-                ),
-                NodeKind::BFT => (tfl_nominee_from_node(self, &new_node), 0.),
+            let (rel_pt, dy) = match new_node.kind {
+                NodeKind::BC => if let Some(parent) = self.get_node(new_node.parent) {
+                    (
+                        Some(parent.pt),
+                        node_dy_from_work(&new_node, self.bc_work_max),
+                    )
+                } else if let Some(child) = self.get_node(child_ref) {
+                    (
+                        Some(child.pt),
+                        -node_dy_from_work(child, self.bc_work_max),
+                    )
+                } else {
+                    (None, 0.)
+                },
+
+                NodeKind::BFT => (self.get_node(tfl_nominee_from_node(self, &new_node)).map(|node| node.pt), 0.),
             };
 
-            let target_y = if let Some(rel_node) = self.get_node(rel_node_ref) {
-                rel_node.pt.y - dy
+            let target_y = if let Some(rel_pt) = rel_pt {
+                rel_pt.y - dy
             } else {
                 new_node.pt.y - 100.
             };
@@ -1259,6 +1275,12 @@ impl VizCtx {
                 target_y // init the first BFT node in the right place
             } else {
                 new_node.pt.y.lerp(target_y, config.new_node_ratio)
+            };
+
+            if let Some(parent) = self.get_node(new_node.parent) {
+                if new_node.pt.y > parent.pt.y {
+                    warn!("points have been spawned inverted");
+                }
             }
         }
 
@@ -2580,6 +2602,10 @@ pub async fn viz_main(
             if a_parent != drag_node_ref {
                 if let Some(parent) = ctx.get_node(a_parent) {
                     target_pt.x = parent.pt.x;
+
+                    if a_pt.y > parent.pt.y {
+                        warn!("nodes have become inverted");
+                    }
 
                     if !y_is_set {
                         let intended_dy =
