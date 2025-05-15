@@ -978,6 +978,9 @@ struct VizConfig {
     audio_volume: f32,
     draw_resultant_forces: bool,
     draw_component_forces: bool,
+    do_force_links: bool,
+    do_force_any: bool,
+    do_force_edge: bool,
 }
 
 /// Common GUI state that may need to be passed around
@@ -1789,6 +1792,9 @@ pub async fn viz_main(
         audio_volume: 0.6,
         draw_resultant_forces: false,
         draw_component_forces: false,
+        do_force_links: true,
+        do_force_any: true,
+        do_force_edge: true,
     };
 
     let mut bft_msg_flags = 0;
@@ -2585,6 +2591,7 @@ pub async fn viz_main(
                 }
             }
 
+            if config.do_force_links
             {
                 // add link/parent based forces
                 // TODO: if the alignment force is ~proportional to the total amount of work
@@ -2629,7 +2636,7 @@ pub async fn viz_main(
                     };
 
                 let target_dist = 75.;
-                if dist_sq < (target_dist * target_dist) {
+                if config.do_force_any && dist_sq < (target_dist * target_dist) {
                     // fallback to push coincident nodes apart horizontally
                     let mut dir = b_to_a.normalize_or(vec2(1., 0.));
                     let node = ctx.get_node(node_ref).unwrap();
@@ -2659,7 +2666,7 @@ pub async fn viz_main(
                 }
 
                 // apply forces perpendicular to edges
-                {
+                if config.do_force_edge {
                     if b_parent == drag_node_ref || b_parent == node_ref {
                         continue;
                     }
@@ -3000,6 +3007,9 @@ pub async fn viz_main(
                         bft_msg_flags = 0; // prevent buildup
                     }
 
+                    checkbox(ui, hash!(), "Enable linked-node forces", &mut config.do_force_links);
+                    checkbox(ui, hash!(), "Enable any-node forces", &mut config.do_force_any);
+                    checkbox(ui, hash!(), "Enable edge-node forces", &mut config.do_force_edge);
                     checkbox(
                         ui,
                         hash!(),
