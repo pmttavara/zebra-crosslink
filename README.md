@@ -33,6 +33,8 @@
 
 See `./book/src/crosslink.md` for in-progress documentation on this implementation.
 
+See `./SCOPING.md` for major goals and non-goals for this implementation.
+
 ### About Upstream Zebra
 
 [Zebra](https://zebra.zfnd.org/) is a Zcash full-node written in Rust.
