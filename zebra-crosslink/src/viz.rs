@@ -1,5 +1,4 @@
 //! Internal vizualization
-#![allow(unexpected_cfgs, unused, missing_docs)]
 
 use crate::*;
 use macroquad::{
@@ -309,8 +308,7 @@ pub mod serialization {
                                 node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| d),
                             ),
                             txs_n: node.txs_n,
-                            previous_block_hash: if let Some(parent) = node.parent {
-                                let parent = &nodes[parent];
+                            previous_block_hash: if let Some(parent) = ctx.get_node(node.parent) {
                                 assert!(parent.height + 1 == node.height);
                                 parent.hash().expect("PoW nodes should have hashes")
                             } else {
@@ -326,8 +324,7 @@ pub mod serialization {
                     }
 
                     NodeKind::BFT => {
-                        let parent_id = if let Some(parent) = node.parent {
-                            let parent = &nodes[parent];
+                        let parent_id = if let Some(parent) = ctx.get_node(node.parent) {
                             assert!(parent.height + 1 == node.height);
                             parent.id().expect("BFT nodes should have ids")
                         } else {
@@ -449,17 +446,17 @@ pub mod serialization {
 
 /// Self-debug info
 struct VizDbg {
-    nodes_forces: HashMap<usize, Vec<Vec2>>,
+    nodes_forces: HashMap<NodeRef, Vec<Vec2>>,
 }
 
 impl VizDbg {
-    fn new_force(&mut self, node_i: usize, force: Vec2) {
+    fn new_force(&mut self, node_ref: NodeRef, force: Vec2) {
         if dev(true) {
-            let mut forces = self.nodes_forces.get_mut(&node_i);
+            let mut forces = self.nodes_forces.get_mut(&node_ref);
             if let Some(forces) = forces.as_mut() {
                 forces.push(force);
             } else {
-                self.nodes_forces.insert(node_i, vec![force]);
+                self.nodes_forces.insert(node_ref, vec![force]);
             }
         }
     }
@@ -711,13 +708,15 @@ enum NodeId {
     Index(usize),
 }
 
-type NodeRef = Option<usize>; // TODO: generational handle
+// type NodeRef = Option<(usize)>; // TODO: generational handle
 
-#[derive(Clone, Debug)]
-struct VizBFTLinks {
-    nominee: NodeRef,
-    finalized: NodeRef,
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+struct NodeHdl {
+    idx: u32,
+    // generation: u32,
 }
+
+type NodeRef = Option<NodeHdl>;
 
 #[derive(Clone, Debug)]
 enum VizHeader {
@@ -766,7 +765,7 @@ impl From<Option<BlockHeader>> for VizHeader {
 struct Node {
     // structure
     parent: NodeRef, // TODO: do we need explicit edges?
-    // links: VizBFTLinks, // TODO: cache?
+    // generation: u32,
 
     // data
     kind: NodeKind,
@@ -891,39 +890,41 @@ impl HasBlockHash for Node {
     }
 }
 
-trait ByHandle<T, H> {
-    fn get_by_handle(&self, handle: H) -> Option<&T>
-    where
-        Self: std::marker::Sized;
-}
+// trait ByHandle<T, H> {
+//     fn get_by_handle(&self, handle: H) -> Option<&T>
+//     where
+//         Self: std::marker::Sized;
+// }
 
-impl ByHandle<Node, NodeRef> for [Node] {
-    fn get_by_handle(&self, handle: NodeRef) -> Option<&Node> {
-        if let Some(handle) = handle {
-            // TODO: generations
-            self.get(handle)
-        } else {
-            None
-        }
-    }
-}
+// impl ByHandle<Node, NodeRef> for [Node] {
+//     fn get_by_handle(&self, handle: NodeRef) -> Option<&Node> {
+//         if let Some(handle) = handle {
+//             // TODO: generations
+//             self.get(handle)
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     let _z = ZoneGuard::new("find_bc_node_i_by_height");
     nodes
         .iter()
         .position(|node| node.kind == NodeKind::BC && node.height == height.0)
+        .map(|i| NodeHdl{ idx: i as u32 })
 }
 
 fn find_bft_node_by_id(nodes: &[Node], id: usize) -> NodeRef {
     let _z = ZoneGuard::new("find_bft_node_by_id");
-    nodes.iter().position(|node| {
-        node.kind == NodeKind::BFT
-            && match node.id {
-                NodeId::Index(i) => i == id,
-                _ => false,
-            }
-    })
+        nodes.iter().position(|node| {
+            node.kind == NodeKind::BFT
+                && match node.id {
+                    NodeId::Index(i) => i == id,
+                    _ => false,
+                }
+        })
+        .map(|i| NodeHdl{ idx: i as u32 })
 }
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
@@ -1003,6 +1004,40 @@ pub(crate) struct VizCtx {
 }
 
 impl VizCtx {
+    fn get_node(&self, node_ref: NodeRef) -> Option<&Node> {
+        if let Some(node_hdl) = node_ref {
+            let i = node_hdl.idx as usize;
+            if i < self.nodes.len() {
+                if true { // TODO: generation
+                    return Some(&self.nodes[i]);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn node(&mut self, node_ref: NodeRef) -> Option<&mut Node> {
+        if let Some(node_hdl) = node_ref {
+            let i = node_hdl.idx as usize;
+            if i < self.nodes.len() {
+                if true { // TODO: generation
+                    return Some(&mut self.nodes[i]);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn node_ref(&self, idx: usize) -> NodeRef {
+        if idx < self.nodes.len() {
+            Some(NodeHdl { idx: idx as u32 })
+        } else {
+            None
+        }
+    }
+
     fn push_node(
         &mut self,
         config: &VizConfig,
@@ -1064,7 +1099,7 @@ impl VizCtx {
                 let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
 
                 // DUP
-                assert!(parent.is_none() || self.nodes[parent.unwrap()].height + 1 == height);
+                assert!(self.node(parent).map_or(true, |parent| parent.height + 1 == height));
 
                 (
                     Node {
@@ -1100,10 +1135,10 @@ impl VizCtx {
                 let rad = 10.;
                 // DUP
                 let height = if let Some(height) = height {
-                    assert!(parent.is_none() || self.nodes[parent.unwrap()].height + 1 == height);
+                    assert!(self.node(parent).map_or(true, |parent| parent.height + 1 == height));
                     height
                 } else {
-                    self.nodes[parent.expect("Need at least 1 of parent or height")].height + 1
+                    self.node(parent).expect("Need at least 1 of parent or height").height + 1
                 };
 
                 (
@@ -1132,22 +1167,25 @@ impl VizCtx {
         };
 
         let i = self.nodes.len();
-        let node_ref = Some(i);
+        // NOTE: currently referencing OOB until this is added
+        let node_ref = Some(NodeHdl {
+            idx: i as u32
+        });
 
         if new_node.kind == NodeKind::BC {
             // find & link possible parent
             if let Some(parent_hash) = parent_hash {
-                let parent = self.find_bc_node_by_hash(&BlockHash(parent_hash));
-                if let Some(parent_i) = parent {
-                    assert!(new_node.parent.is_none() || new_node.parent.unwrap() == parent_i);
+                let parent_ref = self.find_bc_node_by_hash(&BlockHash(parent_hash));
+                if let Some(parent) = self.node(parent_ref) {
+                    assert!(new_node.parent.is_none() || new_node.parent == parent_ref);
                     assert!(
-                        self.nodes[parent_i].height + 1 == new_node.height,
+                        parent.height + 1 == new_node.height,
                         "parent height: {}, new height: {}",
-                        self.nodes[parent_i].height,
+                        parent.height,
                         new_node.height
                     );
 
-                    new_node.parent = parent;
+                    new_node.parent = parent_ref;
                 } else if parent_hash != [0; 32] {
                     self.missing_bc_parents.insert(parent_hash, node_ref);
                 }
@@ -1157,26 +1195,36 @@ impl VizCtx {
             if let Some(node_hash) = new_node.hash() {
                 self.bc_by_hash.insert(node_hash, node_ref);
 
-                if let Some(&Some(child)) = self.missing_bc_parents.get(&node_hash) {
-                    self.missing_bc_parents.remove(&node_hash);
-                    new_node.pt =
-                        self.nodes[child].pt + vec2(0., self.nodes[child].rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                let do_remove = if let Some(child_ref) = self.missing_bc_parents.get(&node_hash) {
+                    if let Some(child) = self.node(*child_ref) {
+                        new_node.pt =
+                            child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
-                    assert!(self.nodes[child].parent.is_none());
-                    assert!(
-                        self.nodes[child].height == new_node.height + 1,
-                        "child height: {}, new height: {}",
-                        self.nodes[child].height,
-                        new_node.height
-                    );
-                    self.nodes[child].parent = node_ref;
+                        assert!(child.parent.is_none());
+                        assert!(
+                            child.height == new_node.height + 1,
+                            "child height: {}, new height: {}",
+                            child.height,
+                            new_node.height
+                        );
+                        child.parent = node_ref;
+                    }
+                    true
+                } else {
+                    false
+                };
+
+                if do_remove {
+                    self.missing_bc_parents.remove(&node_hash);
                 }
             }
         }
 
         if needs_fixup {
-            if let Some(parent) = new_node.parent {
-                new_node.pt = self.nodes[parent].pt;
+            if let Some(parent) = self.get_node(new_node.parent) {
+                new_node.pt = parent.pt;
+                // new_node.vel = self.nodes[parent].vel;
+                // new_node.vel = self.nodes[parent].vel;
             }
 
             let (rel_node_ref, dy) = match new_node.kind {
@@ -1187,8 +1235,8 @@ impl VizCtx {
                 NodeKind::BFT => (tfl_nominee_from_node(self, &new_node), 0.),
             };
 
-            let target_y = if let Some(rel_node) = rel_node_ref {
-                self.nodes[rel_node].pt.y - dy
+            let target_y = if let Some(rel_node) = self.get_node(rel_node_ref) {
+                rel_node.pt.y - dy
             } else {
                 new_node.pt.y - 100.
             };
@@ -1209,13 +1257,11 @@ impl VizCtx {
                     self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
                 }
 
-                if self.bc_lo.is_none() || new_node.height < self.nodes[self.bc_lo.unwrap()].height
-                {
+                if self.get_node(self.bc_lo).map_or(true, |node| new_node.height < node.height) {
                     self.bc_lo = node_ref;
                 }
 
-                if self.bc_hi.is_none() || new_node.height > self.nodes[self.bc_hi.unwrap()].height
-                {
+                if self.get_node(self.bc_hi).map_or(true, |node| new_node.height < node.height) {
                     self.bc_hi = node_ref;
                 }
             }
@@ -1226,7 +1272,7 @@ impl VizCtx {
         let pos = new_node.pt;
         self.nodes.push(new_node);
 
-        self.move_node_to(i, pos);
+        self.move_node_to(node_ref, pos);
         node_ref
     }
 
@@ -1246,15 +1292,18 @@ impl VizCtx {
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
     }
 
-    fn move_node_to(&mut self, node_i: usize, new_pos: Vec2) {
-        let old_pos = self.nodes[node_i].pt;
-        self.nodes[node_i].pt = new_pos;
+    fn move_node_to(&mut self, node_ref: NodeRef, new_pos: Vec2) {
+        let node = if let Some(node) = self.node(node_ref) {
+            node
+        } else {
+            return;
+        };
+        let old_pos = node.pt;
+        node.pt = new_pos;
 
         // find group
         let old_y = (old_pos.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64;
         let new_y = (new_pos.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64;
-
-        let node_ref = Some(node_i);
 
         // remove from old location
         if old_y != new_y {
@@ -1717,7 +1766,7 @@ pub async fn viz_main(
         show_profiler: true,
         show_bft_msgs: true,
         pause_incoming_blocks: false,
-        new_node_ratio: 0.8,
+        new_node_ratio: 0.9,
         audio_on: false,
         audio_volume: 0.6,
         draw_resultant_forces: false,
@@ -1773,15 +1822,15 @@ pub async fn viz_main(
 
                 let req_o = min(5, h_hi.0 - h_lo.0);
 
-                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, ctx.bc_lo) {
-                    if on_screen_lo <= ctx.nodes[bc_lo].height + req_o {
-                        bids[bids_c] = ctx.nodes[bc_lo].height;
+                if let (Some(on_screen_lo), Some(bc_lo)) = (bc_h_lo_prev, ctx.node(ctx.bc_lo)) {
+                    if on_screen_lo <= bc_lo.height + req_o {
+                        bids[bids_c] = bc_lo.height;
                         bids_c += 1;
                     }
                 }
-                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, ctx.bc_hi) {
-                    if on_screen_hi + req_o >= ctx.nodes[bc_hi].height {
-                        bids[bids_c] = ctx.nodes[bc_hi].height + VIZ_REQ_N;
+                if let (Some(on_screen_hi), Some(bc_hi)) = (bc_h_hi_prev, ctx.node(ctx.bc_hi)) {
+                    if on_screen_hi + req_o >= bc_hi.height {
+                        bids[bids_c] = bc_hi.height + VIZ_REQ_N;
                         bids_c += 1;
                     }
                 }
@@ -1822,9 +1871,8 @@ pub async fn viz_main(
             let _z = ZoneGuard::new("cache blocks");
 
             // TODO: safer access
-            let is_new_bc_hi = ctx.bc_lo.map_or(false, |i| {
+            let is_new_bc_hi = ctx.node(ctx.bc_lo).map_or(false, |lo_node| {
                 if let Some((lo_height, _)) = g.state.height_hashes.get(0) {
-                    let lo_node = &ctx.nodes[i];
                     lo_node.height <= lo_height.0
                 } else {
                     false
@@ -1972,13 +2020,14 @@ pub async fn viz_main(
         if let MouseDrag::World(press_pt) = ctx.mouse_drag {
             ctx.mouse_drag_d = mouse_pt - press_pt;
 
-            if old_hover_node_i.is_some() {
+            let old_hover_node = ctx.get_node(old_hover_node_i);
+            if let Some(old_hover_node) = old_hover_node {
                 if ctx.mouse_drag_d.length_squared() > 2. * 2. {
                     let start_pt = world_camera.screen_to_world(press_pt);
                     ctx.mouse_drag = MouseDrag::Node {
                         start_pt,
                         node: old_hover_node_i,
-                        mouse_to_node: ctx.nodes[old_hover_node_i.unwrap()].pt - start_pt,
+                        mouse_to_node: old_hover_node.pt - start_pt,
                     };
                 }
             } else {
@@ -2065,8 +2114,8 @@ pub async fn viz_main(
 
                     let mut str = format!("y: {}, {} [ ", y, accel.nodes.len());
                     for node_ref in &accel.nodes {
-                        let new_str = if let Some(node_i) = node_ref {
-                            &format!("{} (h: {:?}), ", node_i, ctx.nodes[*node_i].height)
+                        let new_str = if let (Some(node_hdl), Some(node)) = (node_ref, ctx.get_node(*node_ref)) {
+                            &format!("{} (h: {:?}), ", node_hdl.idx, node.height)
                         } else {
                             "None, "
                         };
@@ -2156,6 +2205,30 @@ pub async fn viz_main(
                             ctx.bft_fake_id -= 1;
                             ctx.bft_fake_id + 1
                         };
+
+                        let payload = BftPayload {
+                            headers: loop {
+                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                if bc.is_none() {
+                                    break Vec::new();
+                                }
+
+                                let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
+                                        &ctx.nodes,
+                                        BlockHeight(bc.unwrap()),
+                                )) {
+                                    node
+                                } else {
+                                    break Vec::new();
+                                };
+
+                                break match node.header {
+                                    VizHeader::BlockHeader(hdr) => vec![hdr],
+                                    _ => Vec::new(),
+                                };
+                            },
+                        };
+
                         ctx.bft_last_added = ctx.push_node(
                             &config,
                             NodeInit::BFT {
@@ -2164,28 +2237,7 @@ pub async fn viz_main(
 
                                 id,
 
-                                payload: BftPayload {
-                                    headers: loop {
-                                        let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                        if bc.is_none() {
-                                            break Vec::new();
-                                        }
-
-                                        let node_i = find_bc_node_i_by_height(
-                                            &ctx.nodes,
-                                            BlockHeight(bc.unwrap()),
-                                        );
-                                        if node_i.is_none() {
-                                            break Vec::new();
-                                        }
-
-                                        let node = &ctx.nodes[node_i.unwrap()];
-                                        break match node.header {
-                                            VizHeader::BlockHeader(hdr) => vec![hdr],
-                                            _ => Vec::new(),
-                                        };
-                                    },
-                                },
+                                payload,
                                 text: node_str.clone(),
                                 height: ctx.bft_last_added.map_or(Some(0), |_| None),
                             },
@@ -2250,8 +2302,8 @@ pub async fn viz_main(
 
         if let Some(h) = track_node_h {
             let abs_h = abs_block_height(h, g.state.bc_tip);
-            if let Some(node_i) = find_bc_node_i_by_height(&ctx.nodes, abs_h) {
-                let d_y: f32 = ctx.nodes[node_i].pt.y - ctx.fix_screen_o.y;
+            if let Some(node) = ctx.node(find_bc_node_i_by_height(&ctx.nodes, abs_h)) {
+                let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
                 ctx.fix_screen_o.y += 0.4 * d_y;
                 if !track_continuously && d_y.abs() < 1. {
                     track_node_h = None;
@@ -2267,17 +2319,19 @@ pub async fn viz_main(
         }
 
         // HANDLE NODE SELECTION ////////////////////////////////////////////////////////////
-        let drag_node_ref = if let MouseDrag::Node {
-            node,
+        let drag_node_ref: NodeRef = if let MouseDrag::Node {
+            node: node_ref,
             start_pt,
             mouse_to_node,
         } = ctx.mouse_drag
         {
-            let node_i = node.unwrap();
-            let drag_node = &mut ctx.nodes[node_i];
-            drag_node.vel = world_mouse_pt - old_world_mouse_pt;
-            ctx.move_node_to(node_i, world_mouse_pt + mouse_to_node);
-            node
+            if let Some(drag_node) = ctx.node(node_ref) {
+                drag_node.vel = world_mouse_pt - old_world_mouse_pt;
+                ctx.move_node_to(node_ref, world_mouse_pt + mouse_to_node);
+                node_ref
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -2292,7 +2346,7 @@ pub async fn viz_main(
             for (i, node) in ctx.nodes.iter().enumerate() {
                 let circle = node.circle();
                 if circle.contains(&world_mouse_pt) {
-                    hover_node_i = Some(i);
+                    hover_node_i = ctx.node_ref(i);
                     break;
                 }
             }
@@ -2307,24 +2361,21 @@ pub async fn viz_main(
             0.9
         };
 
-        if let Some(recent_hover_node_i) = recent_hover_node_i {
-            if recent_hover_node_i < ctx.nodes.len() { // Note(Sam): Crash protector.
-                let old_hover_node = &ctx.nodes[recent_hover_node_i];
-                let target_rad = old_hover_node.rad * rad_mul;
-                hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
-                if hover_circle_rad > old_hover_node.rad {
-                    let col = if mouse_l_is_world_down {
-                        YELLOW
-                    } else {
-                        SKYBLUE
-                    };
-                    draw_ring(
-                        make_circle(old_hover_node.pt, hover_circle_rad),
-                        2.,
-                        1.,
-                        col,
-                    );
-                }
+        if let Some(old_hover_node) = ctx.node(recent_hover_node_i) {
+            let target_rad = old_hover_node.rad * rad_mul;
+            hover_circle_rad = hover_circle_rad.lerp(target_rad, 0.1);
+            if hover_circle_rad > old_hover_node.rad {
+                let col = if mouse_l_is_world_down {
+                    YELLOW
+                } else {
+                    SKYBLUE
+                };
+                draw_ring(
+                    make_circle(old_hover_node.pt, hover_circle_rad),
+                    2.,
+                    1.,
+                    col,
+                );
             }
         }
 
@@ -2341,13 +2392,16 @@ pub async fn viz_main(
             && hover_node_i == mouse_dn_node_i
             && !mouse_was_node_drag
         {
+            let hover_node = ctx.get_node(hover_node_i);
             // node is clicked on
-            if hover_node_i.is_some()
+            if hover_node.is_some()
                 && (is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl))
             {
                 // create new node
-                let hover_node = &ctx.nodes[hover_node_i.unwrap()];
-                let is_bft = hover_node.kind == NodeKind::BFT;
+                let hover_node = hover_node.unwrap();
+                let kind = hover_node.kind;
+                let height = hover_node.height + 1;
+                let is_bft = kind == NodeKind::BFT;
                 let (header, id) = match hover_node.kind {
                     NodeKind::BC => {
                         let header = BlockHeader {
@@ -2383,15 +2437,15 @@ pub async fn viz_main(
                     NodeInit::Dyn {
                         parent: hover_node_i,
 
-                        kind: hover_node.kind,
-                        height: hover_node.height + 1,
+                        kind,
+                        height,
 
                         text: "".to_string(),
                         id,
                         is_real: false,
                         difficulty: None,
                         header,
-                        txs_n: (hover_node.kind == NodeKind::BC) as u32,
+                        txs_n: (kind == NodeKind::BC) as u32,
                     },
                     None,
                 );
@@ -2423,12 +2477,12 @@ pub async fn viz_main(
 
         let min_grp = (world_bbox.min.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64 - 1;
         let max_grp = (world_bbox.max.y * (1. / ACCEL_GRP_SIZE)).ceil() as i64 + 1;
-        let mut on_screen_node_idxs: Vec<usize> = Vec::with_capacity(ctx.nodes.len());
+        let mut on_screen_node_refs: Vec<NodeRef> = Vec::with_capacity(ctx.nodes.len());
         for grp in min_grp..=max_grp {
             if let Some(accel) = ctx.accel.y_to_nodes.get(&grp) {
                 for node_ref in &accel.nodes {
-                    if let Some(node_i) = node_ref {
-                        on_screen_node_idxs.push(*node_i);
+                    if node_ref.is_some() {
+                        on_screen_node_refs.push(*node_ref);
                     }
                 }
             }
@@ -2436,20 +2490,30 @@ pub async fn viz_main(
 
         // calculate forces
         let spring_stiffness = 160.;
-        for node_i in &on_screen_node_idxs {
-            let node_i = *node_i;
-            if Some(node_i) == drag_node_ref {
+        for node_ref in &on_screen_node_refs {
+            let node_ref = *node_ref;
+            if node_ref == drag_node_ref {
                 continue;
             }
 
-            let a_pt = ctx.nodes[node_i].pt;
-            let a_vel = ctx.nodes[node_i].vel;
-            let a_vel_mag = a_vel.length();
+            let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
+                (
+                    node.pt,
+                    node.vel,
+                    node.vel.length()
+                )
+            } else {
+                continue
+            };
+
 
             // apply friction
-            let friction = -1. * a_vel;
-            ctx.nodes[node_i].acc += friction;
-            dbg.new_force(node_i, friction);
+            {
+                let node = ctx.node(node_ref).unwrap();
+                let friction = -1. * a_vel;
+                node.acc += friction;
+                dbg.new_force(node_ref, friction);
+            }
 
             // parent-child height/link height - O(n) //////////////////////////////
 
@@ -2458,28 +2522,27 @@ pub async fn viz_main(
             let mut y_counterpart = None;
 
             // match heights across links for BFT
-            let a_link = tfl_nominee_from_node(&ctx, &ctx.nodes[node_i]);
-            if a_link.is_some() && a_link != drag_node_ref && a_link.unwrap() < ctx.nodes.len() {
-                let link = &ctx.nodes[a_link.unwrap()];
-                target_pt.y = link.pt.y;
-                y_counterpart = a_link;
-                y_is_set = true;
+            let a_link_ref = tfl_nominee_from_node(&ctx, ctx.get_node(node_ref).unwrap());
+            if a_link_ref != drag_node_ref {
+                if let Some(link) = ctx.node(a_link_ref) {
+                    target_pt.y = link.pt.y;
+                    y_counterpart = a_link_ref;
+                    y_is_set = true;
+                }
             }
 
             // align x, set parent distance for PoW work/as BFT fallback
-            let a_parent = ctx.nodes[node_i].parent;
-            if a_parent.is_some()
-                && a_parent != drag_node_ref
-                && a_parent.unwrap() < ctx.nodes.len()
-            {
-                let parent = &ctx.nodes[a_parent.unwrap()];
-                target_pt.x = parent.pt.x;
+            let a_parent = ctx.get_node(node_ref).unwrap().parent;
+            if a_parent != drag_node_ref {
+                if let Some(parent) = ctx.get_node(a_parent) {
+                    target_pt.x = parent.pt.x;
 
-                if !y_is_set {
-                    let intended_dy = node_dy_from_work(&ctx.nodes[node_i], ctx.bc_work_max);
-                    target_pt.y = parent.pt.y - intended_dy;
-                    y_counterpart = a_parent;
-                    y_is_set = true;
+                    if !y_is_set {
+                        let intended_dy = node_dy_from_work(ctx.get_node(node_ref).unwrap(), ctx.bc_work_max);
+                        target_pt.y = parent.pt.y - intended_dy;
+                        y_counterpart = a_parent;
+                        y_is_set = true;
+                    }
                 }
             }
 
@@ -2499,104 +2562,123 @@ pub async fn viz_main(
                     },
                 };
 
-                ctx.nodes[node_i].acc += force;
-                dbg.new_force(node_i, force);
-                if let Some(i) = y_counterpart {
-                    ctx.nodes[i].acc -= force;
-                    dbg.new_force(i, -force);
+                let node = ctx.node(node_ref).unwrap();
+                node.acc += force;
+                dbg.new_force(node_ref, force);
+                if let Some(node) = ctx.node(y_counterpart) {
+                    node.acc -= force;
+                    dbg.new_force(y_counterpart, -force);
                 }
             }
 
             // any-node/any-edge distance - O(n^2) //////////////////////////////
             // TODO: spatial partitioning
-            for node_i2 in &on_screen_node_idxs {
+            for node_i2 in &on_screen_node_refs {
                 let node_i2 = *node_i2;
-                if Some(node_i2) == drag_node_ref {
+                if node_i2 == drag_node_ref ||
+                    node_i2 == node_ref {
                     continue;
                 }
 
-                let b_pt = ctx.nodes[node_i2].pt;
-                if node_i2 != node_i {
+                let (b_pt, b_to_a, dist_sq, b_parent, b_circle) = if let Some(node_2) = ctx.get_node(node_i2) {
+                    let b_pt = node_2.pt;
                     let b_to_a = a_pt - b_pt;
                     let dist_sq = b_to_a.length_squared();
-                    let target_dist = 75.;
-                    if dist_sq < (target_dist * target_dist) {
-                        // fallback to push coincident nodes apart horizontally
-                        let mut dir = b_to_a.normalize_or(vec2(1., 0.));
-                        if ctx.nodes[node_i].kind != ctx.nodes[node_i2].kind {
-                            let mul = if ctx.nodes[node_i].kind == NodeKind::BC {
-                                -1.
-                            } else {
-                                1.
-                            };
+                    (b_pt, b_to_a, dist_sq, node_2.parent, node_2.circle())
+                } else {
+                    continue;
+                };
 
-                            dir.x = mul * dir.x.abs();
+                let target_dist = 75.;
+                if dist_sq < (target_dist * target_dist) {
+                    // fallback to push coincident nodes apart horizontally
+                    let mut dir = b_to_a.normalize_or(vec2(1., 0.));
+                    let node = ctx.get_node(node_ref).unwrap();
+                    let node_2 = ctx.get_node(node_i2).unwrap();
+                    if node.kind != node_2.kind {
+                        let mul = if node.kind == NodeKind::BC {
+                            -1.
+                        } else {
+                            1.
+                        };
+
+                        dir.x = mul * dir.x.abs();
+                    }
+                    let target_pt = b_pt + dir * target_dist;
+                    let v = a_pt - target_pt;
+                    let force = match spring_method {
+                        SpringMethod::Old => {
+                            -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y)
                         }
-                        let target_pt = b_pt + dir * target_dist;
+                        // NOTE: 0.5 is the reduced mass for 2 nodes of mass 1
+                        SpringMethod::Coeff => {
+                            v.normalize_or(vec2(0., 0.))
+                                * spring_force(v.length(), a_vel_mag, 0.5, 0.02, 0.3)
+                        }
+                    };
+
+                    let node = ctx.node(node_ref).unwrap();
+                    node.acc += force;
+
+                    dbg.new_force(node_ref, force);
+                }
+
+                // apply forces perpendicular to edges
+                {
+                    if b_parent == drag_node_ref || b_parent == node_ref {
+                        continue;
+                    }
+
+                    let parent = if let Some(parent) = ctx.get_node(b_parent) {
+                        parent
+                    } else {
+                        continue;
+                    };
+
+                    // the maths here can be simplified significantly if this is a perf hit
+                    let edge =
+                        circles_closest_pts(b_circle, parent.circle());
+                    let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
+                    let line_to_node = a_pt - pt;
+                    let target_dist = 15.;
+
+                    if pt != edge.0
+                        && pt != edge.1
+                            && line_to_node.length_squared() < (target_dist * target_dist)
+                    {
+                        let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
+                        let target_pt = if perp_line.dot(line_to_node) > 0. {
+                            pt + target_dist * perp_line
+                        } else {
+                            pt - target_dist * perp_line
+                        };
+
+                        let m = reduced_mass(1. / 1., 1. / 2.);
+
                         let v = a_pt - target_pt;
                         let force = match spring_method {
                             SpringMethod::Old => {
-                                -vec2(1.5 * spring_stiffness * v.x, 1. * spring_stiffness * v.y)
+                                -vec2(1.5 * spring_stiffness * v.x, m * spring_stiffness * v.y)
                             }
-                            // NOTE: 0.5 is the reduced mass for 2 nodes of mass 1
                             SpringMethod::Coeff => {
-                                v.normalize_or(vec2(0., 0.))
-                                    * spring_force(v.length(), a_vel_mag, 0.5, 0.02, 0.3)
+                                perp_line * spring_force(v.length(), a_vel_mag, m, 0.01, 0.001)
                             }
                         };
-                        ctx.nodes[node_i].acc += force;
 
-                        dbg.new_force(node_i, force);
-                    }
-
-                    // apply forces perpendicular to edges
-                    let b_parent = ctx.nodes[node_i2].parent;
-                    if b_parent.is_some()
-                        && b_parent.unwrap() < ctx.nodes.len()
-                        && b_parent.unwrap() != node_i
-                    {
-                        if b_parent == drag_node_ref {
-                            continue;
-                        }
-
-                        let parent = &ctx.nodes[b_parent.unwrap()];
-
-                        // the maths here can be simplified significantly if this is a perf hit
-                        let edge =
-                            circles_closest_pts(ctx.nodes[node_i2].circle(), parent.circle());
-                        let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
-                        let line_to_node = a_pt - pt;
-                        let target_dist = 15.;
-
-                        if pt != edge.0
-                            && pt != edge.1
-                            && line_to_node.length_squared() < (target_dist * target_dist)
                         {
-                            let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
-                            let target_pt = if perp_line.dot(line_to_node) > 0. {
-                                pt + target_dist * perp_line
-                            } else {
-                                pt - target_dist * perp_line
-                            };
-
-                            let m = reduced_mass(1. / 1., 1. / 2.);
-
-                            let v = a_pt - target_pt;
-                            let force = match spring_method {
-                                SpringMethod::Old => {
-                                    -vec2(1.5 * spring_stiffness * v.x, m * spring_stiffness * v.y)
-                                }
-                                SpringMethod::Coeff => {
-                                    perp_line * spring_force(v.length(), a_vel_mag, m, 0.01, 0.001)
-                                }
-                            };
-
-                            ctx.nodes[node_i].acc += force;
-                            dbg.new_force(node_i, force);
-                            ctx.nodes[node_i2].acc -= force;
+                            let node = ctx.node(node_ref).unwrap();
+                            node.acc += force;
+                            dbg.new_force(node_ref, force);
+                        }
+                        {
+                            let node_2 = ctx.node(node_i2).unwrap();
+                            node_2.acc -= force;
                             dbg.new_force(node_i2, force);
-                            ctx.nodes[b_parent.unwrap()].acc -= force;
-                            dbg.new_force(b_parent.unwrap(), force);
+                        }
+                        {
+                            let parent = ctx.node(b_parent).unwrap();
+                            parent.acc -= force;
+                            dbg.new_force(b_parent, force);
                         }
                     }
                 }
@@ -2605,17 +2687,21 @@ pub async fn viz_main(
 
         if true {
             // apply forces
-            for node_i in &on_screen_node_idxs {
-                let node_i = *node_i;
-                ctx.nodes[node_i].vel = ctx.nodes[node_i].vel + ctx.nodes[node_i].acc * DT;
-                ctx.move_node_to(node_i, ctx.nodes[node_i].pt + ctx.nodes[node_i].vel * DT);
+            for node_ref in &on_screen_node_refs {
+                let new_pt = {
+                    let node = ctx.node(*node_ref).unwrap();
+                    node.vel = node.vel + node.acc * DT;
+                    node.pt + node.vel * DT
+                };
+                ctx.move_node_to(*node_ref, new_pt);
 
+                let node = ctx.node(*node_ref).unwrap();
                 // NOTE: after moving; before resetting acc to 0
                 if config.draw_resultant_forces {
-                    if ctx.nodes[node_i].acc != Vec2::_0 {
+                    if node.acc != Vec2::_0 {
                         draw_arrow_lines(
-                            ctx.nodes[node_i].pt,
-                            ctx.nodes[node_i].pt + ctx.nodes[node_i].acc,
+                            node.pt,
+                            node.pt + node.acc,
                             1.,
                             9.,
                             PURPLE,
@@ -2625,9 +2711,9 @@ pub async fn viz_main(
 
                 match spring_method {
                     SpringMethod::Old => {
-                        ctx.nodes[node_i].acc = -0.5 * spring_stiffness * ctx.nodes[node_i].vel
+                        node.acc = -0.5 * spring_stiffness * node.vel
                     } // TODO: or slight drag?
-                    _ => ctx.nodes[node_i].acc = Vec2::_0,
+                    _ => node.acc = Vec2::_0,
                 }
             }
         }
@@ -2635,10 +2721,9 @@ pub async fn viz_main(
         // DRAW NODES & SELECTED-NODE UI ////////////////////////////////////////////////////////////
         let unique_chars_n = block_hash_unique_chars_n(&ctx.nodes);
 
-        if let Some(click_node_i) = click_node_i {
+        if let Some(click_node) = ctx.node(click_node_i) {
             let _z = ZoneGuard::new("click node UI");
 
-            let click_node = &mut ctx.nodes[click_node_i];
             ui_camera_window(
                 hash!(),
                 &world_camera,
@@ -2701,10 +2786,10 @@ pub async fn viz_main(
             {
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
-                if let Some(parent_i) = node.parent {
+                if let Some(parent) = ctx.get_node(node.parent) {
                     let line = draw_arrow_between_circles(
                         circle,
-                        ctx.nodes[parent_i].circle(),
+                        parent.circle(),
                         2.,
                         9.,
                         GRAY,
@@ -2713,11 +2798,11 @@ pub async fn viz_main(
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
                 if let Some(link) = if false {
-                    tfl_nominee_from_node(&ctx, node)
+                    ctx.get_node(tfl_nominee_from_node(&ctx, node))
                 } else {
-                    tfl_finalized_from_node(&ctx, node)
+                    ctx.get_node(tfl_finalized_from_node(&ctx, node))
                 } {
-                    draw_arrow_between_circles(circle, ctx.nodes[link].circle(), 2., 9., PINK);
+                    draw_arrow_between_circles(circle, link.circle(), 2., 9., PINK);
                 }
             }
 
@@ -2736,9 +2821,9 @@ pub async fn viz_main(
                     true
                 };
 
-                let col = if click_node_i.is_some() && i == click_node_i.unwrap() {
+                let col = if click_node_i.is_some() && i == click_node_i.unwrap().idx as usize {
                     RED
-                } else if hover_node_i.is_some() && i == hover_node_i.unwrap() {
+                } else if hover_node_i.is_some() && i == hover_node_i.unwrap().idx as usize {
                     if mouse_l_is_world_down {
                         YELLOW
                     } else {
@@ -2799,31 +2884,32 @@ pub async fn viz_main(
         }
         end_zone(z_draw_nodes);
 
-        if let Some(node_i) = hover_node_i {
-            if let Some(bft) = &ctx.nodes[node_i].header.as_bft() {
+        if let Some(node) = ctx.get_node(hover_node_i) {
+            if let Some(bft) = node.header.as_bft() {
                 for i in 0..bft.headers.len() {
-                    let link = ctx.find_bc_node_by_hash(&bft.headers[i].hash());
-                    if link.is_none() {
+                    let link = if let Some(link) = ctx.get_node(ctx.find_bc_node_by_hash(&bft.headers[i].hash())) {
+                        link
+                    } else {
                         break;
-                    }
-                    let node = &ctx.nodes[link.unwrap()];
+                    };
 
                     if i == 0 {
-                        draw_circle(node.circle(), PINK);
+                        draw_circle(link.circle(), PINK);
                     } else {
-                        draw_ring(node.circle(), 3., 1., PINK);
+                        draw_ring(link.circle(), 3., 1., PINK);
                     }
                 }
             }
         }
 
         if config.draw_component_forces {
-            for (node_i, forces) in dbg.nodes_forces.iter() {
-                let node = &ctx.nodes[*node_i];
-                for force in forces {
-                    if *force != Vec2::_0 {
-                        draw_arrow_lines(node.pt, node.pt + *force * DT, 1., 9., ORANGE);
-                    };
+            for (node_ref, forces) in dbg.nodes_forces.iter() {
+                if let Some(node) = ctx.node(*node_ref) {
+                    for force in forces {
+                        if *force != Vec2::_0 {
+                            draw_arrow_lines(node.pt, node.pt + *force * DT, 1., 9., ORANGE);
+                        };
+                    }
                 }
             }
         }
