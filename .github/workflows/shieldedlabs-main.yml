@@ -64,5 +64,5 @@ jobs:
       with:
         tag: v${{ env.VERSION }}
         name: v${{ env.VERSION }}
-        artifacts: target/release/zebra
+        artifacts: target/release/zebrad
         generateReleaseNotes: true
