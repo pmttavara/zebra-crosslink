@@ -1762,6 +1762,7 @@ pub async fn viz_main(
 
     let mut track_node_h: Option<i32> = None;
     let mut track_continuously: bool = false;
+    let mut track_bft: bool = false;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
     let mut new_h_rng: Option<(i32, i32)> = None;
 
@@ -2280,7 +2281,7 @@ pub async fn viz_main(
         let goto_button_txt = "Goto height";
         let controls_txt_size = vec2(12. * ch_w, font_size);
         let controls_wnd_size =
-            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 1.2 * font_size);
+            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 2.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -2313,24 +2314,47 @@ pub async fn viz_main(
                     .label("Track Continuously")
                     .ratio(0.12)
                     .ui(ui, &mut track_continuously);
+                widgets::Checkbox::new(hash!())
+                    .label("Target BFT Block")
+                    .ratio(0.12)
+                    .ui(ui, &mut track_bft);
             },
         );
 
         if let Some(h) = track_node_h {
-            let abs_h = abs_block_height(h, g.state.bc_tip);
-            if let Some(node) = ctx.node(find_bc_node_i_by_height(&ctx.nodes, abs_h)) {
-                let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
-                ctx.fix_screen_o.y += 0.4 * d_y;
-                if !track_continuously && d_y.abs() < 1. {
-                    track_node_h = None;
+            if track_bft {
+                let h = h as isize;
+                let abs_h: isize = if h < 0 {
+                    g.state.bft_blocks.len() as isize + h
+                } else {
+                    h
+                };
+                if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
+                    let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
+                    ctx.fix_screen_o.y += 0.4 * d_y;
+                    if !track_continuously && d_y.abs() < 1. {
+                        track_node_h = None;
+                    }
+                } else {
+                    println!("couldn't find node at {}", h);
+                    track_node_h = None; // ALT: track indefinitely until it appears
                 }
-            } else if g.state.bc_tip.is_some() && abs_h.0 <= g.state.bc_tip.unwrap().0 .0 {
-                ctx.clear_nodes();
-                let hi = i32::try_from(abs_h.0 + VIZ_REQ_N / 2).unwrap();
-                new_h_rng = Some((sat_sub_2_sided(hi, VIZ_REQ_N), hi));
             } else {
-                println!("couldn't find node at {}", h);
-                track_node_h = None; // ALT: track indefinitely until it appears
+                let abs_h = abs_block_height(h, g.state.bc_tip);
+                if let Some(node) = ctx.node(find_bc_node_i_by_height(&ctx.nodes, abs_h)) {
+                    let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
+                    ctx.fix_screen_o.y += 0.4 * d_y;
+                    if !track_continuously && d_y.abs() < 1. {
+                        track_node_h = None;
+                    }
+                } else if g.state.bc_tip.is_some() && abs_h.0 <= g.state.bc_tip.unwrap().0 .0 {
+                    ctx.clear_nodes();
+                    let hi = i32::try_from(abs_h.0 + VIZ_REQ_N / 2).unwrap();
+                    new_h_rng = Some((sat_sub_2_sided(hi, VIZ_REQ_N), hi));
+                } else {
+                    println!("couldn't find node at {}", h);
+                    track_node_h = None; // ALT: track indefinitely until it appears
+                }
             }
         }
 
