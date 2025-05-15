@@ -912,19 +912,21 @@ fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     nodes
         .iter()
         .position(|node| node.kind == NodeKind::BC && node.height == height.0)
-        .map(|i| NodeHdl{ idx: i as u32 })
+        .map(|i| NodeHdl { idx: i as u32 })
 }
 
 fn find_bft_node_by_id(nodes: &[Node], id: usize) -> NodeRef {
     let _z = ZoneGuard::new("find_bft_node_by_id");
-        nodes.iter().position(|node| {
+    nodes
+        .iter()
+        .position(|node| {
             node.kind == NodeKind::BFT
                 && match node.id {
                     NodeId::Index(i) => i == id,
                     _ => false,
                 }
         })
-        .map(|i| NodeHdl{ idx: i as u32 })
+        .map(|i| NodeHdl { idx: i as u32 })
 }
 
 fn find_bft_node_by_height(nodes: &[Node], height: u32) -> Option<&Node> {
@@ -1008,7 +1010,8 @@ impl VizCtx {
         if let Some(node_hdl) = node_ref {
             let i = node_hdl.idx as usize;
             if i < self.nodes.len() {
-                if true { // TODO: generation
+                if true {
+                    // TODO: generation
                     return Some(&self.nodes[i]);
                 }
             }
@@ -1021,7 +1024,8 @@ impl VizCtx {
         if let Some(node_hdl) = node_ref {
             let i = node_hdl.idx as usize;
             if i < self.nodes.len() {
-                if true { // TODO: generation
+                if true {
+                    // TODO: generation
                     return Some(&mut self.nodes[i]);
                 }
             }
@@ -1099,7 +1103,9 @@ impl VizCtx {
                 let rad = ((txs_n as f32).sqrt() * 5.).min(50.);
 
                 // DUP
-                assert!(self.node(parent).map_or(true, |parent| parent.height + 1 == height));
+                assert!(self
+                    .node(parent)
+                    .map_or(true, |parent| parent.height + 1 == height));
 
                 (
                     Node {
@@ -1135,10 +1141,15 @@ impl VizCtx {
                 let rad = 10.;
                 // DUP
                 let height = if let Some(height) = height {
-                    assert!(self.node(parent).map_or(true, |parent| parent.height + 1 == height));
+                    assert!(self
+                        .node(parent)
+                        .map_or(true, |parent| parent.height + 1 == height));
                     height
                 } else {
-                    self.node(parent).expect("Need at least 1 of parent or height").height + 1
+                    self.node(parent)
+                        .expect("Need at least 1 of parent or height")
+                        .height
+                        + 1
                 };
 
                 (
@@ -1168,9 +1179,7 @@ impl VizCtx {
 
         let i = self.nodes.len();
         // NOTE: currently referencing OOB until this is added
-        let node_ref = Some(NodeHdl {
-            idx: i as u32
-        });
+        let node_ref = Some(NodeHdl { idx: i as u32 });
 
         if new_node.kind == NodeKind::BC {
             // find & link possible parent
@@ -1197,8 +1206,7 @@ impl VizCtx {
 
                 let do_remove = if let Some(child_ref) = self.missing_bc_parents.get(&node_hash) {
                     if let Some(child) = self.node(*child_ref) {
-                        new_node.pt =
-                            child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                        new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
                         assert!(child.parent.is_none());
                         assert!(
@@ -1257,11 +1265,17 @@ impl VizCtx {
                     self.bc_work_max = std::cmp::max(self.bc_work_max, work.as_u128());
                 }
 
-                if self.get_node(self.bc_lo).map_or(true, |node| new_node.height < node.height) {
+                if self
+                    .get_node(self.bc_lo)
+                    .map_or(true, |node| new_node.height < node.height)
+                {
                     self.bc_lo = node_ref;
                 }
 
-                if self.get_node(self.bc_hi).map_or(true, |node| new_node.height < node.height) {
+                if self
+                    .get_node(self.bc_hi)
+                    .map_or(true, |node| new_node.height < node.height)
+                {
                     self.bc_hi = node_ref;
                 }
             }
@@ -2114,7 +2128,9 @@ pub async fn viz_main(
 
                     let mut str = format!("y: {}, {} [ ", y, accel.nodes.len());
                     for node_ref in &accel.nodes {
-                        let new_str = if let (Some(node_hdl), Some(node)) = (node_ref, ctx.get_node(*node_ref)) {
+                        let new_str = if let (Some(node_hdl), Some(node)) =
+                            (node_ref, ctx.get_node(*node_ref))
+                        {
                             &format!("{} (h: {:?}), ", node_hdl.idx, node.height)
                         } else {
                             "None, "
@@ -2214,8 +2230,8 @@ pub async fn viz_main(
                                 }
 
                                 let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
-                                        &ctx.nodes,
-                                        BlockHeight(bc.unwrap()),
+                                    &ctx.nodes,
+                                    BlockHeight(bc.unwrap()),
                                 )) {
                                     node
                                 } else {
@@ -2497,15 +2513,10 @@ pub async fn viz_main(
             }
 
             let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
-                (
-                    node.pt,
-                    node.vel,
-                    node.vel.length()
-                )
+                (node.pt, node.vel, node.vel.length())
             } else {
-                continue
+                continue;
             };
-
 
             // apply friction
             {
@@ -2538,7 +2549,8 @@ pub async fn viz_main(
                     target_pt.x = parent.pt.x;
 
                     if !y_is_set {
-                        let intended_dy = node_dy_from_work(ctx.get_node(node_ref).unwrap(), ctx.bc_work_max);
+                        let intended_dy =
+                            node_dy_from_work(ctx.get_node(node_ref).unwrap(), ctx.bc_work_max);
                         target_pt.y = parent.pt.y - intended_dy;
                         y_counterpart = a_parent;
                         y_is_set = true;
@@ -2575,19 +2587,19 @@ pub async fn viz_main(
             // TODO: spatial partitioning
             for node_i2 in &on_screen_node_refs {
                 let node_i2 = *node_i2;
-                if node_i2 == drag_node_ref ||
-                    node_i2 == node_ref {
+                if node_i2 == drag_node_ref || node_i2 == node_ref {
                     continue;
                 }
 
-                let (b_pt, b_to_a, dist_sq, b_parent, b_circle) = if let Some(node_2) = ctx.get_node(node_i2) {
-                    let b_pt = node_2.pt;
-                    let b_to_a = a_pt - b_pt;
-                    let dist_sq = b_to_a.length_squared();
-                    (b_pt, b_to_a, dist_sq, node_2.parent, node_2.circle())
-                } else {
-                    continue;
-                };
+                let (b_pt, b_to_a, dist_sq, b_parent, b_circle) =
+                    if let Some(node_2) = ctx.get_node(node_i2) {
+                        let b_pt = node_2.pt;
+                        let b_to_a = a_pt - b_pt;
+                        let dist_sq = b_to_a.length_squared();
+                        (b_pt, b_to_a, dist_sq, node_2.parent, node_2.circle())
+                    } else {
+                        continue;
+                    };
 
                 let target_dist = 75.;
                 if dist_sq < (target_dist * target_dist) {
@@ -2596,11 +2608,7 @@ pub async fn viz_main(
                     let node = ctx.get_node(node_ref).unwrap();
                     let node_2 = ctx.get_node(node_i2).unwrap();
                     if node.kind != node_2.kind {
-                        let mul = if node.kind == NodeKind::BC {
-                            -1.
-                        } else {
-                            1.
-                        };
+                        let mul = if node.kind == NodeKind::BC { -1. } else { 1. };
 
                         dir.x = mul * dir.x.abs();
                     }
@@ -2636,15 +2644,14 @@ pub async fn viz_main(
                     };
 
                     // the maths here can be simplified significantly if this is a perf hit
-                    let edge =
-                        circles_closest_pts(b_circle, parent.circle());
+                    let edge = circles_closest_pts(b_circle, parent.circle());
                     let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
                     let line_to_node = a_pt - pt;
                     let target_dist = 15.;
 
                     if pt != edge.0
                         && pt != edge.1
-                            && line_to_node.length_squared() < (target_dist * target_dist)
+                        && line_to_node.length_squared() < (target_dist * target_dist)
                     {
                         let perp_line = norm_line.perp(); // NOTE: N/A to general capsule
                         let target_pt = if perp_line.dot(line_to_node) > 0. {
@@ -2699,20 +2706,12 @@ pub async fn viz_main(
                 // NOTE: after moving; before resetting acc to 0
                 if config.draw_resultant_forces {
                     if node.acc != Vec2::_0 {
-                        draw_arrow_lines(
-                            node.pt,
-                            node.pt + node.acc,
-                            1.,
-                            9.,
-                            PURPLE,
-                        );
+                        draw_arrow_lines(node.pt, node.pt + node.acc, 1., 9., PURPLE);
                     }
                 }
 
                 match spring_method {
-                    SpringMethod::Old => {
-                        node.acc = -0.5 * spring_stiffness * node.vel
-                    } // TODO: or slight drag?
+                    SpringMethod::Old => node.acc = -0.5 * spring_stiffness * node.vel, // TODO: or slight drag?
                     _ => node.acc = Vec2::_0,
                 }
             }
@@ -2787,13 +2786,7 @@ pub async fn viz_main(
                 // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
                 if let Some(parent) = ctx.get_node(node.parent) {
-                    let line = draw_arrow_between_circles(
-                        circle,
-                        parent.circle(),
-                        2.,
-                        9.,
-                        GRAY,
-                    );
+                    let line = draw_arrow_between_circles(circle, parent.circle(), 2., 9., GRAY);
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
@@ -2887,7 +2880,9 @@ pub async fn viz_main(
         if let Some(node) = ctx.get_node(hover_node_i) {
             if let Some(bft) = node.header.as_bft() {
                 for i in 0..bft.headers.len() {
-                    let link = if let Some(link) = ctx.get_node(ctx.find_bc_node_by_hash(&bft.headers[i].hash())) {
+                    let link = if let Some(link) =
+                        ctx.get_node(ctx.find_bc_node_by_hash(&bft.headers[i].hash()))
+                    {
                         link
                     } else {
                         break;
