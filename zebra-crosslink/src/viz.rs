@@ -2781,6 +2781,18 @@ pub async fn viz_main(
                         ch_w,
                     );
                     end_zone(z_get_text_align_2);
+                } else {
+                    let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+
+                    let z_get_text_align_1 = begin_zone("get_text_align_1");
+                    let text_dims = draw_text_right_align(
+                        &format!("{}", node.height),
+                        pt,
+                        font_size,
+                        WHITE,
+                        ch_w,
+                    );
+                    end_zone(z_get_text_align_1);
                 }
                 end_zone(z_hash_string);
 
