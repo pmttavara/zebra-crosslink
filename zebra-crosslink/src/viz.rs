@@ -1049,9 +1049,8 @@ impl VizCtx {
         parent_hash: Option<[u8; 32]>,
     ) -> NodeRef {
         play_sound_once(config, Sound::NewNode);
-        // TODO: dynamically update length & rad
+
         // TODO: could overlay internal circle/rings for shielded/transparent
-        // TODO: track unfilled parents
         let (mut new_node, needs_fixup): (Node, bool) = match node {
             NodeInit::Node { node, needs_fixup } => (node, needs_fixup),
 
@@ -1182,6 +1181,10 @@ impl VizCtx {
         let node_ref = Some(NodeHdl { idx: i as u32 });
 
         if new_node.kind == NodeKind::BC {
+            if let Some(hi_node) = self.get_node(self.bc_hi) {
+                new_node.pt = hi_node.pt;
+            }
+
             // find & link possible parent
             if let Some(parent_hash) = parent_hash {
                 let parent_ref = self.find_bc_node_by_hash(&BlockHash(parent_hash));
