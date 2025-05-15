@@ -1,7 +1,6 @@
 //! Internal Zebra service for managing the Crosslink consensus protocol
 
 #![allow(clippy::print_stdout)]
-#![allow(unexpected_cfgs, unused, missing_docs)]
 
 use malachitebft_codec::Codec;
 
@@ -318,9 +317,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         (rng, private_key, public_key)
     }
 
-    let public_ip_string = config.public_address.unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+    let public_ip_string = config
+        .public_address
+        .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
 
-    let (mut rng, my_private_key, my_public_key) = rng_private_public_key_from_address(&public_ip_string);
+    let (mut rng, my_private_key, my_public_key) =
+        rng_private_public_key_from_address(&public_ip_string);
 
     let initial_validator_set = {
         let mut array = Vec::with_capacity(config.malachite_peers.len());
@@ -331,8 +333,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         }
 
         if array.is_empty() {
-            let (_, _, public_key) =
-                rng_private_public_key_from_address(&public_ip_string);
+            let (_, _, public_key) = rng_private_public_key_from_address(&public_ip_string);
             array.push(MalValidator::new(public_key, 1));
         }
 
@@ -368,14 +369,25 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
-    bft_config.consensus.p2p.persistent_peers.remove(bft_config.consensus.p2p.persistent_peers.iter().position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap()).unwrap());
+    bft_config.consensus.p2p.persistent_peers.remove(
+        bft_config
+            .consensus
+            .p2p
+            .persistent_peers
+            .iter()
+            .position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap())
+            .unwrap(),
+    );
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
     if let Some(listen_addr) = config.listen_address {
         bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
     } else {
-        bft_config.consensus.p2p.listen_addr =
-            Multiaddr::from_str(&format!("/ip4/127.0.0.1/tcp/{}", 45869 + rand::random::<u32>() % 1000)).unwrap();
+        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
+            "/ip4/127.0.0.1/tcp/{}",
+            45869 + rand::random::<u32>() % 1000
+        ))
+        .unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Kademlia,
