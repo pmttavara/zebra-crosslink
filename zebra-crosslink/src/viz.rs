@@ -967,6 +967,7 @@ const ACCEL_GRP_SIZE: f32 = 1620.;
 
 struct VizConfig {
     test_bbox: bool,
+    show_accel_areas: bool,
     show_bft_ui: bool,
     show_top_info: bool,
     show_mouse_info: bool,
@@ -1803,6 +1804,7 @@ pub async fn viz_main(
 
     let mut config = VizConfig {
         test_bbox: false,
+        show_accel_areas: false,
         show_bft_ui: false,
         show_top_info: true,
         show_mouse_info: false,
@@ -2142,7 +2144,7 @@ pub async fn viz_main(
             draw_rect_lines(world_rect, 2., MAGENTA);
         }
 
-        if dev(true) {
+        if config.show_accel_areas {
             let col = LIGHTGRAY;
             for (y_grp, accel) in &ctx.accel.y_to_nodes {
                 let y = *y_grp as f32 * ACCEL_GRP_SIZE; // draw at top of section
@@ -2920,15 +2922,14 @@ pub async fn viz_main(
                     );
                     end_zone(z_get_text_align_2);
                 } else {
-                    let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+                    let pt = vec2(circle.x + circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
 
                     let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text_right_align(
+                    let text_dims = draw_text(
                         &format!("{}", node.height),
                         pt,
                         font_size,
                         WHITE,
-                        ch_w,
                     );
                     end_zone(z_get_text_align_1);
                 }
@@ -3024,6 +3025,7 @@ pub async fn viz_main(
                         &mut config.pause_incoming_blocks,
                     );
                     checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
+                    checkbox(ui, hash!(), "Show spatial acceleration", &mut config.show_accel_areas);
                     checkbox(ui, hash!(), "Show BFT creation UI", &mut config.show_bft_ui);
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
