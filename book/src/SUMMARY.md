@@ -8,6 +8,8 @@
   - [The Crosslink Roadmap](crosslink/roadmap.md)
   - [Protocols Overview](crosslink/protocols.md)
   - [Implementation Overview](crosslink/impl-overview.md)
+    - [Changes to Zebra](crosslink/changes-to-zebra.md)
+    - [`zebra-crosslink-chain`](crosslink/zebra-crosslink-chain.md)
 
 # User Documentation
 
