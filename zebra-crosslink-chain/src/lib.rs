@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::error;
 use zebra_chain::block::Header as BcBlockHeader;
 
 /// The BFT block content for Crosslink
@@ -70,7 +70,7 @@ impl BftPayload {
         params: &ZcashCrosslinkParameters,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftPayload> {
-        let expected = params.bc_confirmation_depth_sigma + 1;
+        let expected = params.bc_confirmation_depth_sigma;
         let actual = headers.len() as u64;
         if actual != expected {
             return Err(InvalidBftPayload::IncorrectConfirmationDepth { expected, actual });

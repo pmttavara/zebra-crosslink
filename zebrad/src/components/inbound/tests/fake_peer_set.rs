@@ -1,12 +1,21 @@
 //! Inbound service tests with a fake peer set.
 
-use std::{collections::HashSet, iter, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
-
+use crate::{
+    components::{
+        inbound::{downloads::MAX_INBOUND_CONCURRENCY, Inbound, InboundSetupData},
+        mempool::{
+            gossip_mempool_transaction_id, Config as MempoolConfig, Mempool, MempoolError,
+            SameEffectsChainRejectionError, UnboxMempoolError,
+        },
+        sync::{self, BlockGossipError, SyncStatus, PEER_GOSSIP_DELAY},
+    },
+    BoxError,
+};
 use futures::FutureExt;
+use std::{collections::HashSet, iter, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 use tower::{buffer::Buffer, builder::ServiceBuilder, util::BoxService, Service, ServiceExt};
 use tracing::{Instrument, Span};
-
 use zebra_chain::{
     amount::Amount,
     block::{Block, Height},
@@ -24,23 +33,9 @@ use zebra_network::{
     AddressBook, InventoryResponse, Request, Response,
 };
 use zebra_node_services::mempool;
-#[cfg(feature = "getblocktemplate-rpcs")]
-use zebra_rpc::methods::get_block_template_rpcs::types::submit_block::SubmitBlockChannel;
+use zebra_rpc::methods::types::submit_block::SubmitBlockChannel;
 use zebra_state::{ChainTipChange, Config as StateConfig, CHAIN_TIP_UPDATE_WAIT_LIMIT};
 use zebra_test::mock_service::{MockService, PanicAssertion};
-
-use crate::{
-    components::{
-        inbound::{downloads::MAX_INBOUND_CONCURRENCY, Inbound, InboundSetupData},
-        mempool::{
-            gossip_mempool_transaction_id, Config as MempoolConfig, Mempool, MempoolError,
-            SameEffectsChainRejectionError, UnboxMempoolError,
-        },
-        sync::{self, BlockGossipError, SyncStatus, PEER_GOSSIP_DELAY},
-    },
-    BoxError,
-};
-
 use InventoryResponse::*;
 
 /// Maximum time to wait for a network service request.
@@ -849,8 +844,7 @@ async fn caches_getaddr_response() {
         };
 
         assert_eq!(
-            peers,
-            first_result,
+            peers, first_result,
             "inbound service should return the same result for every Peers request until the refresh time",
         );
     }
@@ -983,17 +977,13 @@ async fn setup(
     // Pretend we're close to tip
     SyncStatus::sync_close_to_tip(&mut recent_syncs);
 
-    #[cfg(feature = "getblocktemplate-rpcs")]
     let submitblock_channel = SubmitBlockChannel::new();
     let sync_gossip_task_handle = tokio::spawn(
         sync::gossip_best_tip_block_hashes(
             sync_status.clone(),
             chain_tip_change.clone(),
             peer_set.clone(),
-            #[cfg(feature = "getblocktemplate-rpcs")]
             Some(submitblock_channel.receiver()),
-            #[cfg(not(feature = "getblocktemplate-rpcs"))]
-            None,
         )
         .in_current_span(),
     );

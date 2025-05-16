@@ -6,15 +6,13 @@
 //!   <https://github.com/zcash/zcash/blob/6fdd9f1b81d3b228326c9826fa10696fc516444b/src/miner.cpp#L865-L880>
 //! - move common code into zebra-chain or zebra-node-services and remove the RPC dependency.
 
-use std::{cmp::min, sync::Arc, thread::available_parallelism, time::Duration};
-
 use color_eyre::Report;
 use futures::{stream::FuturesUnordered, StreamExt};
+use std::{cmp::min, sync::Arc, thread::available_parallelism, time::Duration};
 use thread_priority::{ThreadBuilder, ThreadPriority};
 use tokio::{select, sync::watch, task::JoinHandle, time::sleep};
 use tower::Service;
 use tracing::{Instrument, Span};
-
 use zebra_chain::{
     block::{self, Block, Height},
     chain_sync_status::ChainSyncStatus,
@@ -30,12 +28,15 @@ use zebra_node_services::mempool;
 use zebra_rpc::{
     config::mining::Config,
     methods::{
-        get_block_template_rpcs::get_block_template::{
-            self, proposal::TimeSource, proposal_block_from_template,
-            GetBlockTemplateCapability::*, GetBlockTemplateRequestMode::*,
-        },
         hex_data::HexData,
-        GetBlockTemplateRpcImpl, GetBlockTemplateRpcServer,
+        types::get_block_template::{
+            self,
+            parameters::GetBlockTemplateCapability::{CoinbaseTxn, LongPoll},
+            proposal::proposal_block_from_template,
+            GetBlockTemplateRequestMode::Template,
+            TimeSource,
+        },
+        RpcImpl, RpcServer,
     },
 };
 use zebra_state::WatchReceiver;
@@ -58,10 +59,10 @@ pub const BLOCK_MINING_WAIT_TIME: Duration = Duration::from_secs(3);
 /// mining thread.
 ///
 /// See [`run_mining_solver()`] for more details.
-pub fn spawn_init<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub fn spawn_init<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>(
     network: &Network,
     config: &Config,
-    rpc: GetBlockTemplateRpcImpl<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> JoinHandle<Result<(), Report>>
 // TODO: simplify or avoid repeating these generics (how?)
 where
@@ -74,6 +75,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -106,10 +116,10 @@ where
 /// mining thread.
 ///
 /// See [`run_mining_solver()`] for more details.
-pub async fn init<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub async fn init<Mempool, TFLService, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
     network: Network,
     _config: Config,
-    rpc: GetBlockTemplateRpcImpl<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> Result<(), Report>
 where
     Mempool: Service<
@@ -121,6 +131,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -209,9 +228,10 @@ where
 }
 
 /// Generates block templates using `rpc`, and sends them to mining threads using `template_sender`.
-#[instrument(skip(rpc, template_sender))]
+#[instrument(skip(rpc, template_sender, network))]
 pub async fn generate_block_templates<
     Mempool,
+    TFLService,
     State,
     Tip,
     BlockVerifierRouter,
@@ -219,7 +239,7 @@ pub async fn generate_block_templates<
     AddressBook,
 >(
     network: Network,
-    rpc: GetBlockTemplateRpcImpl<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
     template_sender: watch::Sender<Option<Arc<Block>>>,
 ) -> Result<(), Report>
 where
@@ -232,6 +252,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -266,8 +295,9 @@ where
 
         // Wait for the chain to sync so we get a valid template.
         let Ok(template) = template else {
-            info!(
+            warn!(
                 ?BLOCK_TEMPLATE_WAIT_TIME,
+                ?template,
                 "waiting for a valid block template",
             );
 
@@ -326,10 +356,18 @@ where
 /// It can run for minutes or hours if the network difficulty is high. Mining uses a thread with
 /// low CPU priority.
 #[instrument(skip(template_receiver, rpc))]
-pub async fn run_mining_solver<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>(
+pub async fn run_mining_solver<
+    Mempool,
+    TFLService,
+    State,
+    Tip,
+    BlockVerifierRouter,
+    SyncStatus,
+    AddressBook,
+>(
     solver_id: u8,
     mut template_receiver: WatchReceiver<Option<Arc<Block>>>,
-    rpc: GetBlockTemplateRpcImpl<Mempool, State, Tip, BlockVerifierRouter, SyncStatus, AddressBook>,
+    rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
 ) -> Result<(), Report>
 where
     Mempool: Service<
@@ -341,6 +379,15 @@ where
         + Sync
         + 'static,
     Mempool::Future: Send,
+    TFLService: Service<
+            zebra_crosslink::service::TFLServiceRequest,
+            Response = zebra_crosslink::service::TFLServiceResponse,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    TFLService::Future: Send,
     State: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
