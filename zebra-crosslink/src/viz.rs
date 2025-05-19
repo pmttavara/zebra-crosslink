@@ -2383,15 +2383,37 @@ pub async fn viz_main(
                 } else {
                     h
                 };
+
+                let mut clear_bft_bc_h = None;
                 if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
-                    let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
-                    ctx.fix_screen_o.y += 0.4 * d_y;
-                    if !track_continuously && d_y.abs() < 1. {
-                        track_node_h = None;
+                    let mut is_done = false;
+                    if let Some(bft_hdr) = node.header.as_bft() {
+                        if let Some(bc_hdr) = bft_hdr.payload.headers.last() {
+                            if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
+                                clear_bft_bc_h = Some(bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32  - 1);
+                                is_done = true;
+                            }
+                        }
+                    }
+
+                    if !is_done {
+                        let d_y: f32 = node.pt.y - ctx.fix_screen_o.y;
+                        ctx.fix_screen_o.y += 0.4 * d_y;
+                        if !track_continuously && d_y.abs() < 1. {
+                            track_node_h = None;
+                        }
                     }
                 } else {
                     println!("couldn't find node at {}", h);
                     track_node_h = None; // ALT: track indefinitely until it appears
+                }
+
+                if let Some(bft_bc_h) = clear_bft_bc_h {
+                    ctx.clear_nodes();
+                    let hi = i32::try_from(bft_bc_h + VIZ_REQ_N / 2).unwrap();
+                    new_h_rng = Some((sat_sub_2_sided(hi, VIZ_REQ_N), hi));
+                    // NOTE: leaves track_node_h as Some to be fine-tuned once the
+                    // BC nodes are present
                 }
             } else {
                 let abs_h = abs_block_height(h, g.state.bc_tip);
@@ -2605,6 +2627,7 @@ pub async fn viz_main(
                                     let max_hdr_h = hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
                                     if max_hdr_h < bc_lo.height {
                                         offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(world_bbox.max.y + world_rect.h)));
+                                        // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(bc_lo.pt.y + world_rect.h)));
                                     }
                                 }
 
@@ -2612,6 +2635,7 @@ pub async fn viz_main(
                                     let min_hdr_h = hdr.min_payload_h.0;
                                     if min_hdr_h > bc_hi.height {
                                         offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(world_bbox.min.y - world_rect.h)));
+                                        // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(bc_hi.pt.y - world_rect.h)));
                                     }
                                 }
 
@@ -2625,7 +2649,9 @@ pub async fn viz_main(
             };
 
             if let Some(new_pt) = offscreen_new_pt {
+                // info!("move point offscreen: lo: {:?}, hi: {:?}: new: {}", ctx.get_node(ctx.bc_lo).and_then(|node| Some(node.pt.y)), ctx.get_node(ctx.bc_hi).and_then(|node| Some(node.pt.y)), new_pt);
                 ctx.move_node_to(node_ref, new_pt);
+                continue;
             }
 
             // apply friction
