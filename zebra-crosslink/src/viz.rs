@@ -1794,7 +1794,7 @@ pub async fn viz_main(
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
 
     let mut track_node_h: Option<i32> = None;
-    let mut track_continuously: bool = false;
+    let mut track_continuously: bool = true;
     let mut track_bft: bool = false;
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
     let mut new_h_rng: Option<(i32, i32)> = None;

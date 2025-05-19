@@ -193,6 +193,7 @@ mod tests {
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
             bft_blocks: Vec::new(),
+            bft_msg_flags: 0,
             proposed_bft_string: None,
         }));
 
