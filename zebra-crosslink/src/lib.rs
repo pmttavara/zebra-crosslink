@@ -390,8 +390,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         .unwrap();
     }
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
-        selector: mconfig::Selector::Kademlia,
-        bootstrap_protocol: mconfig::BootstrapProtocol::Kademlia,
+        selector: mconfig::Selector::Random,
+        bootstrap_protocol: mconfig::BootstrapProtocol::Full,
         num_outbound_peers: 10,
         num_inbound_peers: 30,
         ephemeral_connection_timeout: Duration::from_secs(10),
@@ -1084,6 +1084,8 @@ impl malachitebft_app_channel::app::node::NodeHandle<MalContext> for DummyHandle
     }
 }
 
+static temp_dir_for_wal: std::sync::Mutex<Option<TempDir>> = std::sync::Mutex::new(None);
+
 #[async_trait]
 impl malachitebft_app_channel::app::node::Node for BFTNode {
     type Context = MalContext;
@@ -1093,7 +1095,19 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     type NodeHandle = DummyHandle;
 
     fn get_home_dir(&self) -> std::path::PathBuf {
-        std::path::PathBuf::from("./wal/")
+        let mut td = temp_dir_for_wal.lock().unwrap();
+        if td.is_none() {
+            *td = Some(
+                tempfile::Builder::new()
+                    .prefix(&format!(
+                        "aah_very_annoying_that_the_wal_is_required_id_is_{}",
+                        rand::random::<u32>()
+                    ))
+                    .tempdir()
+                    .unwrap(),
+            );
+        }
+        std::path::PathBuf::from(td.as_ref().unwrap().path())
     }
 
     fn get_address(&self, pk: &MalPublicKey) -> MalAddress {
