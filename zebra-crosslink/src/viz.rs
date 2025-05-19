@@ -664,7 +664,7 @@ pub async fn service_viz_requests(
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
-        let (bft_msg_flags, bft_blocks, internal_proposed_bft_string) = {
+        let (bft_msg_flags, mut bft_blocks, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
             internal.bft_msg_flags = 0;
@@ -674,6 +674,19 @@ pub async fn service_viz_requests(
                 internal.proposed_bft_string.clone(),
             )
         };
+
+        // TODO: O(<n)
+        for i in 0..bft_blocks.len() {
+            let block = &mut bft_blocks[i].1;
+            if block.min_payload_h == BlockHeight(0) && !block.payload.headers.is_empty() {
+                // TODO: block.finalized()
+                if let Some(h) = block_height_from_hash(&call, block.payload.headers[0].hash()).await {
+                    block.min_payload_h = h;
+                    let mut internal = tfl_handle.internal.lock().await;
+                    internal.bft_blocks[i].1.min_payload_h = h;
+                }
+            }
+        }
 
         let mut height_hashes = Vec::with_capacity(hashes.len());
         for i in 0..hashes.len() {
@@ -2580,11 +2593,40 @@ pub async fn viz_main(
                 continue;
             }
 
+            let mut offscreen_new_pt = None;
             let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
+                if node.kind == NodeKind::BFT {
+                    if let Some(hdr) = node.header.as_bft() {
+                        if !hdr.payload.headers.is_empty() {
+                            let hdr_lo = ctx.find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
+                            let hdr_hi = ctx.find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
+                            if hdr_lo.is_none() && hdr_hi.is_none() {
+                                if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
+                                    let max_hdr_h = hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
+                                    if max_hdr_h < bc_lo.height {
+                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(world_bbox.max.y + world_rect.h)));
+                                    }
+                                }
+
+                                if let Some(bc_hi) = ctx.get_node(ctx.bc_hi) {
+                                    let min_hdr_h = hdr.min_payload_h.0;
+                                    if min_hdr_h > bc_hi.height {
+                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(world_bbox.min.y - world_rect.h)));
+                                    }
+                                }
+
+                            }
+                        }
+                    }
+                }
                 (node.pt, node.vel, node.vel.length())
             } else {
                 continue;
             };
+
+            if let Some(new_pt) = offscreen_new_pt {
+                ctx.move_node_to(node_ref, new_pt);
+            }
 
             // apply friction
             {
@@ -2837,8 +2879,9 @@ pub async fn viz_main(
                         VizHeader::BlockHeader(hdr) => {}
                         VizHeader::BftPayload(hdr) => {
                             ui.label(None, "PoW headers:");
-                            for pow_hdr in &hdr.payload.headers {
-                                ui.label(None, &format!("  {}", pow_hdr.hash()));
+                            for i in 0..hdr.payload.headers.len() {
+                                let pow_hdr = &hdr.payload.headers[i];
+                                ui.label(None, &format!("  {} - {}", hdr.min_payload_h.0 + i as u32, pow_hdr.hash()));
                             }
                         }
                     }
