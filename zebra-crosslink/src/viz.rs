@@ -1211,23 +1211,24 @@ impl VizCtx {
             if let Some(node_hash) = new_node.hash() {
                 self.bc_by_hash.insert(node_hash, node_ref);
 
-                let child_ref: NodeRef = if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
-                    if let Some(child) = self.node(child_ref) {
-                        new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                let child_ref: NodeRef =
+                    if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
+                        if let Some(child) = self.node(child_ref) {
+                            new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
-                        assert!(child.parent.is_none());
-                        assert!(
-                            child.height == new_node.height + 1,
-                            "child height: {}, new height: {}",
-                            child.height,
-                            new_node.height
-                        );
-                        child.parent = node_ref;
-                    }
-                    child_ref
-                } else {
-                    None
-                };
+                            assert!(child.parent.is_none());
+                            assert!(
+                                child.height == new_node.height + 1,
+                                "child height: {}, new height: {}",
+                                child.height,
+                                new_node.height
+                            );
+                            child.parent = node_ref;
+                        }
+                        child_ref
+                    } else {
+                        None
+                    };
 
                 if child_ref.is_some() {
                     self.missing_bc_parents.remove(&node_hash);
@@ -1249,21 +1250,24 @@ impl VizCtx {
             }
 
             let (rel_pt, dy) = match new_node.kind {
-                NodeKind::BC => if let Some(parent) = self.get_node(new_node.parent) {
-                    (
-                        Some(parent.pt),
-                        node_dy_from_work(&new_node, self.bc_work_max),
-                    )
-                } else if let Some(child) = self.get_node(child_ref) {
-                    (
-                        Some(child.pt),
-                        -node_dy_from_work(child, self.bc_work_max),
-                    )
-                } else {
-                    (None, 0.)
-                },
+                NodeKind::BC => {
+                    if let Some(parent) = self.get_node(new_node.parent) {
+                        (
+                            Some(parent.pt),
+                            node_dy_from_work(&new_node, self.bc_work_max),
+                        )
+                    } else if let Some(child) = self.get_node(child_ref) {
+                        (Some(child.pt), -node_dy_from_work(child, self.bc_work_max))
+                    } else {
+                        (None, 0.)
+                    }
+                }
 
-                NodeKind::BFT => (self.get_node(tfl_nominee_from_node(self, &new_node)).map(|node| node.pt), 0.),
+                NodeKind::BFT => (
+                    self.get_node(tfl_nominee_from_node(self, &new_node))
+                        .map(|node| node.pt),
+                    0.,
+                ),
             };
 
             let target_y = if let Some(rel_pt) = rel_pt {
@@ -2265,10 +2269,11 @@ pub async fn viz_main(
                                         break Vec::new();
                                     }
 
-                                    let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
-                                        &ctx.nodes,
-                                        BlockHeight(bc.unwrap()),
-                                    )) {
+                                    let node = if let Some(node) =
+                                        ctx.node(find_bc_node_i_by_height(
+                                            &ctx.nodes,
+                                            BlockHeight(bc.unwrap()),
+                                        )) {
                                         node
                                     } else {
                                         break Vec::new();
@@ -2501,7 +2506,7 @@ pub async fn viz_main(
                             min_payload_h: BlockHeight(0),
                             payload: BftPayload {
                                 headers: Vec::new(),
-                            }
+                            },
                         };
 
                         // TODO: hash for id
@@ -2625,8 +2630,7 @@ pub async fn viz_main(
                 }
             }
 
-            if config.do_force_links
-            {
+            if config.do_force_links {
                 // add link/parent based forces
                 // TODO: if the alignment force is ~proportional to the total amount of work
                 // above the parent, this could make sure the best chain is the most linear
@@ -2830,16 +2834,16 @@ pub async fn viz_main(
 
                     match &click_node.header {
                         VizHeader::None => {}
-                        VizHeader::BlockHeader(hdr) => {},
+                        VizHeader::BlockHeader(hdr) => {}
                         VizHeader::BftPayload(hdr) => {
                             ui.label(None, "PoW headers:");
                             for pow_hdr in &hdr.payload.headers {
                                 ui.label(None, &format!("  {}", pow_hdr.hash()));
                             }
-                        },
+                        }
                     }
                 },
-                );
+            );
         }
 
         // ALT: EoA
@@ -2942,12 +2946,7 @@ pub async fn viz_main(
                     let pt = vec2(circle.x + circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
 
                     let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text(
-                        &format!("{}", node.height),
-                        pt,
-                        font_size,
-                        WHITE,
-                    );
+                    let text_dims = draw_text(&format!("{}", node.height), pt, font_size, WHITE);
                     end_zone(z_get_text_align_1);
                 }
                 end_zone(z_hash_string);
@@ -3042,7 +3041,12 @@ pub async fn viz_main(
                         &mut config.pause_incoming_blocks,
                     );
                     checkbox(ui, hash!(), "Test window bounds", &mut config.test_bbox);
-                    checkbox(ui, hash!(), "Show spatial acceleration", &mut config.show_accel_areas);
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Show spatial acceleration",
+                        &mut config.show_accel_areas,
+                    );
                     checkbox(ui, hash!(), "Show BFT creation UI", &mut config.show_bft_ui);
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
@@ -3052,9 +3056,24 @@ pub async fn viz_main(
                         bft_msg_flags = 0; // prevent buildup
                     }
 
-                    checkbox(ui, hash!(), "Enable linked-node forces", &mut config.do_force_links);
-                    checkbox(ui, hash!(), "Enable any-node forces", &mut config.do_force_any);
-                    checkbox(ui, hash!(), "Enable edge-node forces", &mut config.do_force_edge);
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Enable linked-node forces",
+                        &mut config.do_force_links,
+                    );
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Enable any-node forces",
+                        &mut config.do_force_any,
+                    );
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Enable edge-node forces",
+                        &mut config.do_force_edge,
+                    );
                     checkbox(
                         ui,
                         hash!(),
