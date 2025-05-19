@@ -2827,8 +2827,19 @@ pub async fn viz_main(
                     if click_node.txs_n > 0 {
                         ui.label(None, &format!("Transactions: {}", click_node.txs_n));
                     }
+
+                    match &click_node.header {
+                        VizHeader::None => {}
+                        VizHeader::BlockHeader(hdr) => {},
+                        VizHeader::BftPayload(hdr) => {
+                            ui.label(None, "PoW headers:");
+                            for pow_hdr in &hdr.payload.headers {
+                                ui.label(None, &format!("  {}", pow_hdr.hash()));
+                            }
+                        },
+                    }
                 },
-            );
+                );
         }
 
         // ALT: EoA

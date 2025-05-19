@@ -64,8 +64,8 @@ pub mod config {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VizBftPayload {
-     min_payload_h: BlockHeight,
-     payload:       BftPayload,
+    min_payload_h: BlockHeight,
+    payload: BftPayload,
 }
 
 #[cfg(feature = "viz_gui")]
