@@ -62,6 +62,12 @@ pub mod config {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VizBftPayload {
+     min_payload_h: BlockHeight,
+     payload:       BftPayload,
+}
+
 #[cfg(feature = "viz_gui")]
 pub mod viz;
 
@@ -105,7 +111,7 @@ pub(crate) struct TFLServiceInternal {
     final_change_tx: broadcast::Sender<BlockHash>,
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
-    bft_blocks: Vec<(usize, BftPayload)>,
+    bft_blocks: Vec<(usize, VizBftPayload)>,
     proposed_bft_string: Option<String>,
 }
 
@@ -760,13 +766,17 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             // HACK: ensure there are enough blocks to overwrite this at the correct index
                                             for i in internal.bft_blocks.len()..=insert_i {
                                                 let parent_i = i.saturating_sub(1); // just a simple chain
-                                                internal.bft_blocks.push((parent_i, BftPayload {
-                                                    headers: Vec::new()
+                                                internal.bft_blocks.push((parent_i,
+                                                VizBftPayload {
+                                                    min_payload_h: BlockHeight(0),
+                                                    payload: BftPayload {
+                                                        headers: Vec::new()
+                                                    }
                                                 }));
                                             }
 
-                                            assert!(internal.bft_blocks[insert_i].1.headers.is_empty());
-                                            internal.bft_blocks[insert_i].1 = decided_value.value.value.clone();
+                                            assert!(internal.bft_blocks[insert_i].1.payload.headers.is_empty());
+                                            internal.bft_blocks[insert_i].1.payload = decided_value.value.value.clone();
                                             internal.latest_final_block = Some((new_final_height, new_final_hash));
                                         } else {
                                             warn!("Didn't have hash available for confirmation: {}", new_final_hash);

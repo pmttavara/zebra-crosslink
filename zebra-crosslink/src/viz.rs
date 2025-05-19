@@ -236,7 +236,7 @@ pub struct VizState {
     /// Flags of the BFT messages
     pub bft_msg_flags: u64,
     /// Vector of all decided BFT block payloads, indexed by height.
-    pub bft_blocks: Vec<(usize, BftPayload)>,
+    pub bft_blocks: Vec<(usize, VizBftPayload)>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -265,7 +265,7 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<(usize, BftPayload)>,
+        bft_blocks: Vec<(usize, VizBftPayload)>,
     }
 
     impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
@@ -722,11 +722,11 @@ type NodeRef = Option<NodeHdl>;
 enum VizHeader {
     None,
     BlockHeader(BlockHeader),
-    BftPayload(BftPayload), // ALT: just keep an array of *hashes*
+    BftPayload(VizBftPayload), // ALT: just keep an array of *hashes*
 }
 
 impl VizHeader {
-    fn as_bft(&self) -> Option<&BftPayload> {
+    fn as_bft(&self) -> Option<&VizBftPayload> {
         match self {
             VizHeader::BftPayload(val) => Some(val),
             _ => None,
@@ -741,8 +741,8 @@ impl VizHeader {
     }
 }
 
-impl From<Option<BftPayload>> for VizHeader {
-    fn from(v: Option<BftPayload>) -> VizHeader {
+impl From<Option<VizBftPayload>> for VizHeader {
+    fn from(v: Option<VizBftPayload>) -> VizHeader {
         match v {
             Some(val) => VizHeader::BftPayload(val),
             None => VizHeader::None,
@@ -788,7 +788,7 @@ struct Node {
 fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.headers.last() {
+            if let Some(block) = payload.payload.headers.last() {
                 ctx.find_bc_node_by_hash(&block.hash())
             } else {
                 None
@@ -802,7 +802,7 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.headers.first() {
+            if let Some(block) = payload.payload.headers.first() {
                 ctx.find_bc_node_by_hash(&block.hash())
             } else {
                 None
@@ -848,7 +848,7 @@ enum NodeInit {
         parent: NodeRef, // TODO: do we need explicit edges?
         id: usize,
         text: String,
-        payload: BftPayload,
+        payload: VizBftPayload,
         height: Option<u32>, // if None, works out from parent
         is_real: bool,
     },
@@ -2256,26 +2256,29 @@ pub async fn viz_main(
                             ctx.bft_fake_id + 1
                         };
 
-                        let payload = BftPayload {
-                            headers: loop {
-                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                if bc.is_none() {
-                                    break Vec::new();
-                                }
+                        let payload = VizBftPayload {
+                            min_payload_h: BlockHeight(0),
+                            payload: BftPayload {
+                                headers: loop {
+                                    let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                    if bc.is_none() {
+                                        break Vec::new();
+                                    }
 
-                                let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
-                                    &ctx.nodes,
-                                    BlockHeight(bc.unwrap()),
-                                )) {
-                                    node
-                                } else {
-                                    break Vec::new();
-                                };
+                                    let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
+                                        &ctx.nodes,
+                                        BlockHeight(bc.unwrap()),
+                                    )) {
+                                        node
+                                    } else {
+                                        break Vec::new();
+                                    };
 
-                                break match node.header {
-                                    VizHeader::BlockHeader(hdr) => vec![hdr],
-                                    _ => Vec::new(),
-                                };
+                                    break match node.header {
+                                        VizHeader::BlockHeader(hdr) => vec![hdr],
+                                        _ => Vec::new(),
+                                    };
+                                },
                             },
                         };
 
@@ -2494,8 +2497,11 @@ pub async fn viz_main(
                     }
 
                     NodeKind::BFT => {
-                        let header = BftPayload {
-                            headers: Vec::new(),
+                        let header = VizBftPayload {
+                            min_payload_h: BlockHeight(0),
+                            payload: BftPayload {
+                                headers: Vec::new(),
+                            }
                         };
 
                         // TODO: hash for id
@@ -2952,9 +2958,9 @@ pub async fn viz_main(
 
         if let Some(node) = ctx.get_node(hover_node_i) {
             if let Some(bft) = node.header.as_bft() {
-                for i in 0..bft.headers.len() {
+                for i in 0..bft.payload.headers.len() {
                     let link = if let Some(link) =
-                        ctx.get_node(ctx.find_bc_node_by_hash(&bft.headers[i].hash()))
+                        ctx.get_node(ctx.find_bc_node_by_hash(&bft.payload.headers[i].hash()))
                     {
                         link
                     } else {
