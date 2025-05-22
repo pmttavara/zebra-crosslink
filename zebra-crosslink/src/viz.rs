@@ -2013,7 +2013,7 @@ pub async fn viz_main(
 
                             payload,
                             text: "".to_string(),
-                            height: bft_parent.map_or(Some(0), |_| None),
+                            height: bft_parent.map_or(Some(1), |_| None),
                         },
                         None,
                     );
@@ -2379,7 +2379,7 @@ pub async fn viz_main(
             if track_bft {
                 let h = h as isize;
                 let abs_h: isize = if h < 0 {
-                    g.state.bft_blocks.len() as isize + h
+                    g.state.bft_blocks.len() as isize + 1 + h
                 } else {
                     h
                 };
