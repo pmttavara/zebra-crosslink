@@ -680,7 +680,9 @@ pub async fn service_viz_requests(
             let block = &mut bft_blocks[i].1;
             if block.min_payload_h == BlockHeight(0) && !block.payload.headers.is_empty() {
                 // TODO: block.finalized()
-                if let Some(h) = block_height_from_hash(&call, block.payload.headers[0].hash()).await {
+                if let Some(h) =
+                    block_height_from_hash(&call, block.payload.headers[0].hash()).await
+                {
                     block.min_payload_h = h;
                     let mut internal = tfl_handle.internal.lock().await;
                     internal.bft_blocks[i].1.min_payload_h = h;
@@ -1297,7 +1299,7 @@ impl VizCtx {
 
             if let Some(parent) = self.get_node(new_node.parent) {
                 if new_node.pt.y > parent.pt.y {
-                    warn!("points have been spawned inverted");
+                    // warn!("points have been spawned inverted");
                 }
             }
         }
@@ -1916,10 +1918,10 @@ pub async fn viz_main(
             };
 
             if bc_req_h != g.bc_req_h {
-                info!(
-                    "changing requested block range from {:?} to {:?}",
-                    g.bc_req_h, bc_req_h
-                );
+                // info!(
+                //     "changing requested block range from {:?} to {:?}",
+                //     g.bc_req_h, bc_req_h
+                // );
             }
 
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
@@ -2390,7 +2392,10 @@ pub async fn viz_main(
                     if let Some(bft_hdr) = node.header.as_bft() {
                         if let Some(bc_hdr) = bft_hdr.payload.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
-                                clear_bft_bc_h = Some(bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32  - 1);
+                                clear_bft_bc_h = Some(
+                                    bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32
+                                        - 1,
+                                );
                                 is_done = true;
                             }
                         }
@@ -2620,13 +2625,19 @@ pub async fn viz_main(
                 if node.kind == NodeKind::BFT {
                     if let Some(hdr) = node.header.as_bft() {
                         if !hdr.payload.headers.is_empty() {
-                            let hdr_lo = ctx.find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
-                            let hdr_hi = ctx.find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
+                            let hdr_lo = ctx
+                                .find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
+                            let hdr_hi = ctx
+                                .find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
-                                    let max_hdr_h = hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
+                                    let max_hdr_h =
+                                        hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
                                     if max_hdr_h < bc_lo.height {
-                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(world_bbox.max.y + world_rect.h)));
+                                        offscreen_new_pt = Some(vec2(
+                                            node.pt.x,
+                                            node.pt.y.max(world_bbox.max.y + world_rect.h),
+                                        ));
                                         // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(bc_lo.pt.y + world_rect.h)));
                                     }
                                 }
@@ -2634,11 +2645,13 @@ pub async fn viz_main(
                                 if let Some(bc_hi) = ctx.get_node(ctx.bc_hi) {
                                     let min_hdr_h = hdr.min_payload_h.0;
                                     if min_hdr_h > bc_hi.height {
-                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(world_bbox.min.y - world_rect.h)));
+                                        offscreen_new_pt = Some(vec2(
+                                            node.pt.x,
+                                            node.pt.y.min(world_bbox.min.y - world_rect.h),
+                                        ));
                                         // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(bc_hi.pt.y - world_rect.h)));
                                     }
                                 }
-
                             }
                         }
                     }
@@ -2685,7 +2698,7 @@ pub async fn viz_main(
                     target_pt.x = parent.pt.x;
 
                     if a_pt.y > parent.pt.y {
-                        warn!("nodes have become inverted");
+                        // warn!("nodes have become inverted");
                     }
 
                     if !y_is_set {
@@ -2907,7 +2920,14 @@ pub async fn viz_main(
                             ui.label(None, "PoW headers:");
                             for i in 0..hdr.payload.headers.len() {
                                 let pow_hdr = &hdr.payload.headers[i];
-                                ui.label(None, &format!("  {} - {}", hdr.min_payload_h.0 + i as u32, pow_hdr.hash()));
+                                ui.label(
+                                    None,
+                                    &format!(
+                                        "  {} - {}",
+                                        hdr.min_payload_h.0 + i as u32,
+                                        pow_hdr.hash()
+                                    ),
+                                );
                             }
                         }
                     }
