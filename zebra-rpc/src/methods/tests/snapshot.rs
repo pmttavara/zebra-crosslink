@@ -574,7 +574,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
     let (latest_chain_tip, _) = MockChainTip::new();
     let mut state = MockService::build().for_unit_tests();
     let mempool = MockService::build().for_unit_tests();
-    let crosslink = MockService::build().for_unit_tests();
+    let tfl_service = MockService::build().for_unit_tests();
 
     let (_tx, rx) = tokio::sync::watch::channel(None);
     let (rpc, _) = RpcImpl::new(
@@ -583,8 +583,8 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
         false,
         "0.0.1",
         "RPC test",
-        MockService::build().for_unit_tests(),
-        crosslink,
+        mempool,
+        tfl_service,
         state.clone(),
         MockService::build().for_unit_tests(),
         MockSyncStatus::default(),
@@ -994,6 +994,7 @@ pub async fn test_mining_rpcs<ReadState>(
 
     let (_tx, rx) = tokio::sync::watch::channel(None);
 
+    let mock_tfl_service = MockService::build().for_unit_tests();
     let (rpc, _) = RpcImpl::new(
         network.clone(),
         mining_conf.clone(),
@@ -1001,6 +1002,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "0.0.1",
         "RPC test",
         Buffer::new(mempool.clone(), 1),
+        mock_tfl_service,
         read_state,
         block_verifier_router.clone(),
         mock_sync_status.clone(),
@@ -1131,6 +1133,7 @@ pub async fn test_mining_rpcs<ReadState>(
     // send tip hash and time needed for getblocktemplate rpc
     mock_tip_sender.send_best_tip_hash(fake_tip_hash);
 
+    let mock_tfl_service = MockService::build().for_unit_tests();
     let (rpc_mock_state, _) = RpcImpl::new(
         network.clone(),
         mining_conf.clone(),
@@ -1138,6 +1141,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "0.0.1",
         "RPC test",
         Buffer::new(mempool.clone(), 1),
+        mock_tfl_service,
         read_state.clone(),
         block_verifier_router,
         mock_sync_status.clone(),
@@ -1247,6 +1251,7 @@ pub async fn test_mining_rpcs<ReadState>(
 
     // the following snapshots use a mock read_state and block_verifier_router
 
+    let mock_tfl_service = MockService::build().for_unit_tests();
     let mut mock_block_verifier_router = MockService::build().for_unit_tests();
     let (rpc_mock_state_verifier, _) = RpcImpl::new(
         network.clone(),
@@ -1255,6 +1260,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "0.0.1",
         "RPC test",
         Buffer::new(mempool, 1),
+        mock_tfl_service,
         read_state.clone(),
         mock_block_verifier_router.clone(),
         mock_sync_status,
