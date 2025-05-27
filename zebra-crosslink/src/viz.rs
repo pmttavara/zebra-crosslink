@@ -21,6 +21,7 @@ use std::{
     thread::JoinHandle,
 };
 use zebra_chain::{
+    serialization::ZcashSerialize,
     transaction::{LockTime, Transaction},
     work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
 };
@@ -790,6 +791,7 @@ struct Node {
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
     header: VizHeader,
+    bc_block: Option<Arc<Block>>,
 
     is_real: bool,
 
@@ -845,6 +847,7 @@ enum NodeInit {
         header: VizHeader,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
+        bc_block: Option<Arc<Block>>,
 
         is_real: bool,
     },
@@ -855,6 +858,7 @@ enum NodeInit {
         height: u32,
         difficulty: Option<CompactDifficulty>,
         header: BlockHeader,
+        bc_block: Option<Arc<Block>>,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
     },
@@ -1079,6 +1083,7 @@ impl VizCtx {
                 text,
                 id,
                 header,
+                bc_block,
                 height,
                 difficulty,
                 txs_n,
@@ -1095,6 +1100,7 @@ impl VizCtx {
                         difficulty,
                         txs_n,
                         is_real,
+                        bc_block,
                         rad: match kind {
                             NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
                             NodeKind::BFT => 10.,
@@ -1114,6 +1120,7 @@ impl VizCtx {
                 height,
                 header,
                 difficulty,
+                bc_block,
                 txs_n,
                 is_real,
             } => {
@@ -1136,6 +1143,7 @@ impl VizCtx {
                         difficulty,
                         txs_n,
                         is_real,
+                        bc_block,
 
                         text: "".to_string(),
                         rad,
@@ -1182,6 +1190,7 @@ impl VizCtx {
                         height,
                         header: VizHeader::BftPayload(payload),
                         text,
+                        bc_block: None,
 
                         is_real,
 
@@ -1971,6 +1980,7 @@ pub async fn viz_main(
                                 difficulty: Some(block.header.difficulty_threshold),
                                 txs_n: block.transactions.len() as u32,
                                 is_real: true,
+                                bc_block: Some(block.clone()),
                             },
                             Some(block.header.previous_block_hash.0),
                         );
@@ -2523,7 +2533,7 @@ pub async fn viz_main(
                 let kind = hover_node.kind;
                 let height = hover_node.height + 1;
                 let is_bft = kind == NodeKind::BFT;
-                let (header, id) = match hover_node.kind {
+                let (header, id, bc_block) = match hover_node.kind {
                     NodeKind::BC => {
                         let header = BlockHeader {
                             version: 0,
@@ -2538,7 +2548,7 @@ pub async fn viz_main(
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
                         };
                         let id = NodeId::Hash(header.hash().0);
-                        (VizHeader::BlockHeader(header), id)
+                        (VizHeader::BlockHeader(header), id, None)
                     }
 
                     NodeKind::BFT => {
@@ -2552,7 +2562,7 @@ pub async fn viz_main(
                         // TODO: hash for id
                         ctx.bft_fake_id -= 1;
                         let id = NodeId::Index(ctx.bft_fake_id + 1);
-                        (VizHeader::BftPayload(header), id)
+                        (VizHeader::BftPayload(header), id, None)
                     }
                 };
 
@@ -2563,6 +2573,7 @@ pub async fn viz_main(
 
                         kind,
                         height,
+                        bc_block,
 
                         text: "".to_string(),
                         id,
@@ -2929,6 +2940,14 @@ pub async fn viz_main(
                                     ),
                                 );
                             }
+                        }
+                    }
+
+                    if let Some(block) = &click_node.bc_block {
+                        if ui.button(None, "Dump serialization") {
+                            let file = std::fs::File::create("block.hex");
+                            block.zcash_serialize(file.unwrap());
+                            println!("dumped block.hex");
                         }
                     }
                 },
