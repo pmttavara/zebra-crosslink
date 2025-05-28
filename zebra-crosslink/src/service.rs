@@ -118,6 +118,21 @@ pub(crate) type ReadStateServiceProcedure = Arc<
         + Sync,
 >;
 
+/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
+/// pointer that takes a `Block` as input and returns `()` as its output.
+pub(crate) type ForceFeedPoWBlockProcedure = Arc<
+    dyn Fn(
+            zebra_chain::block::Block,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = (),
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
 /// Spawn a Trailing Finality Service that uses the provided
 /// closures to call out to other services.
 ///
@@ -126,6 +141,7 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
     read_state_service_call: ReadStateServiceProcedure,
+    force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let handle1 = TFLServiceHandle {
@@ -140,6 +156,7 @@ pub fn spawn_new_tfl_service(
         })),
         call: TFLServiceCalls {
             read_state: read_state_service_call,
+            force_feed_pow: force_feed_pow_call,
         },
         config,
     };
@@ -156,6 +173,7 @@ pub fn spawn_new_tfl_service(
 #[derive(Clone)]
 pub struct TFLServiceCalls {
     pub(crate) read_state: ReadStateServiceProcedure,
+    pub(crate) force_feed_pow: ForceFeedPoWBlockProcedure,
 }
 impl fmt::Debug for TFLServiceCalls {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -199,11 +217,14 @@ mod tests {
 
         let read_state_service: ReadStateServiceProcedure =
             Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
+        let force_feed_pow: ForceFeedPoWBlockProcedure =
+            Arc::new(|_block| Box::pin(async { () }));
 
         TFLServiceHandle {
             internal,
             call: TFLServiceCalls {
                 read_state: read_state_service,
+                force_feed_pow: force_feed_pow,
             },
             config: crate::config::Config::default(),
         }
