@@ -21,6 +21,7 @@ use std::{
     thread::JoinHandle,
 };
 use zebra_chain::{
+    serialization::ZcashSerialize,
     transaction::{LockTime, Transaction},
     work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
 };
@@ -680,7 +681,9 @@ pub async fn service_viz_requests(
             let block = &mut bft_blocks[i].1;
             if block.min_payload_h == BlockHeight(0) && !block.payload.headers.is_empty() {
                 // TODO: block.finalized()
-                if let Some(h) = block_height_from_hash(&call, block.payload.headers[0].hash()).await {
+                if let Some(h) =
+                    block_height_from_hash(&call, block.payload.headers[0].hash()).await
+                {
                     block.min_payload_h = h;
                     let mut internal = tfl_handle.internal.lock().await;
                     internal.bft_blocks[i].1.min_payload_h = h;
@@ -788,6 +791,7 @@ struct Node {
     difficulty: Option<CompactDifficulty>,
     txs_n: u32, // N.B. includes coinbase
     header: VizHeader,
+    bc_block: Option<Arc<Block>>,
 
     is_real: bool,
 
@@ -843,6 +847,7 @@ enum NodeInit {
         header: VizHeader,
         difficulty: Option<CompactDifficulty>,
         txs_n: u32, // N.B. includes coinbase
+        bc_block: Option<Arc<Block>>,
 
         is_real: bool,
     },
@@ -853,6 +858,7 @@ enum NodeInit {
         height: u32,
         difficulty: Option<CompactDifficulty>,
         header: BlockHeader,
+        bc_block: Option<Arc<Block>>,
         txs_n: u32, // N.B. includes coinbase
         is_real: bool,
     },
@@ -1077,6 +1083,7 @@ impl VizCtx {
                 text,
                 id,
                 header,
+                bc_block,
                 height,
                 difficulty,
                 txs_n,
@@ -1093,6 +1100,7 @@ impl VizCtx {
                         difficulty,
                         txs_n,
                         is_real,
+                        bc_block,
                         rad: match kind {
                             NodeKind::BC => ((txs_n as f32).sqrt() * 5.).min(50.),
                             NodeKind::BFT => 10.,
@@ -1112,6 +1120,7 @@ impl VizCtx {
                 height,
                 header,
                 difficulty,
+                bc_block,
                 txs_n,
                 is_real,
             } => {
@@ -1134,6 +1143,7 @@ impl VizCtx {
                         difficulty,
                         txs_n,
                         is_real,
+                        bc_block,
 
                         text: "".to_string(),
                         rad,
@@ -1180,6 +1190,7 @@ impl VizCtx {
                         height,
                         header: VizHeader::BftPayload(payload),
                         text,
+                        bc_block: None,
 
                         is_real,
 
@@ -1297,7 +1308,7 @@ impl VizCtx {
 
             if let Some(parent) = self.get_node(new_node.parent) {
                 if new_node.pt.y > parent.pt.y {
-                    warn!("points have been spawned inverted");
+                    // warn!("points have been spawned inverted");
                 }
             }
         }
@@ -1916,10 +1927,10 @@ pub async fn viz_main(
             };
 
             if bc_req_h != g.bc_req_h {
-                info!(
-                    "changing requested block range from {:?} to {:?}",
-                    g.bc_req_h, bc_req_h
-                );
+                // info!(
+                //     "changing requested block range from {:?} to {:?}",
+                //     g.bc_req_h, bc_req_h
+                // );
             }
 
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
@@ -1969,6 +1980,7 @@ pub async fn viz_main(
                                 difficulty: Some(block.header.difficulty_threshold),
                                 txs_n: block.transactions.len() as u32,
                                 is_real: true,
+                                bc_block: Some(block.clone()),
                             },
                             Some(block.header.previous_block_hash.0),
                         );
@@ -2013,7 +2025,7 @@ pub async fn viz_main(
 
                             payload,
                             text: "".to_string(),
-                            height: bft_parent.map_or(Some(0), |_| None),
+                            height: bft_parent.map_or(Some(1), |_| None),
                         },
                         None,
                     );
@@ -2379,7 +2391,7 @@ pub async fn viz_main(
             if track_bft {
                 let h = h as isize;
                 let abs_h: isize = if h < 0 {
-                    g.state.bft_blocks.len() as isize + h
+                    g.state.bft_blocks.len() as isize + 1 + h
                 } else {
                     h
                 };
@@ -2390,7 +2402,10 @@ pub async fn viz_main(
                     if let Some(bft_hdr) = node.header.as_bft() {
                         if let Some(bc_hdr) = bft_hdr.payload.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
-                                clear_bft_bc_h = Some(bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32  - 1);
+                                clear_bft_bc_h = Some(
+                                    bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32
+                                        - 1,
+                                );
                                 is_done = true;
                             }
                         }
@@ -2518,7 +2533,7 @@ pub async fn viz_main(
                 let kind = hover_node.kind;
                 let height = hover_node.height + 1;
                 let is_bft = kind == NodeKind::BFT;
-                let (header, id) = match hover_node.kind {
+                let (header, id, bc_block) = match hover_node.kind {
                     NodeKind::BC => {
                         let header = BlockHeader {
                             version: 0,
@@ -2533,7 +2548,7 @@ pub async fn viz_main(
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
                         };
                         let id = NodeId::Hash(header.hash().0);
-                        (VizHeader::BlockHeader(header), id)
+                        (VizHeader::BlockHeader(header), id, None)
                     }
 
                     NodeKind::BFT => {
@@ -2547,7 +2562,7 @@ pub async fn viz_main(
                         // TODO: hash for id
                         ctx.bft_fake_id -= 1;
                         let id = NodeId::Index(ctx.bft_fake_id + 1);
-                        (VizHeader::BftPayload(header), id)
+                        (VizHeader::BftPayload(header), id, None)
                     }
                 };
 
@@ -2558,6 +2573,7 @@ pub async fn viz_main(
 
                         kind,
                         height,
+                        bc_block,
 
                         text: "".to_string(),
                         id,
@@ -2620,13 +2636,19 @@ pub async fn viz_main(
                 if node.kind == NodeKind::BFT {
                     if let Some(hdr) = node.header.as_bft() {
                         if !hdr.payload.headers.is_empty() {
-                            let hdr_lo = ctx.find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
-                            let hdr_hi = ctx.find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
+                            let hdr_lo = ctx
+                                .find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
+                            let hdr_hi = ctx
+                                .find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
-                                    let max_hdr_h = hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
+                                    let max_hdr_h =
+                                        hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
                                     if max_hdr_h < bc_lo.height {
-                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(world_bbox.max.y + world_rect.h)));
+                                        offscreen_new_pt = Some(vec2(
+                                            node.pt.x,
+                                            node.pt.y.max(world_bbox.max.y + world_rect.h),
+                                        ));
                                         // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.max(bc_lo.pt.y + world_rect.h)));
                                     }
                                 }
@@ -2634,11 +2656,13 @@ pub async fn viz_main(
                                 if let Some(bc_hi) = ctx.get_node(ctx.bc_hi) {
                                     let min_hdr_h = hdr.min_payload_h.0;
                                     if min_hdr_h > bc_hi.height {
-                                        offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(world_bbox.min.y - world_rect.h)));
+                                        offscreen_new_pt = Some(vec2(
+                                            node.pt.x,
+                                            node.pt.y.min(world_bbox.min.y - world_rect.h),
+                                        ));
                                         // offscreen_new_pt = Some(vec2(node.pt.x, node.pt.y.min(bc_hi.pt.y - world_rect.h)));
                                     }
                                 }
-
                             }
                         }
                     }
@@ -2685,7 +2709,7 @@ pub async fn viz_main(
                     target_pt.x = parent.pt.x;
 
                     if a_pt.y > parent.pt.y {
-                        warn!("nodes have become inverted");
+                        // warn!("nodes have become inverted");
                     }
 
                     if !y_is_set {
@@ -2907,8 +2931,23 @@ pub async fn viz_main(
                             ui.label(None, "PoW headers:");
                             for i in 0..hdr.payload.headers.len() {
                                 let pow_hdr = &hdr.payload.headers[i];
-                                ui.label(None, &format!("  {} - {}", hdr.min_payload_h.0 + i as u32, pow_hdr.hash()));
+                                ui.label(
+                                    None,
+                                    &format!(
+                                        "  {} - {}",
+                                        hdr.min_payload_h.0 + i as u32,
+                                        pow_hdr.hash()
+                                    ),
+                                );
                             }
+                        }
+                    }
+
+                    if let Some(block) = &click_node.bc_block {
+                        if ui.button(None, "Dump serialization") {
+                            let file = std::fs::File::create("block.hex");
+                            block.zcash_serialize(file.unwrap());
+                            println!("dumped block.hex");
                         }
                     }
                 },

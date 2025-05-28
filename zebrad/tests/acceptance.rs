@@ -3319,6 +3319,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let mut mempool = MockService::build()
         .with_max_request_delay(Duration::from_secs(5))
         .for_unit_tests();
+    let mock_tfl_service = MockService::build().for_unit_tests();
     let mut mock_sync_status = MockSyncStatus::default();
     mock_sync_status.set_is_close_to_tip(true);
 
@@ -3333,6 +3334,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         "0.0.1",
         "Zebra tests",
         mempool.clone(),
+        mock_tfl_service,
         read_state.clone(),
         block_verifier_router,
         mock_sync_status,
