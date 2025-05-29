@@ -1,17 +1,8 @@
 use static_assertions::*;
-use std::{
-    io::Write,
-    mem::size_of,
-};
-use zebra_chain::{
-    serialization::{
-        ZcashDeserialize,
-        ZcashSerialize,
-    },
-};
+use std::{io::Write, mem::size_of};
+use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
 use zerocopy::*;
 use zerocopy_derive::*;
-
 
 #[repr(C)]
 #[derive(Immutable, KnownLayout, IntoBytes, FromBytes)]
@@ -35,13 +26,16 @@ impl TFSlice {
     }
 
     pub(crate) fn as_byte_slice_in(self, bytes: &[u8]) -> &[u8] {
-        &bytes[self.o as usize .. (self.o + self.size) as usize]
+        &bytes[self.o as usize..(self.o + self.size) as usize]
     }
 }
 
 impl From<&[u64; 2]> for TFSlice {
     fn from(val: &[u64; 2]) -> TFSlice {
-        TFSlice { o: val[0], size: val[1] }
+        TFSlice {
+            o: val[0],
+            size: val[1],
+        }
     }
 }
 
@@ -101,13 +95,12 @@ impl TF {
             data: Vec::new(),
         };
 
-
         // ALT: push as data & determine available info by size if we add more
         const_assert!(size_of::<zebra_crosslink_chain::ZcashCrosslinkParameters>() == 16);
         // enforce only 2 param members
         let zebra_crosslink_chain::ZcashCrosslinkParameters {
             bc_confirmation_depth_sigma,
-            finalization_gap_bound
+            finalization_gap_bound,
         } = *params;
         let val = [bc_confirmation_depth_sigma, finalization_gap_bound];
 
@@ -141,7 +134,13 @@ impl TF {
         result
     }
 
-    pub(crate) fn push_instr_ex(&mut self, kind: TFInstrKind, flags: u32, data: &[u8], val: [u64; 2]) {
+    pub(crate) fn push_instr_ex(
+        &mut self,
+        kind: TFInstrKind,
+        flags: u32,
+        data: &[u8],
+        val: [u64; 2],
+    ) {
         let data = self.push_data(data);
         self.instrs.push(TFInstr {
             kind,
@@ -155,7 +154,13 @@ impl TF {
         self.push_instr_ex(kind, 0, data, [0; 2])
     }
 
-    pub(crate) fn push_instr_serialize_ex<Z: ZcashSerialize>(&mut self, kind: TFInstrKind, flags: u32, data: &Z, val: [u64; 2]) {
+    pub(crate) fn push_instr_serialize_ex<Z: ZcashSerialize>(
+        &mut self,
+        kind: TFInstrKind,
+        flags: u32,
+        data: &Z,
+        val: [u64; 2],
+    ) {
         let data = self.push_serialize(data);
         self.instrs.push(TFInstr {
             kind,
@@ -173,13 +178,15 @@ impl TF {
         if let Ok(mut file) = std::fs::File::create(path) {
             let hdr = TFHdr {
                 magic: "ZECCLTF0".as_bytes().try_into().unwrap(),
-                instrs_o: (size_of::<TFHdr>() + self.data.len())  as u64,
+                instrs_o: (size_of::<TFHdr>() + self.data.len()) as u64,
                 instrs_n: self.instrs.len() as u32,
                 instr_size: size_of::<TFInstr>() as u32,
             };
-            file.write_all(hdr.as_bytes()).expect("writing shouldn't fail");
+            file.write_all(hdr.as_bytes())
+                .expect("writing shouldn't fail");
             file.write_all(&self.data);
-            file.write_all(self.instrs.as_bytes()).expect("writing shouldn't fail");
+            file.write_all(self.instrs.as_bytes())
+                .expect("writing shouldn't fail");
         }
     }
 
@@ -189,19 +196,22 @@ impl TF {
         let bytes = if let Ok(bytes) = std::fs::read(path) {
             bytes
         } else {
-            return (None, None)
+            return (None, None);
         };
 
         let tf_hdr = if let Ok((hdr, _)) = TFHdr::ref_from_prefix(&bytes[0..]) {
             hdr
         } else {
-            return (Some(bytes), None)
+            return (Some(bytes), None);
         };
 
-        let instrs = if let Ok((instrs, _)) = <[TFInstr]>::ref_from_prefix_with_elems(&bytes[tf_hdr.instrs_o as usize..], tf_hdr.instrs_n as usize) {
+        let instrs = if let Ok((instrs, _)) = <[TFInstr]>::ref_from_prefix_with_elems(
+            &bytes[tf_hdr.instrs_o as usize..],
+            tf_hdr.instrs_n as usize,
+        ) {
             instrs
         } else {
-            return (Some(bytes), None)
+            return (Some(bytes), None);
         };
 
         let data = &bytes[size_of::<TFHdr>()..tf_hdr.instrs_o as usize];

@@ -68,9 +68,9 @@ pub struct VizBftPayload {
     payload: BftPayload,
 }
 
+pub mod test_format;
 #[cfg(feature = "viz_gui")]
 pub mod viz;
-pub mod test_format;
 
 use crate::service::{
     TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,

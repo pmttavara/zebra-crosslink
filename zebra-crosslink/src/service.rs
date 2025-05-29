@@ -121,15 +121,8 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoWBlockProcedure = Arc<
-    dyn Fn(
-            Arc<zebra_chain::block::Block>,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = (),
-                    > + Send,
-            >,
-        > + Send
+    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
         + Sync,
 >;
 
@@ -217,8 +210,7 @@ mod tests {
 
         let read_state_service: ReadStateServiceProcedure =
             Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
-        let force_feed_pow: ForceFeedPoWBlockProcedure =
-            Arc::new(|_block| Box::pin(async { () }));
+        let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
 
         TFLServiceHandle {
             internal,

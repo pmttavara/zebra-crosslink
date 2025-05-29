@@ -22,10 +22,7 @@ use std::{
     thread::JoinHandle,
 };
 use zebra_chain::{
-    serialization::{
-        ZcashDeserialize,
-        ZcashSerialize,
-    },
+    serialization::{ZcashDeserialize, ZcashSerialize},
     transaction::{LockTime, Transaction},
     work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
 };
@@ -532,7 +529,6 @@ static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None)
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
 static G_FORCE_BLOCKS: std::sync::Mutex<Vec<Arc<Block>>> = std::sync::Mutex::new(Vec::new());
-
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -1364,7 +1360,6 @@ impl VizCtx {
         node_ref
     }
 
-
     fn push_bc_block(
         &mut self,
         config: &VizConfig,
@@ -1381,8 +1376,8 @@ impl VizCtx {
                 NodeInit::BC {
                     parent: None,
 
-                    hash: height_hash.1.0,
-                    height: height_hash.0.0,
+                    hash: height_hash.1 .0,
+                    height: height_hash.0 .0,
                     header: *block.header,
                     difficulty: Some(block.header.difficulty_threshold),
                     txs_n: block.transactions.len() as u32,
@@ -1393,7 +1388,6 @@ impl VizCtx {
             );
         }
     }
-
 
     fn clear_nodes(&mut self) {
         self.nodes.clear();
@@ -2009,7 +2003,10 @@ pub async fn viz_main(
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
-                        warn!("No data currently associated with PoW block {:?}", height_hash.1);
+                        warn!(
+                            "No data currently associated with PoW block {:?}",
+                            height_hash.1
+                        );
                     }
                 }
             } else {
@@ -2017,7 +2014,10 @@ pub async fn viz_main(
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
-                        warn!("No data currently associated with PoW block {:?}", height_hash.1);
+                        warn!(
+                            "No data currently associated with PoW block {:?}",
+                            height_hash.1
+                        );
                     }
                 }
             }
@@ -3245,24 +3245,39 @@ pub async fn viz_main(
                             // TODO: this needs an API pass
                             for instr_i in 0..tf.instrs.len() {
                                 let instr = &tf.instrs[instr_i];
-                                info!("Loading instruction {} ({})", TFInstr::str_from_kind(instr.kind), instr.kind);
+                                info!(
+                                    "Loading instruction {} ({})",
+                                    TFInstr::str_from_kind(instr.kind),
+                                    instr.kind
+                                );
 
                                 const_assert!(TFInstr::COUNT == 3);
                                 match instr.kind {
                                     TFInstr::LOAD_POW => {
-                                        let block: Arc<Block> = Arc::new(Block::zcash_deserialize(instr.data_slice(&bytes))
-                                            .expect("Serialization be valid"));
+                                        let block: Arc<Block> = Arc::new(
+                                            Block::zcash_deserialize(instr.data_slice(&bytes))
+                                                .expect("Serialization be valid"),
+                                        );
                                         // NOTE (perf): block.hash() immediately reserializes the block to
                                         // hash the canonical form...
-                                        let height_hash = (block.coinbase_height().expect("Block should have a valid height"), block.hash());
+                                        let height_hash = (
+                                            block
+                                                .coinbase_height()
+                                                .expect("Block should have a valid height"),
+                                            block.hash(),
+                                        );
 
-                                        info!("Successfully loaded block at height {:?}, hash {}", height_hash.0, height_hash.1);
+                                        info!(
+                                            "Successfully loaded block at height {:?}, hash {}",
+                                            height_hash.0, height_hash.1
+                                        );
 
                                         if config.node_load_viz_only {
                                             ctx.push_bc_block(&config, &block, &height_hash);
                                         } else {
                                             let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-                                            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
+                                            let mut force_feed_blocks: &mut Vec<Arc<Block>> =
+                                                lock.as_mut();
                                             force_feed_blocks.push(block);
                                         }
                                     }
@@ -3272,12 +3287,16 @@ pub async fn viz_main(
                                     }
 
                                     TFInstr::SET_PARAMS => {
-                                        debug_assert!(instr_i == 0, "should only be set at the beginning");
+                                        debug_assert!(
+                                            instr_i == 0,
+                                            "should only be set at the beginning"
+                                        );
                                         // ALT: derive FromBytes for params
-                                        let params = zebra_crosslink_chain::ZcashCrosslinkParameters {
-                                            bc_confirmation_depth_sigma: instr.val[0],
-                                            finalization_gap_bound: instr.val[1],
-                                        };
+                                        let params =
+                                            zebra_crosslink_chain::ZcashCrosslinkParameters {
+                                                bc_confirmation_depth_sigma: instr.val[0],
+                                                finalization_gap_bound: instr.val[1],
+                                            };
                                         todo!("Actually set params");
                                     }
 
@@ -3292,7 +3311,10 @@ pub async fn viz_main(
 
                         for node in &ctx.nodes {
                             if node.kind == NodeKind::BC && node.bc_block.is_some() {
-                                tf.push_instr_serialize(TFInstr::LOAD_POW, node.bc_block.as_ref().unwrap());
+                                tf.push_instr_serialize(
+                                    TFInstr::LOAD_POW,
+                                    node.bc_block.as_ref().unwrap(),
+                                );
                             }
                         }
 
@@ -3300,7 +3322,6 @@ pub async fn viz_main(
                         // block.zcash_serialize(file.unwrap());
                         tf.write_to_file(path);
                     }
-
                 },
             );
         }

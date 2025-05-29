@@ -244,13 +244,15 @@ impl StartCmd {
         // Create a channel to send mined blocks to the gossip task
         let submit_block_channel = SubmitBlockChannel::new();
 
-        let gbt_for_force_feeding_pow = Arc::new(zebra_rpc::methods::types::get_block_template::GetBlockTemplateHandler::new(
-            &config.network.network.clone(),
-            config.mining.clone(),
-            block_verifier_router.clone(),
-            sync_status.clone(),
-            Some(submit_block_channel.sender()),
-        ));
+        let gbt_for_force_feeding_pow = Arc::new(
+            zebra_rpc::methods::types::get_block_template::GetBlockTemplateHandler::new(
+                &config.network.network.clone(),
+                config.mining.clone(),
+                block_verifier_router.clone(),
+                sync_status.clone(),
+                Some(submit_block_channel.sender()),
+            ),
+        );
 
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
@@ -297,8 +299,7 @@ impl StartCmd {
                             Ok(hash) => {
                                 tracing::info!(?hash, ?height, "submit block accepted");
 
-                                gbt
-                                    .advertise_mined_block(hash, height)
+                                gbt.advertise_mined_block(hash, height)
                                     // .map_error_with_prefix(0, "failed to send mined block")?;
                                     .unwrap();
 
