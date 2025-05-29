@@ -48,7 +48,8 @@ This list of [Deployment Goals](https://github.com/ShieldedLabs/crosslink-deploy
     * Delegating to a validator does not leak information that links the user's action to other information about them, such as their IP address, their other ZEC holdings that they are choosing not to stake, or their previous or future transactions.
 * [GH #20](https://github.com/ShieldedLabs/crosslink-deployment/issues/20): The time-to-market and the risk of Shielded Labs's First Deployment of Crosslink is minimized: the benefits listed above start accruing to users as soon as safely possible.
 * [GH #21](https://github.com/ShieldedLabs/crosslink-deployment/issues/21): Activating Crosslink on Zcash mainnet retains as much as possible of Zcash users' safety, security, privacy, and availability guarantees.
-* The first deployment of Crosslink is neutral with regard to Zcash governance -- it doesn't change anything about Zcash governance.
+* This is neutral with regard to Zcash governance -- it doesn't change anything about Zcash governance.
+* This does not change the emissions schedule -- how much total ZEC is in circulation at any given point in time in the future -- and in particular it does not change the eventual 21 million ZEC supply cap.
 
 Trade-offs
 ---
