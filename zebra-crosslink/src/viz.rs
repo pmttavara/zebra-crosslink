@@ -21,7 +21,10 @@ use std::{
     thread::JoinHandle,
 };
 use zebra_chain::{
-    serialization::ZcashSerialize,
+    serialization::{
+        ZcashDeserialize,
+        ZcashSerialize,
+    },
     transaction::{LockTime, Transaction},
     work::difficulty::{CompactDifficulty, INVALID_COMPACT_DIFFICULTY},
 };
@@ -3205,19 +3208,43 @@ pub async fn viz_main(
                         ui.slider(hash!(), "", 0. ..1., &mut config.audio_volume);
                     }
 
+                    use crate::test_format::*;
+                    let path = "blocks.zeccltf";
                     if ui.button(None, "Serialize all") {
-                        use crate::test_format::*;
                         let mut tf = TF::new();
 
                         for node in &ctx.nodes {
                             if node.kind == NodeKind::BC && node.bc_block.is_some() {
-                                tf.push_instr_serialize(TFInstrKind::LoadPoW, node.bc_block.as_ref().unwrap());
+                                tf.push_instr_serialize(TFInstr::LOAD_POW, node.bc_block.as_ref().unwrap());
                             }
                         }
 
                         // let file = std::fs::File::create("blocks.zeccltf");
                         // block.zcash_serialize(file.unwrap());
-                        tf.write_to_file("blocks.zeccltf");
+                        tf.write_to_file(path);
+                    }
+
+                    if ui.button(None, "Load from serialization") {
+                        if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
+                            // TODO: this needs an API pass
+                            for instr in &tf.instrs {
+                                info!("Loading instruction {} ({})", TFInstr::str_from_kind(instr.kind), instr.kind);
+
+                                match instr.kind {
+                                    TFInstr::LOAD_POW => {
+                                        let block: Block = Block::zcash_deserialize(instr.data_slice(&bytes))
+                                            .expect("Serialization be valid");
+                                        info!("Successfully loaded block at height {:?}, hash {}", block.coinbase_height(), block.hash());
+                                    }
+
+                                    TFInstr::LOAD_POS => {
+
+                                    }
+
+                                    _ => warn!("Unrecognized instruction {}", instr.kind),
+                                }
+                            }
+                        }
                     }
                 },
             );

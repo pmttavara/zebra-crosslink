@@ -13,7 +13,7 @@ use zerocopy_derive::*;
 
 
 #[repr(C)]
-#[derive(Immutable, IntoBytes)]
+#[derive(Immutable, KnownLayout, IntoBytes, FromBytes)]
 pub(crate) struct TFHdr {
     pub magic: [u8; 8],
     pub instrs_o: u64,
@@ -22,7 +22,7 @@ pub(crate) struct TFHdr {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Immutable, IntoBytes)]
+#[derive(Clone, Copy, Immutable, IntoBytes, FromBytes)]
 pub(crate) struct TFSlice {
     pub o: u64,
     pub size: u64,
@@ -32,6 +32,10 @@ impl TFSlice {
     pub(crate) fn as_val(self) -> [u64; 2] {
         [self.o, self.size]
     }
+
+    pub(crate) fn as_byte_slice_in(self, bytes: &[u8]) -> &[u8] {
+        &bytes[self.o as usize .. (self.o + self.size) as usize]
+    }
 }
 
 impl From<&[u64; 2]> for TFSlice {
@@ -40,20 +44,43 @@ impl From<&[u64; 2]> for TFSlice {
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Immutable, IntoBytes)]
-pub(crate) enum TFInstrKind {
-    LoadPoW,
-    LoadPoS,
-}
+type TFInstrKind = u32;
 
 #[repr(C)]
-#[derive(Clone, Copy, Immutable, IntoBytes)]
+#[derive(Clone, Copy, Immutable, IntoBytes, FromBytes)]
 pub(crate) struct TFInstr {
     pub kind: TFInstrKind,
     pub flags: u32,
     pub data: TFSlice,
     pub val: [u64; 2],
+}
+
+static TF_INSTR_KIND_STRS: [&str; 2] = {
+    let mut strs = [""; 2];
+    strs[TFInstr::LOAD_POW as usize] = "LOAD_POW";
+    strs[TFInstr::LOAD_POS as usize] = "LOAD_POS";
+    strs
+};
+
+impl TFInstr {
+    // NOTE: we want to deal with unknown values at the *application* layer, not the
+    // (de)serialization layer.
+    // TODO: there may be a crate that makes an enum feasible here
+    pub const LOAD_POW: TFInstrKind = 0;
+    pub const LOAD_POS: TFInstrKind = 1;
+
+    pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
+        let kind = kind as usize;
+        if kind < TF_INSTR_KIND_STRS.len() {
+            TF_INSTR_KIND_STRS[kind]
+        } else {
+            "<unknown>"
+        }
+    }
+
+    pub fn data_slice<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
+        self.data.as_byte_slice_in(bytes)
+    }
 }
 
 pub(crate) struct TF {
@@ -129,5 +156,37 @@ impl TF {
             file.write_all(&self.data);
             file.write_all(self.instrs.as_bytes()).expect("writing shouldn't fail");
         }
+    }
+
+    // Simple version, all in one go... for large files we'll want to break this up; get hdr &
+    // get/stream instrs, then read data as needed
+    pub(crate) fn read_from_file(path: &str) -> (Option<Vec<u8>>, Option<Self>) {
+        let bytes = if let Ok(bytes) = std::fs::read(path) {
+            bytes
+        } else {
+            return (None, None)
+        };
+
+        let tf_hdr = if let Ok((hdr, _)) = TFHdr::ref_from_prefix(&bytes[0..]) {
+            hdr
+        } else {
+            return (Some(bytes), None)
+        };
+
+        let instrs = if let Ok((instrs, _)) = <[TFInstr]>::ref_from_prefix_with_elems(&bytes[tf_hdr.instrs_o as usize..], tf_hdr.instrs_n as usize) {
+            instrs
+        } else {
+            return (Some(bytes), None)
+        };
+
+        let data = &bytes[size_of::<TFHdr>()..tf_hdr.instrs_o as usize];
+
+        // TODO: just use slices, don't copy to vectors
+        let tf = TF {
+            instrs: instrs.to_vec(),
+            data: data.to_vec(),
+        };
+
+        (Some(bytes), Some(tf))
     }
 }
