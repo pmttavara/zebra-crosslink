@@ -284,7 +284,7 @@ impl StartCmd {
                             .await
                             // .map_err(|error| ErrorObject::owned(0, error.to_string(), None::<()>))?
                             .unwrap()
-                            .call(zebra_consensus::Request::Commit(Arc::new(block)))
+                            .call(zebra_consensus::Request::Commit(block))
                             .await;
 
                         let chain_error = match block_verifier_router_response {

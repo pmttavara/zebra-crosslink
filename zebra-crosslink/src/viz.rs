@@ -529,6 +529,10 @@ pub struct VizGlobals {
 }
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
+/// Blocks to be injected into zebra via getblocktemplate, submitblock etc
+static G_FORCE_BLOCKS: std::sync::Mutex<Vec<Arc<Block>>> = std::sync::Mutex::new(Vec::new());
+
+
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
 fn abs_block_height(height: i32, tip: Option<(BlockHeight, BlockHash)>) -> BlockHeight {
@@ -594,6 +598,14 @@ pub async fn service_viz_requests(
         }
         let mut new_g = old_g.clone();
         new_g.consumed = false;
+
+        {
+            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
+            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
+            for block in force_feed_blocks.drain(..) {
+                (call.force_feed_pow)(block);
+            }
+        }
 
         #[allow(clippy::never_loop)]
         let (lo_height, bc_tip, hashes, blocks) = loop {
@@ -996,6 +1008,7 @@ struct VizConfig {
     show_profiler: bool,
     show_bft_msgs: bool,
     pause_incoming_blocks: bool,
+    node_load_viz_only: bool,
     new_node_ratio: f32,
     audio_on: bool,
     audio_volume: f32,
@@ -1874,6 +1887,7 @@ pub async fn viz_main(
         show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.9,
+        node_load_viz_only: false,
         audio_on: false,
         audio_volume: 0.6,
         draw_resultant_forces: false,
@@ -3218,8 +3232,50 @@ pub async fn viz_main(
 
                     use crate::test_format::*;
                     let path = "blocks.zeccltf";
+                    checkbox(
+                        ui,
+                        hash!(),
+                        "Load to visualization-only",
+                        &mut config.node_load_viz_only,
+                    );
+
+                    if ui.button(None, "Load from serialization") {
+                        if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
+                            // TODO: this needs an API pass
+                            for instr in &tf.instrs {
+                                info!("Loading instruction {} ({})", TFInstr::str_from_kind(instr.kind), instr.kind);
+
+                                match instr.kind {
+                                    TFInstr::LOAD_POW => {
+                                        let block: Arc<Block> = Arc::new(Block::zcash_deserialize(instr.data_slice(&bytes))
+                                            .expect("Serialization be valid"));
+                                        // NOTE (perf): block.hash() immediately reserializes the block to
+                                        // hash the canonical form...
+                                        let height_hash = (block.coinbase_height().expect("Block should have a valid height"), block.hash());
+
+                                        info!("Successfully loaded block at height {:?}, hash {}", height_hash.0, height_hash.1);
+
+                                        if config.node_load_viz_only {
+                                            ctx.push_bc_block(&config, &block, &height_hash);
+                                        } else {
+                                            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
+                                            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
+                                            force_feed_blocks.push(block);
+                                        }
+                                    }
+
+                                    TFInstr::LOAD_POS => {
+
+                                    }
+
+                                    _ => warn!("Unrecognized instruction {}", instr.kind),
+                                }
+                            }
+                        }
+                    }
+
                     if ui.button(None, "Serialize all") {
-                        let mut tf = TF::new();
+                        let mut tf = TF::new(g.params);
 
                         for node in &ctx.nodes {
                             if node.kind == NodeKind::BC && node.bc_block.is_some() {
@@ -3232,35 +3288,6 @@ pub async fn viz_main(
                         tf.write_to_file(path);
                     }
 
-                    // TODO: vizualization-only/fully load checkbox
-                    if ui.button(None, "Load from serialization") {
-                        if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
-                            // TODO: this needs an API pass
-                            for instr in &tf.instrs {
-                                info!("Loading instruction {} ({})", TFInstr::str_from_kind(instr.kind), instr.kind);
-
-                                match instr.kind {
-                                    TFInstr::LOAD_POW => {
-                                        let block: Block = Block::zcash_deserialize(instr.data_slice(&bytes))
-                                            .expect("Serialization be valid");
-                                        // NOTE (perf): block.hash() immediately reserializes the block to
-                                        // hash the canonical form...
-                                        let height_hash = (block.coinbase_height().expect("Block should have a valid height"), block.hash());
-
-                                        info!("Successfully loaded block at height {:?}, hash {}", height_hash.0, height_hash.1);
-
-                                        ctx.push_bc_block(&config, &Arc::new(block), &height_hash);
-                                    }
-
-                                    TFInstr::LOAD_POS => {
-
-                                    }
-
-                                    _ => warn!("Unrecognized instruction {}", instr.kind),
-                                }
-                            }
-                        }
-                    }
                 },
             );
         }

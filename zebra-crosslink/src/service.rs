@@ -119,10 +119,10 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 >;
 
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
-/// pointer that takes a `Block` as input and returns `()` as its output.
+/// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoWBlockProcedure = Arc<
     dyn Fn(
-            zebra_chain::block::Block,
+            Arc<zebra_chain::block::Block>,
         ) -> Pin<
             Box<
                 dyn Future<
