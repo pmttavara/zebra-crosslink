@@ -3204,6 +3204,21 @@ pub async fn viz_main(
                         ui.label(None, "Audio volume");
                         ui.slider(hash!(), "", 0. ..1., &mut config.audio_volume);
                     }
+
+                    if ui.button(None, "Serialize all") {
+                        use crate::test_format::*;
+                        let mut tf = TF::new();
+
+                        for node in &ctx.nodes {
+                            if node.kind == NodeKind::BC && node.bc_block.is_some() {
+                                tf.push_instr_serialize(TFInstrKind::LoadPoW, node.bc_block.as_ref().unwrap());
+                            }
+                        }
+
+                        // let file = std::fs::File::create("blocks.zeccltf");
+                        // block.zcash_serialize(file.unwrap());
+                        tf.write_to_file("blocks.zeccltf");
+                    }
                 },
             );
         }

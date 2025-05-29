@@ -45,6 +45,8 @@ tempfile = "3.19.1"
 prost = "0.13"
 strum = "0.26.3"
 strum_macros = "0.26.4"
+zerocopy = "0.8.25"
+zerocopy-derive = "0.8.25"
 
 static_assertions = { workspace = true }
 
