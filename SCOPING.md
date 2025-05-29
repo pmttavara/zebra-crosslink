@@ -63,4 +63,6 @@ Non-Goals
 
 * The consensus mechanism is needed only to prevent double-spending/multi-spending/rollback attacks. It is not needed for censorship-resistance, since that is provided by end-to-end encryption, and it is not needed for counterfeiting-resistance, since that is provided by two layers of defense: proofs and turnstiles. So censorship-resistance and counterfeiting-resistance are non-goals for (at least) the first deployment of Crosslink.
 
+See also [Technical Requirements](https://docs.google.com/document/d/1YXalTGoezGH8GS1dknO8aK6eBFRq_Pq8LvDeho1KVZ8/edit?usp=sharing).
+
 [For a much more detailed and "living/work-in-progress" analysis of possible requirements, goals, and trade-offs, see this google doc: https://docs.google.com/document/d/1GZYQgQdzL1-GNJLWmt5CbTFXo1nuufkL7-gg7az_M2Q/edit?tab=t.0 .]
