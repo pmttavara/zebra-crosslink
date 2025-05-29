@@ -14,6 +14,7 @@ use macroquad::{
     ui::{self, hash, root_ui, widgets},
     window,
 };
+use static_assertions::*;
 use std::{
     cmp::{max, min},
     collections::HashMap,
@@ -3242,9 +3243,11 @@ pub async fn viz_main(
                     if ui.button(None, "Load from serialization") {
                         if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
                             // TODO: this needs an API pass
-                            for instr in &tf.instrs {
+                            for instr_i in 0..tf.instrs.len() {
+                                let instr = &tf.instrs[instr_i];
                                 info!("Loading instruction {} ({})", TFInstr::str_from_kind(instr.kind), instr.kind);
 
+                                const_assert!(TFInstr::COUNT == 3);
                                 match instr.kind {
                                     TFInstr::LOAD_POW => {
                                         let block: Arc<Block> = Arc::new(Block::zcash_deserialize(instr.data_slice(&bytes))
@@ -3265,7 +3268,17 @@ pub async fn viz_main(
                                     }
 
                                     TFInstr::LOAD_POS => {
+                                        todo!("LOAD_POS");
+                                    }
 
+                                    TFInstr::SET_PARAMS => {
+                                        debug_assert!(instr_i == 0, "should only be set at the beginning");
+                                        // ALT: derive FromBytes for params
+                                        let params = zebra_crosslink_chain::ZcashCrosslinkParameters {
+                                            bc_confirmation_depth_sigma: instr.val[0],
+                                            finalization_gap_bound: instr.val[1],
+                                        };
+                                        todo!("Actually set params");
                                     }
 
                                     _ => warn!("Unrecognized instruction {}", instr.kind),
