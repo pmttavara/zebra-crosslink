@@ -1350,6 +1350,37 @@ impl VizCtx {
         node_ref
     }
 
+
+    fn push_bc_block(
+        &mut self,
+        config: &VizConfig,
+        block: &Arc<Block>,
+        height_hash: &(BlockHeight, BlockHash),
+    ) {
+        let _z = ZoneGuard::new("push BC block");
+
+        if self.find_bc_node_by_hash(&height_hash.1).is_none() {
+            // NOTE: ignore if we don't have block (header) data; we can add it later if we
+            // have all the data then.
+            self.push_node(
+                &config,
+                NodeInit::BC {
+                    parent: None,
+
+                    hash: height_hash.1.0,
+                    height: height_hash.0.0,
+                    header: *block.header,
+                    difficulty: Some(block.header.difficulty_threshold),
+                    txs_n: block.transactions.len() as u32,
+                    is_real: true,
+                    bc_block: Some(block.clone()),
+                },
+                Some(block.header.previous_block_hash.0),
+            );
+        }
+    }
+
+
     fn clear_nodes(&mut self) {
         self.nodes.clear();
         (self.bc_lo, self.bc_hi) = (None, None);
@@ -1958,48 +1989,21 @@ pub async fn viz_main(
                 }
             });
 
-            fn push_bc_block(
-                ctx: &mut VizCtx,
-                config: &VizConfig,
-                state: &VizState,
-                block_i: usize,
-                height: &BlockHeight,
-                hash: &BlockHash,
-            ) {
-                let _z = ZoneGuard::new("push BC block");
-
-                if ctx.find_bc_node_by_hash(hash).is_none() {
-                    // NOTE: ignore if we don't have block (header) data; we can add it later if we
-                    // have all the data then.
-                    if let Some(block) = state.blocks[block_i].as_ref() {
-                        ctx.push_node(
-                            &config,
-                            NodeInit::BC {
-                                parent: None,
-
-                                hash: hash.0,
-                                height: height.0,
-                                header: *block.header,
-                                difficulty: Some(block.header.difficulty_threshold),
-                                txs_n: block.transactions.len() as u32,
-                                is_real: true,
-                                bc_block: Some(block.clone()),
-                            },
-                            Some(block.header.previous_block_hash.0),
-                        );
+            if is_new_bc_hi {
+                for (i, height_hash) in g.state.height_hashes.iter().enumerate() {
+                    if let Some(block) = g.state.blocks[i].as_ref() {
+                        ctx.push_bc_block(&config, &block, height_hash);
                     } else {
-                        warn!("No data currently associated with PoW block {:?}", hash);
+                        warn!("No data currently associated with PoW block {:?}", height_hash.1);
                     }
                 }
-            }
-
-            if is_new_bc_hi {
-                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate() {
-                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
-                }
             } else {
-                for (i, (height, hash)) in g.state.height_hashes.iter().enumerate().rev() {
-                    push_bc_block(&mut ctx, &config, &g.state, i, height, hash);
+                for (i, height_hash) in g.state.height_hashes.iter().enumerate().rev() {
+                    if let Some(block) = g.state.blocks[i].as_ref() {
+                        ctx.push_bc_block(&config, &block, height_hash);
+                    } else {
+                        warn!("No data currently associated with PoW block {:?}", height_hash.1);
+                    }
                 }
             }
 
@@ -3208,6 +3212,10 @@ pub async fn viz_main(
                         ui.slider(hash!(), "", 0. ..1., &mut config.audio_volume);
                     }
 
+                    if ui.button(None, "Clear all") {
+                        ctx.clear_nodes();
+                    }
+
                     use crate::test_format::*;
                     let path = "blocks.zeccltf";
                     if ui.button(None, "Serialize all") {
@@ -3224,6 +3232,7 @@ pub async fn viz_main(
                         tf.write_to_file(path);
                     }
 
+                    // TODO: vizualization-only/fully load checkbox
                     if ui.button(None, "Load from serialization") {
                         if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
                             // TODO: this needs an API pass
@@ -3234,7 +3243,13 @@ pub async fn viz_main(
                                     TFInstr::LOAD_POW => {
                                         let block: Block = Block::zcash_deserialize(instr.data_slice(&bytes))
                                             .expect("Serialization be valid");
-                                        info!("Successfully loaded block at height {:?}, hash {}", block.coinbase_height(), block.hash());
+                                        // NOTE (perf): block.hash() immediately reserializes the block to
+                                        // hash the canonical form...
+                                        let height_hash = (block.coinbase_height().expect("Block should have a valid height"), block.hash());
+
+                                        info!("Successfully loaded block at height {:?}, hash {}", height_hash.0, height_hash.1);
+
+                                        ctx.push_bc_block(&config, &Arc::new(block), &height_hash);
                                     }
 
                                     TFInstr::LOAD_POS => {
