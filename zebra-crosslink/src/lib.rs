@@ -36,6 +36,11 @@ use bytes::{Bytes, BytesMut};
 pub mod malctx;
 use malctx::*;
 
+use std::sync::Mutex;
+pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(||());
+pub static TEST_PARAMS: Mutex<Option<zebra_crosslink_chain::ZcashCrosslinkParameters>> = Mutex::new(None);
+
 pub mod service;
 /// Configuration for the state service.
 pub mod config {
@@ -312,6 +317,10 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         tokio::task::spawn_blocking(move || {
             rt.block_on(viz::service_viz_requests(viz_tfl_handle, params))
         });
+    }
+
+    if let Some(path) = TEST_INSTR_PATH.lock().unwrap().clone() {
+        tokio::task::spawn(test_format::instr_reader(internal_handle.clone(), path));
     }
 
     fn rng_private_public_key_from_address(

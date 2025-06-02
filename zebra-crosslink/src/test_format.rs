@@ -192,7 +192,7 @@ impl TF {
 
     // Simple version, all in one go... for large files we'll want to break this up; get hdr &
     // get/stream instrs, then read data as needed
-    pub(crate) fn read_from_file(path: &str) -> (Option<Vec<u8>>, Option<Self>) {
+    pub(crate) fn read_from_file(path: &std::path::PathBuf) -> (Option<Vec<u8>>, Option<Self>) {
         let bytes = if let Ok(bytes) = std::fs::read(path) {
             bytes
         } else {
@@ -224,4 +224,79 @@ impl TF {
 
         (Some(bytes), Some(tf))
     }
+}
+
+
+use crate::*;
+
+
+pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::path::PathBuf) {
+    use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
+    let call = internal_handle.call.clone();
+    println!("Starting test");
+
+    let (bytes, tf) = match TF::read_from_file(&path) {
+        (None, _) => panic!("Couldn't load file: {:?}", path),
+        (_, None) => panic!("Invalid test file: {:?}", path), // TODO: specifics
+        (Some(bytes), Some(tf)) => (bytes, tf),
+    };
+
+
+    for instr_i in 0..tf.instrs.len() {
+        let instr = &tf.instrs[instr_i];
+        info!(
+            "Loading instruction {} ({})",
+            TFInstr::str_from_kind(instr.kind),
+            instr.kind
+        );
+
+
+        const_assert!(TFInstr::COUNT == 3);
+        match instr.kind {
+            TFInstr::LOAD_POW => {
+                let block: Arc<Block> = Arc::new(
+                    Block::zcash_deserialize(instr.data_slice(&bytes))
+                    .expect("Serialization be valid"),
+                );
+                // NOTE (perf): block.hash() immediately reserializes the block to
+                // hash the canonical form...
+                let height_hash = (
+                    block
+                    .coinbase_height()
+                    .expect("Block should have a valid height"),
+                    block.hash(),
+                );
+
+                // (call.force_feed_pow)(block);
+                // panic!();
+                info!(
+                    "Successfully loaded block at height {:?}, hash {}",
+                    height_hash.0, height_hash.1
+                );
+            }
+
+            TFInstr::LOAD_POS => {
+                todo!("LOAD_POS");
+            }
+
+            TFInstr::SET_PARAMS => {
+                debug_assert!(
+                    instr_i == 0,
+                    "should only be set at the beginning"
+                );
+                // ALT: derive FromBytes for params
+                let params =
+                    zebra_crosslink_chain::ZcashCrosslinkParameters {
+                        bc_confirmation_depth_sigma: instr.val[0],
+                        finalization_gap_bound: instr.val[1],
+                    };
+            }
+
+            _ => warn!("Unrecognized instruction {}", instr.kind),
+        }
+    }
+
+    println!("Test done, shutting down");
+    // zebrad::application::APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+    TEST_SHUTDOWN_FN.lock().unwrap()();
 }
