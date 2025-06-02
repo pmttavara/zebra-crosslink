@@ -2313,6 +2313,7 @@ pub async fn viz_main(
                                 version: 0,
                                 height: 0,
                                 previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                finalization_candidate_height: 0,
                                 headers: loop {
                                     let bc: Option<u32> = target_bc_str.trim().parse().ok();
                                     if bc.is_none() {
@@ -2583,6 +2584,7 @@ pub async fn viz_main(
                                 version: 0,
                                 height: 0,
                                 previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                finalization_candidate_height: 0,
                                 headers: Vec::new(),
                             },
                         };

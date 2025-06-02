@@ -563,7 +563,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                         panic!("TODO: improve error handling.");
                                                     };
 
-                                                    break match BftPayload::try_from(params, current_bft_height.as_u64() as u32, zebra_chain::block::Hash([0u8; 32]), headers) {
+                                                    break match BftPayload::try_from(params, current_bft_height.as_u64() as u32, zebra_chain::block::Hash([0u8; 32]), 0, headers) {
                                                         Ok(v) => Some(v),
                                                         Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
                                                     };
@@ -773,6 +773,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                         version: 0,
                                                         height: i as u32,
                                                         previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                                        finalization_candidate_height: 0,
                                                         headers: Vec::new(),
                                                     }
                                                 }));

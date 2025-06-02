@@ -62,6 +62,8 @@ pub struct BftPayload {
     pub height: u32,
     /// Hash of the previous BFT Block. Not the previous payload!
     pub previous_block_hash: zebra_chain::block::Hash,
+    /// The height of the PoW block that is the finalization candidate.
+    pub finalization_candidate_height: u32,
     /// The PoW Headers
     pub headers: Vec<BcBlockHeader>,
 }
@@ -72,6 +74,7 @@ impl ZcashSerialize for BftPayload {
         writer.write_u32::<LittleEndian>(self.version)?;
         writer.write_u32::<LittleEndian>(self.height)?;
         self.previous_block_hash.zcash_serialize(&mut writer)?;
+        writer.write_u32::<LittleEndian>(self.finalization_candidate_height)?;
         writer.write_u32::<LittleEndian>(self.headers.len().try_into().unwrap())?;
         for header in &self.headers {
             header.zcash_serialize(&mut writer)?;
@@ -85,6 +88,7 @@ impl ZcashDeserialize for BftPayload {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
         let previous_block_hash = zebra_chain::block::Hash::zcash_deserialize(&mut reader)?;
+        let finalization_candidate_height = reader.read_u32::<LittleEndian>()?;
         let header_count = reader.read_u32::<LittleEndian>()?;
         if header_count > 2048 {
             // Fail on unreasonably large number.
@@ -101,6 +105,7 @@ impl ZcashDeserialize for BftPayload {
             version,
             height,
             previous_block_hash,
+            finalization_candidate_height,
             headers: array,
         })
     }
@@ -127,6 +132,7 @@ impl BftPayload {
         params: &ZcashCrosslinkParameters,
         height: u32,
         previous_block_hash: zebra_chain::block::Hash,
+        finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftPayload> {
         let expected = params.bc_confirmation_depth_sigma;
@@ -141,6 +147,7 @@ impl BftPayload {
             version: 0,
             height,
             previous_block_hash,
+            finalization_candidate_height,
             headers,
         })
     }
