@@ -117,10 +117,32 @@ impl StartCmd {
         let is_regtest = config.network.network.is_regtest();
 
         let config = if is_regtest {
+            fn add_to_port(mut addr: std::net::SocketAddr, addend: u16) -> std::net::SocketAddr {
+                addr.set_port(addr.port() + addend);
+                addr
+            }
+            let nextest_slot: u16 = if let Ok(str) = std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
+                if let Ok(slot) = str.parse::<u16>() {
+                    slot
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
             Arc::new(ZebradConfig {
                 mempool: mempool::Config {
                     debug_enable_at_height: Some(0),
                     ..config.mempool
+                },
+                network: zebra_network::config::Config {
+                    listen_addr: add_to_port(config.network.listen_addr.clone(), nextest_slot*7),
+                    ..config.network.clone()
+                },
+                rpc: zebra_rpc::config::rpc::Config {
+                    listen_addr: config.rpc.listen_addr.clone().map(|addr| add_to_port(addr, nextest_slot*7)),
+                    ..config.rpc.clone()
                 },
                 ..Arc::unwrap_or_clone(config)
             })
