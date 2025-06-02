@@ -8842,6 +8842,7 @@ dependencies = [
 name = "zebra-crosslink-chain"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "serde",
  "static_assertions",
  "thiserror 2.0.12",

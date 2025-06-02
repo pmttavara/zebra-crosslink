@@ -9,3 +9,4 @@ static_assertions.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true }
 serde = { workspace = true, features = ["serde_derive"] }
+byteorder = { workspace = true }

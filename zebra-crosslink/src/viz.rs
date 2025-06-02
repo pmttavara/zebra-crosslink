@@ -2310,6 +2310,9 @@ pub async fn viz_main(
                         let payload = VizBftPayload {
                             min_payload_h: BlockHeight(0),
                             payload: BftPayload {
+                                version: 0,
+                                height: 0,
+                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
                                 headers: loop {
                                     let bc: Option<u32> = target_bc_str.trim().parse().ok();
                                     if bc.is_none() {
@@ -2577,6 +2580,9 @@ pub async fn viz_main(
                         let header = VizBftPayload {
                             min_payload_h: BlockHeight(0),
                             payload: BftPayload {
+                                version: 0,
+                                height: 0,
+                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
                                 headers: Vec::new(),
                             },
                         };

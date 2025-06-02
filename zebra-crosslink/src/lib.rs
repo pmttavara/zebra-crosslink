@@ -14,6 +14,8 @@ use malachitebft_app_channel::NetworkMsg;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
+use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
+
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
@@ -561,7 +563,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                         panic!("TODO: improve error handling.");
                                                     };
 
-                                                    break match BftPayload::try_from(params, headers) {
+                                                    break match BftPayload::try_from(params, current_bft_height.as_u64() as u32, zebra_chain::block::Hash([0u8; 32]), headers) {
                                                         Ok(v) => Some(v),
                                                         Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
                                                     };
@@ -590,7 +592,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                         round,
                                                         valid_round: MalRound::Nil,
                                                         proposer: my_address,
-                                                        value: MalValue::new(payload, extensions),
+                                                        value: MalValue::new(payload),
                                                         validity: MalValidity::Valid,
                                                     };
                                                     prev_bft_values.insert((height.as_u64(), round.as_i64()), val.clone());
@@ -636,12 +638,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                                             // Data
                                             {
-                                                let pieces : Vec<MalStreamedProposalData> = proposal.value.fracture_into_pieces();
-                                                for piece in pieces {
-                                                    hasher.update(&piece.data_bytes);
-
-                                                    parts.push(MalStreamedProposalPart::Data(piece));
-                                                }
+                                                let piece = MalStreamedProposalData { data_bytes: proposal.value.value.zcash_serialize_to_vec().unwrap() };
+                                                hasher.update(&piece.data_bytes);
+                                                parts.push(MalStreamedProposalPart::Data(piece));
                                             }
 
                                             // Fin
@@ -771,7 +770,10 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                 VizBftPayload {
                                                     min_payload_h: BlockHeight(0),
                                                     payload: BftPayload {
-                                                        headers: Vec::new()
+                                                        version: 0,
+                                                        height: i as u32,
+                                                        previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                                        headers: Vec::new(),
                                                     }
                                                 }));
                                             }
@@ -924,7 +926,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                     let init = parts.init().unwrap();
 
                                                     let pieces : Vec<MalStreamedProposalData> = parts.parts.iter().filter_map(|part| part.as_data()).cloned().collect();
-                                                    let value = MalValue::reconstruct_from_pieces(&pieces);
+                                                    assert!(pieces.len() == 1);
+                                                    let piece = &pieces[0];
+                                                    let value = MalValue::new(piece.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
 
                                                     let new_final_hash = value.value.headers.first().expect("at least 1 header").hash();
 

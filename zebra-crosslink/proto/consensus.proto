@@ -8,7 +8,6 @@ message Address {
 
 message Value {
     optional bytes value = 1;
-    optional bytes extensions = 2;
 }
 
 message ValueId {

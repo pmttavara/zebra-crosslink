@@ -11,6 +11,7 @@ use malachitebft_signing_ed25519::Signature;
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
+use zebra_chain::serialization::ZcashDeserializeInto;
 
 use core::fmt;
 
@@ -404,12 +405,11 @@ impl Protobuf for MalValueId {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MalValue {
     pub value: BftPayload,
-    pub extensions: Bytes,
 }
 
 impl MalValue {
-    pub fn new(value: BftPayload, extensions: Bytes) -> Self {
-        Self { value, extensions }
+    pub fn new(value: BftPayload) -> Self {
+        Self { value }
     }
 
     pub fn id(&self) -> MalValueId {
@@ -424,39 +424,6 @@ impl MalValue {
         }
         // NOTE(Sam): I do not think this is supposed to include extensions?
         MalValueId(acc)
-    }
-
-    //pub fn size_bytes(&self) -> usize {
-    //    std::mem::size_of_val(&self.value) + self.extensions.len()
-    //}
-
-    pub fn fracture_into_pieces(&self) -> Vec<MalStreamedProposalData> {
-        use zebra_chain::serialization::ZcashSerialize;
-        let mut array = Vec::new();
-        for header in &self.value.headers {
-            array.push(MalStreamedProposalData {
-                data_bytes: header.zcash_serialize_to_vec().unwrap(),
-            });
-        }
-        array.push(MalStreamedProposalData {
-            data_bytes: self.extensions.to_vec(),
-        });
-        array
-    }
-
-    pub fn reconstruct_from_pieces(pieces: &Vec<MalStreamedProposalData>) -> Self {
-        use zebra_chain::serialization::ZcashDeserialize;
-        let extensions = pieces.last().unwrap().data_bytes.clone().into();
-        let rem = &pieces[0..pieces.len() - 1];
-        let mut array = Vec::new();
-        for p in rem {
-            let mut slice: &[u8] = &p.data_bytes;
-            array.push(ZcashDeserialize::zcash_deserialize(&mut slice).unwrap());
-        }
-        Self {
-            value: BftPayload { headers: array },
-            extensions,
-        }
     }
 }
 
@@ -477,23 +444,11 @@ impl Protobuf for MalValue {
         let value_bytes = proto
             .value
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?;
-        let extension_bytes = proto
-            .extensions
-            .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("extensions"))?;
-
-        let mut slice: &[u8] = &value_bytes;
-        let mut array = Vec::new();
-        loop {
-            if let Ok(v) = ZcashDeserialize::zcash_deserialize(&mut slice) {
-                array.push(v);
-            } else {
-                break;
-            }
-        }
 
         Ok(MalValue {
-            value: BftPayload { headers: array },
-            extensions: extension_bytes,
+            value: value_bytes
+                .zcash_deserialize_into()
+                .map_err(|e| ProtoError::Other(format!("ZCashDeserializeError: {:?}", e)))?,
         })
     }
 
@@ -502,14 +457,8 @@ impl Protobuf for MalValue {
         use bytes::BufMut;
         use zebra_chain::serialization::ZcashSerialize;
 
-        let mut bytes = BytesMut::new();
-        for header in &self.value.headers {
-            bytes.extend_from_slice(&header.zcash_serialize_to_vec().unwrap());
-        }
-
         Ok(malctx_schema_proto::Value {
-            value: Some(bytes.freeze()),
-            extensions: Some(self.extensions.clone()),
+            value: Some(self.value.zcash_serialize_to_vec().unwrap().into()),
         })
     }
 }
