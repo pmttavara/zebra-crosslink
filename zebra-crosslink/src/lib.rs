@@ -320,6 +320,46 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     }
 
     if let Some(path) = TEST_INSTR_PATH.lock().unwrap().clone() {
+        // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
+        std::panic::set_hook(Box::new(|panic_info| {
+            #[allow(clippy::print_stderr)]
+            {
+                use std::backtrace::{ self, * };
+                let bt = Backtrace::force_capture();
+
+                eprintln!("\n\n{panic_info}\n");
+
+                // hacky formatting - BacktraceFmt not working for some reason...
+                let str = format!("{bt}");
+                let mut splits = str.split("\n");
+                let n = 40;
+                for i in 0..=n {
+                    if i == n {
+                        eprintln!("...");
+                        break;
+                    }
+
+                    let proc = if let Some(val) = splits.next() {
+                        val.trim()
+                    } else {
+                        break;
+                    };
+
+                    let file_loc = if proc.ends_with("___rust_try") {
+                        ""
+                    } else if let Some(val) = splits.next() {
+                        val.trim()
+                    } else {
+                        break;
+                    };
+
+                    eprintln!("  {}{} {}", if i < 10 {" "} else {""}, proc, file_loc);
+                }
+
+                std::process::abort();
+            }
+        }));
+
         tokio::task::spawn(test_format::instr_reader(internal_handle.clone(), path));
     }
 
