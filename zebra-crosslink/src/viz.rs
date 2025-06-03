@@ -3240,7 +3240,7 @@ pub async fn viz_main(
                     }
 
                     use crate::test_format::*;
-                    let path = "blocks.zeccltf";
+                    let path: std::path::PathBuf = "blocks.zeccltf".into();
                     checkbox(
                         ui,
                         hash!(),
@@ -3249,7 +3249,7 @@ pub async fn viz_main(
                     );
 
                     if ui.button(None, "Load from serialization") {
-                        if let (Some(bytes), Some(tf)) = TF::read_from_file(path) {
+                        if let (Some(bytes), Some(tf)) = TF::read_from_file(&path) {
                             // TODO: this needs an API pass
                             for instr_i in 0..tf.instrs.len() {
                                 let instr = &tf.instrs[instr_i];
@@ -3328,7 +3328,7 @@ pub async fn viz_main(
 
                         // let file = std::fs::File::create("blocks.zeccltf");
                         // block.zcash_serialize(file.unwrap());
-                        tf.write_to_file(path);
+                        tf.write_to_file(&path);
                     }
                 },
             );

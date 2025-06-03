@@ -174,7 +174,7 @@ impl TF {
         self.push_instr_serialize_ex(kind, 0, data, [0; 2])
     }
 
-    pub(crate) fn write_to_file(&self, path: &str) {
+    pub(crate) fn write_to_file(&self, path: &std::path::Path) {
         if let Ok(mut file) = std::fs::File::create(path) {
             let hdr = TFHdr {
                 magic: "ZECCLTF0".as_bytes().try_into().unwrap(),
@@ -192,7 +192,7 @@ impl TF {
 
     // Simple version, all in one go... for large files we'll want to break this up; get hdr &
     // get/stream instrs, then read data as needed
-    pub(crate) fn read_from_file(path: &std::path::PathBuf) -> (Option<Vec<u8>>, Option<Self>) {
+    pub(crate) fn read_from_file(path: &std::path::Path) -> (Option<Vec<u8>>, Option<Self>) {
         let bytes = if let Ok(bytes) = std::fs::read(path) {
             bytes
         } else {
