@@ -267,8 +267,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
                     block.hash(),
                 );
 
-                // (call.force_feed_pow)(block);
-                // panic!();
+                (call.force_feed_pow)(block).await;
                 info!(
                     "Successfully loaded block at height {:?}, hash {}",
                     height_hash.0, height_hash.1
