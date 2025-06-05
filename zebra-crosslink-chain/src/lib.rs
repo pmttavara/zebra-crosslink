@@ -111,14 +111,6 @@ impl ZcashDeserialize for BftPayload {
     }
 }
 
-/// The wrapper around the BftPayload that also contains the finalizer signatures allowing the Block to be
-/// validated offline. The signatures are not included yet! D:
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BftBlock {
-    /// The inner payload
-    pub payload: BftPayload,
-}
-
 impl BftPayload {
     /// Refer to the [BcBlockHeader] that is the finalization candidate for this payload
     ///
@@ -151,7 +143,24 @@ impl BftPayload {
             headers,
         })
     }
+
+    /// Hash for the payload; N.B. this is not the same as the hash for the block as a whole
+    /// ([BftBlock::hash]).
+    pub fn hash(&self) -> zebra_chain::block::Hash {
+        self.into()
+    }
 }
+
+impl<'a> From<&'a BftPayload> for zebra_chain::block::Hash {
+    fn from(payload: &'a BftPayload) -> Self {
+        let mut hash_writer = zebra_chain::serialization::sha256d::Writer::default();
+        payload
+            .zcash_serialize(&mut hash_writer)
+            .expect("Sha256dWriter is infallible");
+        Self(hash_writer.finish())
+    }
+}
+
 
 /// Validation error for [BftPayload]
 #[derive(Debug, Error)]
@@ -167,6 +176,50 @@ pub enum InvalidBftPayload {
         actual: u64,
     },
 }
+
+/// The wrapper around the BftPayload that also contains the finalizer signatures allowing the Block to be
+/// validated offline. The signatures are not included yet! D:
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct BftBlock {
+    /// The inner payload
+    pub payload: BftPayload,
+}
+
+impl BftBlock {
+    /// Hash for the *full* block
+    pub fn hash(&self) -> zebra_chain::block::Hash {
+        self.into()
+    }
+}
+
+impl ZcashSerialize for BftBlock {
+    #[allow(clippy::unwrap_in_result)]
+    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
+        self.payload.zcash_serialize(&mut writer)?;
+        Ok(())
+    }
+}
+
+impl ZcashDeserialize for BftBlock {
+    fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let payload = BftPayload::zcash_deserialize(&mut reader)?;
+
+        Ok(BftBlock {
+            payload
+        })
+    }
+}
+
+impl<'a> From<&'a BftBlock> for zebra_chain::block::Hash {
+    fn from(block: &'a BftBlock) -> Self {
+        let mut hash_writer = zebra_chain::serialization::sha256d::Writer::default();
+        block
+            .zcash_serialize(&mut hash_writer)
+            .expect("Sha256dWriter is infallible");
+        Self(hash_writer.finish())
+    }
+}
+
 
 /// Zcash Crosslink protocol parameters
 ///
