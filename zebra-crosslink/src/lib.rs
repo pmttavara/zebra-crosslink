@@ -69,12 +69,6 @@ pub mod config {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct VizBftPayload {
-    min_payload_h: BlockHeight,
-    payload: BftPayload,
-}
-
 pub mod test_format;
 #[cfg(feature = "viz_gui")]
 pub mod viz;
@@ -119,7 +113,7 @@ pub(crate) struct TFLServiceInternal {
     final_change_tx: broadcast::Sender<BlockHash>,
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
-    bft_blocks: Vec<(usize, VizBftPayload)>,
+    bft_blocks: Vec<(usize, BftBlock)>,
     proposed_bft_string: Option<String>,
 }
 
@@ -807,8 +801,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         // TODO: do we need some other handling here? Track
                                         // TODO: reject earlier as well, but that doesn't prevent this case
                                         // from happening
-                                        let new_final_hash = decided_value.value.value.headers.first().expect("at least 1 header").hash();
+                                        let payload = &decided_value.value.value;
+                                        let headers = &payload.headers;
+                                        let new_final_hash = headers.first().expect("at least 1 header").hash();
                                         if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+                                            assert_eq!(new_final_height.0, payload.finalization_candidate_height);
                                             let mut internal = internal_handle.internal.lock().await;
                                             let insert_i = certificate.height.as_u64() as usize - 1;
 
@@ -816,16 +813,16 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             for i in internal.bft_blocks.len()..=insert_i {
                                                 let parent_i = i.saturating_sub(1); // just a simple chain
                                                 internal.bft_blocks.push((parent_i,
-                                                VizBftPayload {
-                                                    min_payload_h: BlockHeight(0),
-                                                    payload: BftPayload {
-                                                        version: 0,
-                                                        height: i as u32,
-                                                        previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
-                                                        finalization_candidate_height: 0,
-                                                        headers: Vec::new(),
-                                                    }
-                                                }));
+                                                        BftBlock {
+                                                            payload: BftPayload {
+                                                                version: 0,
+                                                                height: i as u32,
+                                                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                                                finalization_candidate_height: 0,
+                                                                headers: Vec::new(),
+                                                            }
+                                                        }
+                                                ));
                                             }
 
                                             assert!(internal.bft_blocks[insert_i].1.payload.headers.is_empty());
