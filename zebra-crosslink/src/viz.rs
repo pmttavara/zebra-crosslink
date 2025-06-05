@@ -2562,7 +2562,7 @@ pub async fn viz_main(
                 let (header, id, bc_block) = match hover_node.kind {
                     NodeKind::BC => {
                         let header = BlockHeader {
-                            version: 0,
+                            version: 4,
                             previous_block_hash: BlockHash(
                                 hover_node.hash().expect("should have a hash"),
                             ),
