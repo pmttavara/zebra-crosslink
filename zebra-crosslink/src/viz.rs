@@ -5,7 +5,7 @@
 // [ ] non-finalized side-chain
 // [ ] uncross edges
 
-use crate::*;
+use crate::{ *, test_format::* };
 use macroquad::{
     camera::*,
     color::{self, colors::*},
@@ -1019,7 +1019,7 @@ struct VizConfig {
     show_profiler: bool,
     show_bft_msgs: bool,
     pause_incoming_blocks: bool,
-    node_load_viz_only: bool,
+    node_load_kind: usize,
     new_node_ratio: f32,
     audio_on: bool,
     audio_volume: f32,
@@ -1896,7 +1896,7 @@ pub async fn viz_main(
         show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.9,
-        node_load_viz_only: false,
+        node_load_kind: 0,
         audio_on: false,
         audio_volume: 0.6,
         draw_resultant_forces: false,
@@ -1908,6 +1908,11 @@ pub async fn viz_main(
 
     let mut bft_msg_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
+
+    let mut edit_tf = (
+        Vec::<u8>::new(),
+        Vec::<TFInstr>::new(),
+    );
 
     init_audio(&config).await;
 
@@ -3251,14 +3256,20 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    use crate::test_format::*;
                     let path: std::path::PathBuf = "blocks.zeccltf".into();
-                    checkbox(
-                        ui,
-                        hash!(),
-                        "Load to visualization-only",
-                        &mut config.node_load_viz_only,
-                    );
+                    const NODE_LOAD_INSTRS: usize = 0;
+                    const NODE_LOAD_VIZ: usize = 1;
+                    const NODE_LOAD_ZEBRA: usize = 2;
+                    const NODE_LOAD_STRS: [&str; 3] = {
+                        let mut strs = [""; 3];
+                        strs[NODE_LOAD_INSTRS] = "edit";
+                        strs[NODE_LOAD_VIZ] = "visualizer";
+                        strs[NODE_LOAD_ZEBRA] = "zebra";
+                        strs
+                    };
+                    widgets::ComboBox::new(hash!(), &NODE_LOAD_STRS)
+                        .label("Load to")
+                        .ui(ui, &mut config.node_load_kind);
 
                     if ui.button(None, "Load from serialization") {
                         if let Ok((bytes, tf)) = TF::read_from_file(&path) {
@@ -3271,19 +3282,17 @@ pub async fn viz_main(
                                     instr.kind
                                 );
 
-                                const_assert!(TFInstr::COUNT == 3);
-                                match instr.kind {
-                                    TFInstr::LOAD_POW => {
-                                        let block: Arc<Block> = Arc::new(
-                                            Block::zcash_deserialize(instr.data_slice(&bytes))
-                                                .expect("Serialization be valid"),
-                                        );
+                                match tf_read_instr(&bytes, instr) {
+                                    Some(TestInstr::LoadPoW(block)) => {
+                                        let block: Arc<Block> = Arc::new(block);
+
                                         // NOTE (perf): block.hash() immediately reserializes the block to
                                         // hash the canonical form...
+
                                         let height_hash = (
                                             block
-                                                .coinbase_height()
-                                                .expect("Block should have a valid height"),
+                                            .coinbase_height()
+                                            .expect("Block should have a valid height"),
                                             block.hash(),
                                         );
 
@@ -3292,36 +3301,35 @@ pub async fn viz_main(
                                             height_hash.0, height_hash.1
                                         );
 
-                                        if config.node_load_viz_only {
-                                            ctx.push_bc_block(&config, &block, &height_hash);
-                                        } else {
-                                            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-                                            let mut force_feed_blocks: &mut Vec<Arc<Block>> =
-                                                lock.as_mut();
-                                            force_feed_blocks.push(block);
-                                        }
+                                        match config.node_load_kind {
+                                            NODE_LOAD_VIZ => ctx.push_bc_block(&config, &block, &height_hash),
+                                            NODE_LOAD_ZEBRA => {
+                                                let mut lock = G_FORCE_BLOCKS.lock().unwrap();
+                                                let mut force_feed_blocks: &mut Vec<Arc<Block>> =
+                                                    lock.as_mut();
+                                                force_feed_blocks.push(block);
+                                            },
+                                            _ | NODE_LOAD_INSTRS => {},
+                                        };
                                     }
 
-                                    TFInstr::LOAD_POS => {
+                                    Some(TestInstr::LoadPoS(_)) => {
                                         todo!("LOAD_POS");
                                     }
 
-                                    TFInstr::SET_PARAMS => {
+                                    Some(TestInstr::SetParams(params)) => {
                                         debug_assert!(
                                             instr_i == 0,
                                             "should only be set at the beginning"
                                         );
-                                        // ALT: derive FromBytes for params
-                                        let params = ZcashCrosslinkParameters {
-                                            bc_confirmation_depth_sigma: instr.val[0],
-                                            finalization_gap_bound: instr.val[1],
-                                        };
                                         todo!("Actually set params");
                                     }
 
-                                    _ => warn!("Unrecognized instruction {}", instr.kind),
+                                    None => {},
                                 }
                             }
+
+                            edit_tf = (bytes, tf.instrs);
                         }
                     }
 
@@ -3341,6 +3349,20 @@ pub async fn viz_main(
                         // block.zcash_serialize(file.unwrap());
                         tf.write_to_file(&path);
                     }
+
+                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w))
+                        .ui(ui, |ui| {
+                            for instr_i in 0..edit_tf.1.len() {
+                                let instr = &edit_tf.1[instr_i];
+
+                                match tf_read_instr(&edit_tf.0, instr) {
+                                    Some(TestInstr::LoadPoW(block)) => {
+                                        ui.label(None, &format!("PoW block: {}", block.hash()));
+                                    }
+                                    _ => ui.label(None, TFInstr::str_from_kind(instr.kind))
+                                }
+                            }
+                        });
                 },
             );
         }

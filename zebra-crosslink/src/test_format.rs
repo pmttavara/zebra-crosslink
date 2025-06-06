@@ -248,6 +248,43 @@ impl TF {
 
 use crate::*;
 
+pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
+    const_assert!(TFInstr::COUNT == 3);
+    match instr.kind {
+        TFInstr::LOAD_POW => {
+            let block = Block::zcash_deserialize(instr.data_slice(&bytes)).ok()?;
+            Some(TestInstr::LoadPoW(block))
+        }
+
+        TFInstr::LOAD_POS => {
+            todo!("LOAD_POS");
+            None
+        }
+
+        TFInstr::SET_PARAMS => {
+            Some(
+                TestInstr::SetParams(
+                    ZcashCrosslinkParameters {
+                        bc_confirmation_depth_sigma: instr.val[0],
+                        finalization_gap_bound: instr.val[1],
+                    }
+                )
+            )
+        }
+
+        _ => {
+            warn!("Unrecognized instruction {}", instr.kind);
+            None
+        }
+    }
+}
+
+pub(crate) enum TestInstr {
+    LoadPoW(Block),
+    LoadPoS(BftBlock),
+    SetParams(ZcashCrosslinkParameters),
+}
+
 pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::path::PathBuf) {
     use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
     let call = internal_handle.call.clone();
@@ -267,39 +304,18 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
         );
 
         const_assert!(TFInstr::COUNT == 3);
-        match instr.kind {
-            TFInstr::LOAD_POW => {
-                let block: Arc<Block> = Arc::new(
-                    Block::zcash_deserialize(instr.data_slice(&bytes))
-                        .expect("Serialization be valid"),
-                );
-                // NOTE (perf): block.hash() immediately reserializes the block to
-                // hash the canonical form...
-                let height_hash = (
-                    block
-                        .coinbase_height()
-                        .expect("Block should have a valid height"),
-                    block.hash(),
-                );
-
-                (call.force_feed_pow)(block).await;
-                info!(
-                    "Successfully loaded block at height {:?}, hash {}",
-                    height_hash.0, height_hash.1
-                );
+        match tf_read_instr(&bytes, instr) {
+            Some(TestInstr::LoadPoW(block)) => {
+                (call.force_feed_pow)(Arc::new(block)).await;
             }
 
-            TFInstr::LOAD_POS => {
+            Some(TestInstr::LoadPoS(_)) => {
                 todo!("LOAD_POS");
             }
 
-            TFInstr::SET_PARAMS => {
+            Some(TestInstr::SetParams(_)) => {
                 debug_assert!(instr_i == 0, "should only be set at the beginning");
-                // ALT: derive FromBytes for params
-                let params = ZcashCrosslinkParameters {
-                    bc_confirmation_depth_sigma: instr.val[0],
-                    finalization_gap_bound: instr.val[1],
-                };
+                todo!("Params");
             }
 
             _ => warn!("Unrecognized instruction {}", instr.kind),
