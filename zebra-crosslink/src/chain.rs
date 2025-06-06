@@ -151,6 +151,12 @@ impl BftPayload {
             headers,
         })
     }
+
+    /// Blake3 hash
+    pub fn blake3_hash(&self) -> Blake3Hash {
+        let buffer = self.zcash_serialize_to_vec().unwrap();
+        Blake3Hash(blake3::hash(&buffer).into())
+    }
 }
 
 /// Validation error for [BftPayload]
@@ -195,3 +201,14 @@ pub const PROTOTYPE_PARAMETERS: ZcashCrosslinkParameters = ZcashCrosslinkParamet
     bc_confirmation_depth_sigma: 3,
     finalization_gap_bound: 7,
 };
+
+/// A BLAKE3 hash.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
+pub struct Blake3Hash(pub [u8; 32]);
+
+// TODO(Sam): Make this display similarly to other ZCash hashes.
+impl std::fmt::Display for Blake3Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}

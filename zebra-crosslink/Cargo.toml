@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 zebra-chain = { path = "../zebra-chain", version = "1.0.0-beta.45" }
-zebra-crosslink-chain = { path = "../zebra-crosslink-chain" }
 zebra-state = { path = "../zebra-state", version = "1.0.0-beta.45" }
 
 serde = { workspace = true, features = ["serde_derive"] }
@@ -47,6 +46,8 @@ strum = "0.26.3"
 strum_macros = "0.26.4"
 zerocopy = "0.8.25"
 zerocopy-derive = "0.8.25"
+blake3 = "1.8.2"
+byteorder = { workspace = true }
 
 static_assertions = { workspace = true }
 

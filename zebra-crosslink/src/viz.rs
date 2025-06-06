@@ -401,7 +401,7 @@ pub mod serialization {
             });
 
             VizGlobals {
-                params: &zebra_crosslink_chain::PROTOTYPE_PARAMETERS,
+                params: &PROTOTYPE_PARAMETERS,
                 state,
                 bc_req_h: (0, 0),
                 consumed: true,
@@ -3300,11 +3300,10 @@ pub async fn viz_main(
                                             "should only be set at the beginning"
                                         );
                                         // ALT: derive FromBytes for params
-                                        let params =
-                                            zebra_crosslink_chain::ZcashCrosslinkParameters {
-                                                bc_confirmation_depth_sigma: instr.val[0],
-                                                finalization_gap_bound: instr.val[1],
-                                            };
+                                        let params = ZcashCrosslinkParameters {
+                                            bc_confirmation_depth_sigma: instr.val[0],
+                                            finalization_gap_bound: instr.val[1],
+                                        };
                                         todo!("Actually set params");
                                     }
 

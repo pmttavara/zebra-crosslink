@@ -713,6 +713,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8785,6 +8798,8 @@ name = "zebra-crosslink"
 version = "1.0.0-beta.46"
 dependencies = [
  "async-trait",
+ "blake3",
+ "byteorder",
  "bytes",
  "chrono",
  "color-eyre",
@@ -8831,23 +8846,10 @@ dependencies = [
  "tracing-futures",
  "tracing-subscriber",
  "zebra-chain",
- "zebra-crosslink-chain",
  "zebra-state",
  "zebra-test",
  "zerocopy 0.8.25",
  "zerocopy-derive 0.8.25",
-]
-
-[[package]]
-name = "zebra-crosslink-chain"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "serde",
- "static_assertions",
- "thiserror 2.0.12",
- "tracing",
- "zebra-chain",
 ]
 
 [[package]]
@@ -9200,7 +9202,6 @@ dependencies = [
  "zebra-chain",
  "zebra-consensus",
  "zebra-crosslink",
- "zebra-crosslink-chain",
  "zebra-grpc",
  "zebra-network",
  "zebra-node-services",

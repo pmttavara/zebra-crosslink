@@ -137,11 +137,15 @@ impl StartCmd {
                     ..config.mempool
                 },
                 network: zebra_network::config::Config {
-                    listen_addr: add_to_port(config.network.listen_addr.clone(), nextest_slot*7),
+                    listen_addr: add_to_port(config.network.listen_addr.clone(), nextest_slot * 7),
                     ..config.network.clone()
                 },
                 rpc: zebra_rpc::config::rpc::Config {
-                    listen_addr: config.rpc.listen_addr.clone().map(|addr| add_to_port(addr, nextest_slot*7)),
+                    listen_addr: config
+                        .rpc
+                        .listen_addr
+                        .clone()
+                        .map(|addr| add_to_port(addr, nextest_slot * 7)),
                     ..config.rpc.clone()
                 },
                 ..Arc::unwrap_or_clone(config)

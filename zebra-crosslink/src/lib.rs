@@ -29,17 +29,18 @@ use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::Instant;
 use tracing::{error, info, warn};
-use zebra_crosslink_chain::*;
 
 use bytes::{Bytes, BytesMut};
 
 pub mod malctx;
 use malctx::*;
+pub mod chain;
+use chain::*;
 
 use std::sync::Mutex;
 pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
-pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(||());
-pub static TEST_PARAMS: Mutex<Option<zebra_crosslink_chain::ZcashCrosslinkParameters>> = Mutex::new(None);
+pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
+pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 
 pub mod service;
 /// Configuration for the state service.
@@ -324,7 +325,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         std::panic::set_hook(Box::new(|panic_info| {
             #[allow(clippy::print_stderr)]
             {
-                use std::backtrace::{ self, * };
+                use std::backtrace::{self, *};
                 let bt = Backtrace::force_capture();
 
                 eprintln!("\n\n{panic_info}\n");
@@ -353,7 +354,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         break;
                     };
 
-                    eprintln!("  {}{} {}", if i < 10 {" "} else {""}, proc, file_loc);
+                    eprintln!("  {}{} {}", if i < 10 { " " } else { "" }, proc, file_loc);
                 }
 
                 std::process::abort();

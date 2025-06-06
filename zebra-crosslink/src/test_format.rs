@@ -4,6 +4,8 @@ use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
 use zerocopy::*;
 use zerocopy_derive::*;
 
+use super::ZcashCrosslinkParameters;
+
 #[repr(C)]
 #[derive(Immutable, KnownLayout, IntoBytes, FromBytes)]
 pub(crate) struct TFHdr {
@@ -89,16 +91,16 @@ pub(crate) struct TF {
 }
 
 impl TF {
-    pub(crate) fn new(params: &zebra_crosslink_chain::ZcashCrosslinkParameters) -> TF {
+    pub(crate) fn new(params: &ZcashCrosslinkParameters) -> TF {
         let mut tf = TF {
             instrs: Vec::new(),
             data: Vec::new(),
         };
 
         // ALT: push as data & determine available info by size if we add more
-        const_assert!(size_of::<zebra_crosslink_chain::ZcashCrosslinkParameters>() == 16);
+        const_assert!(size_of::<ZcashCrosslinkParameters>() == 16);
         // enforce only 2 param members
-        let zebra_crosslink_chain::ZcashCrosslinkParameters {
+        let ZcashCrosslinkParameters {
             bc_confirmation_depth_sigma,
             finalization_gap_bound,
         } = *params;
@@ -226,9 +228,7 @@ impl TF {
     }
 }
 
-
 use crate::*;
-
 
 pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::path::PathBuf) {
     use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
@@ -241,7 +241,6 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
         (Some(bytes), Some(tf)) => (bytes, tf),
     };
 
-
     for instr_i in 0..tf.instrs.len() {
         let instr = &tf.instrs[instr_i];
         info!(
@@ -250,20 +249,19 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
             instr.kind
         );
 
-
         const_assert!(TFInstr::COUNT == 3);
         match instr.kind {
             TFInstr::LOAD_POW => {
                 let block: Arc<Block> = Arc::new(
                     Block::zcash_deserialize(instr.data_slice(&bytes))
-                    .expect("Serialization be valid"),
+                        .expect("Serialization be valid"),
                 );
                 // NOTE (perf): block.hash() immediately reserializes the block to
                 // hash the canonical form...
                 let height_hash = (
                     block
-                    .coinbase_height()
-                    .expect("Block should have a valid height"),
+                        .coinbase_height()
+                        .expect("Block should have a valid height"),
                     block.hash(),
                 );
 
@@ -280,16 +278,12 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
             }
 
             TFInstr::SET_PARAMS => {
-                debug_assert!(
-                    instr_i == 0,
-                    "should only be set at the beginning"
-                );
+                debug_assert!(instr_i == 0, "should only be set at the beginning");
                 // ALT: derive FromBytes for params
-                let params =
-                    zebra_crosslink_chain::ZcashCrosslinkParameters {
-                        bc_confirmation_depth_sigma: instr.val[0],
-                        finalization_gap_bound: instr.val[1],
-                    };
+                let params = ZcashCrosslinkParameters {
+                    bc_confirmation_depth_sigma: instr.val[0],
+                    finalization_gap_bound: instr.val[1],
+                };
             }
 
             _ => warn!("Unrecognized instruction {}", instr.kind),

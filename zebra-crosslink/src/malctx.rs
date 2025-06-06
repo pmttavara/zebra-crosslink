@@ -41,7 +41,7 @@ use malachitebft_core_consensus::SignedConsensusMsg;
 use malachitebft_core_types::{PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
-use zebra_crosslink_chain::*;
+use super::{BftPayload, Blake3Hash};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MalStreamedProposalData {
@@ -348,28 +348,12 @@ impl Protobuf for MalAddress {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Serialize, Deserialize)]
-pub struct MalValueId(u64);
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
+pub struct MalValueId(pub Blake3Hash);
 
-impl MalValueId {
-    pub const fn new(id: u64) -> Self {
-        Self(id)
-    }
-
-    pub const fn as_u64(&self) -> u64 {
-        self.0
-    }
-}
-
-impl From<u64> for MalValueId {
-    fn from(value: u64) -> Self {
-        Self::new(value)
-    }
-}
-
-impl fmt::Display for MalValueId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", self.0)
+impl std::fmt::Display for MalValueId {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -383,20 +367,20 @@ impl Protobuf for MalValueId {
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?;
 
         let len = bytes.len();
-        let bytes = <[u8; 8]>::try_from(bytes.as_ref()).map_err(|_| {
+        let bytes = <[u8; 32]>::try_from(bytes.as_ref()).map_err(|_| {
             ProtoError::Other(format!(
-                "Invalid value length, got {len} bytes expected {}",
-                u64::BITS / 8
+                "Invalid value id bytes length, got {len} bytes expected {}",
+                32
             ))
         })?;
 
-        Ok(MalValueId::new(u64::from_be_bytes(bytes)))
+        Ok(MalValueId(Blake3Hash(bytes)))
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
         Ok(malctx_schema_proto::ValueId {
-            value: Some(self.0.to_be_bytes().to_vec().into()),
+            value: Some(self.0 .0.to_vec().into()),
         })
     }
 }
@@ -413,17 +397,7 @@ impl MalValue {
     }
 
     pub fn id(&self) -> MalValueId {
-        let mut acc: u64 = 0;
-        for header in &self.value.headers {
-            let hash = header.hash().0;
-            let h1 = u64::from_le_bytes(hash[0..8].try_into().unwrap());
-            let h2 = u64::from_le_bytes(hash[8..16].try_into().unwrap());
-            let h3 = u64::from_le_bytes(hash[16..24].try_into().unwrap());
-            let h4 = u64::from_le_bytes(hash[24..32].try_into().unwrap());
-            acc ^= h1 ^ h2 ^ h3 ^ h4;
-        }
-        // NOTE(Sam): I do not think this is supposed to include extensions?
-        MalValueId(acc)
+        MalValueId(self.value.blake3_hash())
     }
 }
 

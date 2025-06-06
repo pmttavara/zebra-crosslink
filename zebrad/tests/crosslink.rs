@@ -9,18 +9,19 @@ pub fn test_file(path: &str) {
     // init globals
     {
         *zebra_crosslink::TEST_INSTR_PATH.lock().unwrap() = Some(path.into());
-        *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() = || APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+        *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() =
+            || APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
     }
 
-    use zebrad::application::{
-        APPLICATION,
-        ZebradApp
-    };
+    use zebrad::application::{ZebradApp, APPLICATION};
 
     // boot
     let os_args: Vec<_> = std::env::args_os().collect();
     // panic!("OS args: {:?}", os_args);
-    let args: Vec<std::ffi::OsString> = vec![os_args[0].clone(), zebrad::commands::EntryPoint::default_cmd_as_str().into()];
+    let args: Vec<std::ffi::OsString> = vec![
+        os_args[0].clone(),
+        zebrad::commands::EntryPoint::default_cmd_as_str().into(),
+    ];
     // println!("args: {:?}", args);
     ZebradApp::run(&APPLICATION, args);
 }
@@ -29,7 +30,6 @@ pub fn test_file(path: &str) {
 fn read_from_file() {
     test_file("../blocks.zeccltf");
 }
-
 
 #[test]
 fn read_from_file2() {
