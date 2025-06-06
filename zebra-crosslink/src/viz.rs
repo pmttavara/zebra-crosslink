@@ -1,4 +1,9 @@
 //! Internal vizualization
+#![allow(unexpected_cfgs, unused, missing_docs)]
+// TODO:
+// [ ] request range
+// [ ] non-finalized side-chain
+// [ ] uncross edges
 
 use crate::*;
 use macroquad::{
@@ -237,8 +242,8 @@ pub struct VizState {
     pub internal_proposed_bft_string: Option<String>,
     /// Flags of the BFT messages
     pub bft_msg_flags: u64,
-    /// Vector of all decided BFT block payloads, indexed by height.
-    pub bft_blocks: Vec<(usize, VizBftPayload)>,
+    /// Vector of all decided BFT blocks, indexed by height-1.
+    pub bft_blocks: Vec<(usize, BftBlock)>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -267,7 +272,7 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<(usize, VizBftPayload)>,
+        bft_blocks: Vec<(usize, BftBlock)>,
     }
 
     impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
@@ -333,7 +338,7 @@ pub mod serialization {
                             0
                         };
 
-                        bft_blocks.push((parent_id, node.header.as_bft().unwrap().clone()));
+                        bft_blocks.push((parent_id, BftBlock { payload: node.header.as_bft().unwrap().clone() }));
                     }
                 }
             }
@@ -691,14 +696,14 @@ pub async fn service_viz_requests(
         // TODO: O(<n)
         for i in 0..bft_blocks.len() {
             let block = &mut bft_blocks[i].1;
-            if block.min_payload_h == BlockHeight(0) && !block.payload.headers.is_empty() {
+            if block.payload.finalization_candidate_height == 0 && !block.payload.headers.is_empty() {
                 // TODO: block.finalized()
-                if let Some(h) =
+                if let Some(BlockHeight(h)) =
                     block_height_from_hash(&call, block.payload.headers[0].hash()).await
                 {
-                    block.min_payload_h = h;
+                    block.payload.finalization_candidate_height = h;
                     let mut internal = tfl_handle.internal.lock().await;
-                    internal.bft_blocks[i].1.min_payload_h = h;
+                    internal.bft_blocks[i].1.payload.finalization_candidate_height = h;
                 }
             }
         }
@@ -750,11 +755,11 @@ type NodeRef = Option<NodeHdl>;
 enum VizHeader {
     None,
     BlockHeader(BlockHeader),
-    BftPayload(VizBftPayload), // ALT: just keep an array of *hashes*
+    BftPayload(BftPayload), // ALT: just keep an array of *hashes*
 }
 
 impl VizHeader {
-    fn as_bft(&self) -> Option<&VizBftPayload> {
+    fn as_bft(&self) -> Option<&BftPayload> {
         match self {
             VizHeader::BftPayload(val) => Some(val),
             _ => None,
@@ -769,8 +774,8 @@ impl VizHeader {
     }
 }
 
-impl From<Option<VizBftPayload>> for VizHeader {
-    fn from(v: Option<VizBftPayload>) -> VizHeader {
+impl From<Option<BftPayload>> for VizHeader {
+    fn from(v: Option<BftPayload>) -> VizHeader {
         match v {
             Some(val) => VizHeader::BftPayload(val),
             None => VizHeader::None,
@@ -817,7 +822,7 @@ struct Node {
 fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.payload.headers.last() {
+            if let Some(block) = payload.headers.last() {
                 ctx.find_bc_node_by_hash(&block.hash())
             } else {
                 None
@@ -831,7 +836,7 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.payload.headers.first() {
+            if let Some(block) = payload.headers.first() {
                 ctx.find_bc_node_by_hash(&block.hash())
             } else {
                 None
@@ -879,7 +884,7 @@ enum NodeInit {
         parent: NodeRef, // TODO: do we need explicit edges?
         id: usize,
         text: String,
-        payload: VizBftPayload,
+        bft_block: BftBlock,
         height: Option<u32>, // if None, works out from parent
         is_real: bool,
     },
@@ -1172,7 +1177,7 @@ impl VizCtx {
             NodeInit::BFT {
                 parent,
                 height,
-                payload,
+                bft_block,
                 id,
                 text,
                 is_real,
@@ -1201,7 +1206,7 @@ impl VizCtx {
 
                         kind: NodeKind::BFT,
                         height,
-                        header: VizHeader::BftPayload(payload),
+                        header: VizHeader::BftPayload(bft_block.payload),
                         text,
                         bc_block: None,
 
@@ -2027,7 +2032,7 @@ pub async fn viz_main(
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
                 if find_bft_node_by_id(&ctx.nodes, i).is_none() {
-                    let (bft_parent_i, payload) = (blocks[i].0, blocks[i].1.clone());
+                    let (bft_parent_i, bft_block) = (blocks[i].0, blocks[i].1.clone());
                     let bft_parent = if i == 0 && bft_parent_i == 0 {
                         None
                     } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
@@ -2045,7 +2050,7 @@ pub async fn viz_main(
 
                             id: i,
 
-                            payload,
+                            bft_block,
                             text: "".to_string(),
                             height: bft_parent.map_or(Some(1), |_| None),
                         },
@@ -2307,8 +2312,7 @@ pub async fn viz_main(
                             ctx.bft_fake_id + 1
                         };
 
-                        let payload = VizBftPayload {
-                            min_payload_h: BlockHeight(0),
+                        let bft_block = BftBlock {
                             payload: BftPayload {
                                 version: 0,
                                 height: 0,
@@ -2346,7 +2350,7 @@ pub async fn viz_main(
 
                                 id,
 
-                                payload,
+                                bft_block,
                                 text: node_str.clone(),
                                 height: ctx.bft_last_added.map_or(Some(0), |_| None),
                             },
@@ -2426,10 +2430,10 @@ pub async fn viz_main(
                 if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
                     let mut is_done = false;
                     if let Some(bft_hdr) = node.header.as_bft() {
-                        if let Some(bc_hdr) = bft_hdr.payload.headers.last() {
+                        if let Some(bc_hdr) = bft_hdr.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
                                 clear_bft_bc_h = Some(
-                                    bft_hdr.min_payload_h.0 + bft_hdr.payload.headers.len() as u32
+                                    bft_hdr.finalization_candidate_height + bft_hdr.headers.len() as u32
                                         - 1,
                                 );
                                 is_done = true;
@@ -2562,7 +2566,7 @@ pub async fn viz_main(
                 let (header, id, bc_block) = match hover_node.kind {
                     NodeKind::BC => {
                         let header = BlockHeader {
-                            version: 0,
+                            version: 4,
                             previous_block_hash: BlockHash(
                                 hover_node.hash().expect("should have a hash"),
                             ),
@@ -2578,21 +2582,18 @@ pub async fn viz_main(
                     }
 
                     NodeKind::BFT => {
-                        let header = VizBftPayload {
-                            min_payload_h: BlockHeight(0),
-                            payload: BftPayload {
+                        let payload = BftPayload {
                                 version: 0,
                                 height: 0,
                                 previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
                                 finalization_candidate_height: 0,
                                 headers: Vec::new(),
-                            },
                         };
 
                         // TODO: hash for id
                         ctx.bft_fake_id -= 1;
                         let id = NodeId::Index(ctx.bft_fake_id + 1);
-                        (VizHeader::BftPayload(header), id, None)
+                        (VizHeader::BftPayload(payload), id, None)
                     }
                 };
 
@@ -2664,16 +2665,16 @@ pub async fn viz_main(
             let mut offscreen_new_pt = None;
             let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
                 if node.kind == NodeKind::BFT {
-                    if let Some(hdr) = node.header.as_bft() {
-                        if !hdr.payload.headers.is_empty() {
+                    if let Some(payload) = node.header.as_bft() {
+                        if !payload.headers.is_empty() {
                             let hdr_lo = ctx
-                                .find_bc_node_by_hash(&hdr.payload.headers.first().unwrap().hash());
+                                .find_bc_node_by_hash(&payload.headers.first().unwrap().hash());
                             let hdr_hi = ctx
-                                .find_bc_node_by_hash(&hdr.payload.headers.last().unwrap().hash());
+                                .find_bc_node_by_hash(&payload.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
                                     let max_hdr_h =
-                                        hdr.min_payload_h.0 + hdr.payload.headers.len() as u32 - 1;
+                                        payload.finalization_candidate_height + payload.headers.len() as u32 - 1;
                                     if max_hdr_h < bc_lo.height {
                                         offscreen_new_pt = Some(vec2(
                                             node.pt.x,
@@ -2684,7 +2685,7 @@ pub async fn viz_main(
                                 }
 
                                 if let Some(bc_hi) = ctx.get_node(ctx.bc_hi) {
-                                    let min_hdr_h = hdr.min_payload_h.0;
+                                    let min_hdr_h = payload.finalization_candidate_height;
                                     if min_hdr_h > bc_hi.height {
                                         offscreen_new_pt = Some(vec2(
                                             node.pt.x,
@@ -2957,15 +2958,15 @@ pub async fn viz_main(
                     match &click_node.header {
                         VizHeader::None => {}
                         VizHeader::BlockHeader(hdr) => {}
-                        VizHeader::BftPayload(hdr) => {
+                        VizHeader::BftPayload(payload) => {
                             ui.label(None, "PoW headers:");
-                            for i in 0..hdr.payload.headers.len() {
-                                let pow_hdr = &hdr.payload.headers[i];
+                            for i in 0..payload.headers.len() {
+                                let pow_hdr = &payload.headers[i];
                                 ui.label(
                                     None,
                                     &format!(
                                         "  {} - {}",
-                                        hdr.min_payload_h.0 + i as u32,
+                                        payload.finalization_candidate_height + i as u32,
                                         pow_hdr.hash()
                                     ),
                                 );
@@ -3105,10 +3106,10 @@ pub async fn viz_main(
         end_zone(z_draw_nodes);
 
         if let Some(node) = ctx.get_node(hover_node_i) {
-            if let Some(bft) = node.header.as_bft() {
-                for i in 0..bft.payload.headers.len() {
+            if let Some(payload) = node.header.as_bft() {
+                for i in 0..payload.headers.len() {
                     let link = if let Some(link) =
-                        ctx.get_node(ctx.find_bc_node_by_hash(&bft.payload.headers[i].hash()))
+                        ctx.get_node(ctx.find_bc_node_by_hash(&payload.headers[i].hash()))
                     {
                         link
                     } else {
@@ -3249,7 +3250,7 @@ pub async fn viz_main(
                     );
 
                     if ui.button(None, "Load from serialization") {
-                        if let (Some(bytes), Some(tf)) = TF::read_from_file(&path) {
+                        if let Ok((bytes, tf)) = TF::read_from_file(&path) {
                             // TODO: this needs an API pass
                             for instr_i in 0..tf.instrs.len() {
                                 let instr = &tf.instrs[instr_i];
