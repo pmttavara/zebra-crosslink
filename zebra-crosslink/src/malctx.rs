@@ -16,8 +16,8 @@ use zebra_chain::serialization::ZcashDeserializeInto;
 use core::fmt;
 
 use malachitebft_core_types::{
-    CertificateError, CommitCertificate, CommitSignature, SignedProposal, SignedProposalPart,
-    SignedVote, SigningProvider, Validator as _,
+    CertificateError, CommitCertificate, CommitSignature, PolkaSignature, SignedProposal,
+    SignedProposalPart, SignedVote, SigningProvider, Validator as _,
 };
 
 pub use malachitebft_app::types::Keypair as MalKeyPair;
@@ -38,7 +38,7 @@ use prost::Message;
 use malachitebft_app::engine::util::streaming::{StreamContent, StreamId, StreamMessage};
 use malachitebft_codec::Codec;
 use malachitebft_core_consensus::SignedConsensusMsg;
-use malachitebft_core_types::{AggregatedSignature, PolkaCertificate, VoteSet};
+use malachitebft_core_types::{PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
 use zebra_crosslink_chain::*;
@@ -549,28 +549,6 @@ impl SigningProvider<MalContext> for MalEd25519Provider {
     ) -> bool {
         public_key.verify(extension.as_ref(), signature).is_ok()
     }
-
-    fn verify_commit_signature(
-        &self,
-        certificate: &CommitCertificate<MalContext>,
-        commit_sig: &CommitSignature<MalContext>,
-        validator: &MalValidator,
-    ) -> Result<VotingPower, CertificateError<MalContext>> {
-        // Reconstruct the vote that was signed
-        let vote = MalVote::new_precommit(
-            certificate.height,
-            certificate.round,
-            NilOrVal::Val(certificate.value_id),
-            *validator.address(),
-        );
-
-        // Verify signature
-        if !self.verify_signed_vote(&vote, &commit_sig.signature, validator.public_key()) {
-            return Err(CertificateError::InvalidSignature(commit_sig.clone()));
-        }
-
-        Ok(validator.voting_power())
-    }
 }
 
 /// A validator is a public key and voting power
@@ -981,7 +959,7 @@ impl Codec<malachitebft_sync::Status<MalContext>> for MalProtobufCodec {
 
         Ok(malachitebft_sync::Status {
             peer_id: PeerId::from_bytes(proto_peer_id.id.as_ref()).unwrap(),
-            height: MalHeight::new(proto.height),
+            tip_height: MalHeight::new(proto.height),
             history_min_height: MalHeight::new(proto.earliest_height),
         })
     }
@@ -991,7 +969,7 @@ impl Codec<malachitebft_sync::Status<MalContext>> for MalProtobufCodec {
             peer_id: Some(malctx_schema_proto::PeerId {
                 id: Bytes::from(msg.peer_id.to_bytes()),
             }),
-            height: msg.height.as_u64(),
+            height: msg.tip_height.as_u64(),
             earliest_height: msg.history_min_height.as_u64(),
         };
 
@@ -1176,10 +1154,19 @@ pub(crate) fn encode_polka_certificate(
             .as_u32()
             .expect("round should not be nil"),
         value_id: Some(polka_certificate.value_id.to_proto()?),
-        votes: polka_certificate
-            .votes
+        signatures: polka_certificate
+            .polka_signatures
             .iter()
-            .map(mal_encode_vote)
+            .map(
+                |sig| -> Result<malctx_schema_proto::PolkaSignature, ProtoError> {
+                    let address = sig.address.to_proto()?;
+                    let signature = mal_encode_signature(&sig.signature);
+                    Ok(malctx_schema_proto::PolkaSignature {
+                        validator_address: Some(address),
+                        signature: Some(signature),
+                    })
+                },
+            )
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
@@ -1198,10 +1185,22 @@ pub(crate) fn decode_polka_certificate(
         height: MalHeight::new(certificate.height),
         round: Round::new(certificate.round),
         value_id,
-        votes: certificate
-            .votes
+        polka_signatures: certificate
+            .signatures
             .into_iter()
-            .map(mal_decode_vote)
+            .map(|sig| -> Result<PolkaSignature<MalContext>, ProtoError> {
+                let address = sig.validator_address.ok_or_else(|| {
+                    ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>(
+                        "validator_address",
+                    )
+                })?;
+                let signature = sig.signature.ok_or_else(|| {
+                    ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("signature")
+                })?;
+                let signature = mal_decode_signature(signature)?;
+                let address = MalAddress::from_proto(address)?;
+                Ok(PolkaSignature::new(address, signature))
+            })
             .collect::<Result<Vec<_>, _>>()?,
     })
 }
@@ -1216,20 +1215,29 @@ pub fn mal_decode_commit_certificate(
         })
         .and_then(MalValueId::from_proto)?;
 
-    let aggregated_signature = certificate
-        .aggregated_signature
-        .ok_or_else(|| {
-            ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>(
-                "aggregated_signature",
-            )
+    let commit_signatures = certificate
+        .signatures
+        .into_iter()
+        .map(|sig| -> Result<CommitSignature<MalContext>, ProtoError> {
+            let address = sig.validator_address.ok_or_else(|| {
+                ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>(
+                    "validator_address",
+                )
+            })?;
+            let signature = sig.signature.ok_or_else(|| {
+                ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("signature")
+            })?;
+            let signature = mal_decode_signature(signature)?;
+            let address = MalAddress::from_proto(address)?;
+            Ok(CommitSignature::new(address, signature))
         })
-        .and_then(mal_decode_aggregated_signature)?;
+        .collect::<Result<Vec<_>, _>>()?;
 
     let certificate = CommitCertificate {
         height: MalHeight::new(certificate.height),
         round: Round::new(certificate.round),
         value_id,
-        aggregated_signature,
+        commit_signatures,
     };
 
     Ok(certificate)
@@ -1242,57 +1250,21 @@ pub fn mal_encode_commit_certificate(
         height: certificate.height.as_u64(),
         round: certificate.round.as_u32().expect("round should not be nil"),
         value_id: Some(certificate.value_id.to_proto()?),
-        aggregated_signature: Some(mal_encode_aggregate_signature(
-            &certificate.aggregated_signature,
-        )?),
+        signatures: certificate
+            .commit_signatures
+            .iter()
+            .map(
+                |sig| -> Result<malctx_schema_proto::CommitSignature, ProtoError> {
+                    let address = sig.address.to_proto()?;
+                    let signature = mal_encode_signature(&sig.signature);
+                    Ok(malctx_schema_proto::CommitSignature {
+                        validator_address: Some(address),
+                        signature: Some(signature),
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?,
     })
-}
-
-pub fn mal_decode_aggregated_signature(
-    signature: malctx_schema_proto::AggregatedSignature,
-) -> Result<AggregatedSignature<MalContext>, ProtoError> {
-    let signatures = signature
-        .signatures
-        .into_iter()
-        .map(|s| {
-            let signature = s
-                .signature
-                .ok_or_else(|| {
-                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>("signature")
-                })
-                .and_then(mal_decode_signature)?;
-
-            let address = s
-                .validator_address
-                .ok_or_else(|| {
-                    ProtoError::missing_field::<malctx_schema_proto::CommitSignature>(
-                        "validator_address",
-                    )
-                })
-                .and_then(MalAddress::from_proto)?;
-
-            Ok(CommitSignature { address, signature })
-        })
-        .collect::<Result<Vec<_>, ProtoError>>()?;
-
-    Ok(AggregatedSignature { signatures })
-}
-
-pub fn mal_encode_aggregate_signature(
-    aggregated_signature: &AggregatedSignature<MalContext>,
-) -> Result<malctx_schema_proto::AggregatedSignature, ProtoError> {
-    let signatures = aggregated_signature
-        .signatures
-        .iter()
-        .map(|s| {
-            Ok(malctx_schema_proto::CommitSignature {
-                validator_address: Some(s.address.to_proto()?),
-                signature: Some(mal_encode_signature(&s.signature)),
-            })
-        })
-        .collect::<Result<_, ProtoError>>()?;
-
-    Ok(malctx_schema_proto::AggregatedSignature { signatures })
 }
 
 pub fn mal_decode_extension(
