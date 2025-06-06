@@ -1,5 +1,5 @@
 use static_assertions::*;
-use std::{io::Write, mem::size_of};
+use std::{io::Write, mem::align_of, mem::size_of};
 use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
 use zerocopy::*;
 use zerocopy_derive::*;
@@ -174,17 +174,38 @@ impl TF {
         self.push_instr_serialize_ex(kind, 0, data, [0; 2])
     }
 
+    fn is_a_power_of_2(v: usize) -> bool {
+         v != 0 && ((v & (v-1)) == 0)
+    }
+
+    fn align_up(v: usize, mut align: usize) -> usize {
+        assert!(Self::is_a_power_of_2(align));
+        align -= 1;
+        (v + align) & !align
+    }
+
     pub(crate) fn write_to_file(&self, path: &std::path::Path) {
         if let Ok(mut file) = std::fs::File::create(path) {
+            let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
+            let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
             let hdr = TFHdr {
                 magic: "ZECCLTF0".as_bytes().try_into().unwrap(),
-                instrs_o: (size_of::<TFHdr>() + self.data.len()) as u64,
+                instrs_o: instrs_o as u64,
                 instrs_n: self.instrs.len() as u32,
                 instr_size: size_of::<TFInstr>() as u32,
             };
             file.write_all(hdr.as_bytes())
                 .expect("writing shouldn't fail");
-            file.write_all(&self.data);
+            file.write_all(&self.data)
+                .expect("writing shouldn't fail");
+
+            if instrs_o > instrs_o_unaligned {
+                const ALIGN_0S: [u8; align_of::<TFInstr>()] = [0u8; align_of::<TFInstr>()];
+                let align_size = instrs_o - instrs_o_unaligned;
+                let align_bytes = &ALIGN_0S[..align_size];
+                file.write_all(align_bytes);
+
+            }
             file.write_all(self.instrs.as_bytes())
                 .expect("writing shouldn't fail");
         }
@@ -192,26 +213,25 @@ impl TF {
 
     // Simple version, all in one go... for large files we'll want to break this up; get hdr &
     // get/stream instrs, then read data as needed
-    pub(crate) fn read_from_file(path: &std::path::Path) -> (Option<Vec<u8>>, Option<Self>) {
-        let bytes = if let Ok(bytes) = std::fs::read(path) {
-            bytes
-        } else {
-            return (None, None);
+    pub(crate) fn read_from_file(path: &std::path::Path) -> Result<(Vec<u8>, Self), String> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(err.to_string()),
         };
 
-        let tf_hdr = if let Ok((hdr, _)) = TFHdr::ref_from_prefix(&bytes[0..]) {
-            hdr
-        } else {
-            return (Some(bytes), None);
+        let tf_hdr = match TFHdr::ref_from_prefix(&bytes[0..]) {
+            Ok((hdr, _)) => hdr,
+            Err(err) => return Err(err.to_string()),
         };
 
-        let instrs = if let Ok((instrs, _)) = <[TFInstr]>::ref_from_prefix_with_elems(
+        let read_instrs = <[TFInstr]>::ref_from_prefix_with_elems(
             &bytes[tf_hdr.instrs_o as usize..],
             tf_hdr.instrs_n as usize,
-        ) {
-            instrs
-        } else {
-            return (Some(bytes), None);
+        );
+
+        let instrs = match read_instrs {
+            Ok((instrs, _)) => instrs,
+            Err(err) => return Err(err.to_string()),
         };
 
         let data = &bytes[size_of::<TFHdr>()..tf_hdr.instrs_o as usize];
@@ -222,7 +242,7 @@ impl TF {
             data: data.to_vec(),
         };
 
-        (Some(bytes), Some(tf))
+        Ok((bytes, tf))
     }
 }
 
@@ -236,9 +256,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
     println!("Starting test");
 
     let (bytes, tf) = match TF::read_from_file(&path) {
-        (None, _) => panic!("Couldn't load file: {:?}", path),
-        (_, None) => panic!("Invalid test file: {:?}", path), // TODO: specifics
-        (Some(bytes), Some(tf)) => (bytes, tf),
+        Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics
+        Ok((bytes, tf)) => (bytes, tf),
     };
 
 

@@ -1,4 +1,9 @@
 //! Internal vizualization
+#![allow(unexpected_cfgs, unused, missing_docs)]
+// TODO:
+// [ ] request range
+// [ ] non-finalized side-chain
+// [ ] uncross edges
 
 use crate::*;
 use macroquad::{
@@ -3245,7 +3250,7 @@ pub async fn viz_main(
                     );
 
                     if ui.button(None, "Load from serialization") {
-                        if let (Some(bytes), Some(tf)) = TF::read_from_file(&path) {
+                        if let Ok((bytes, tf)) = TF::read_from_file(&path) {
                             // TODO: this needs an API pass
                             for instr_i in 0..tf.instrs.len() {
                                 let instr = &tf.instrs[instr_i];
