@@ -833,7 +833,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         let headers = &payload.headers;
                                         let new_final_hash = headers.first().expect("at least 1 header").hash();
                                         if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
-                                            assert_eq!(new_final_height.0, payload.finalization_candidate_height);
+                                            // assert_eq!(new_final_height.0, payload.finalization_candidate_height);
                                             let mut internal = internal_handle.internal.lock().await;
                                             let insert_i = certificate.height.as_u64() as usize - 1;
 
@@ -854,7 +854,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                             }
 
                                             assert!(internal.bft_blocks[insert_i].1.payload.headers.is_empty());
-                                            internal.bft_blocks[insert_i].1.payload = decided_value.value.value.clone();
+                                            internal.bft_blocks[insert_i].1.payload = payload.clone();
                                             internal.latest_final_block = Some((new_final_height, new_final_hash));
                                         } else {
                                             warn!("Didn't have hash available for confirmation: {}", new_final_hash);

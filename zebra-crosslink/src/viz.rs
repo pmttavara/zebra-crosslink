@@ -3336,7 +3336,8 @@ pub async fn viz_main(
                     if ui.button(None, "Serialize all") {
                         let mut tf = TF::new(g.params);
 
-                        for node in &ctx.nodes {
+                        for node_i in 1..ctx.nodes.len() {
+                            let node = &ctx.nodes[node_i];
                             if node.kind == NodeKind::BC && node.bc_block.is_some() {
                                 tf.push_instr_serialize(
                                     TFInstr::LOAD_POW,
