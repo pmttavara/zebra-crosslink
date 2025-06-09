@@ -229,12 +229,15 @@ mod tests {
         let read_state_service: ReadStateServiceProcedure =
             Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
         let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
+        let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
+
 
         TFLServiceHandle {
             internal,
             call: TFLServiceCalls {
                 read_state: read_state_service,
                 force_feed_pow: force_feed_pow,
+                force_feed_pos: force_feed_pos,
             },
             config: crate::config::Config::default(),
         }
