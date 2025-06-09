@@ -327,30 +327,56 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                 // hacky formatting - BacktraceFmt not working for some reason...
                 let str = format!("{bt}");
-                let mut splits = str.split("\n");
-                let n = 40;
-                for i in 0..=n {
-                    if i == n {
-                        eprintln!("...");
+                let splits: Vec<_> = str.split("\n").collect();
+
+                // skip over the internal backtrace unwind steps
+                let mut start_i = 0;
+                let mut i = 0;
+                while i < splits.len() {
+                    if splits[i].ends_with("rust_begin_unwind") {
+                        i += 1;
+                        if i < splits.len() && splits[i].trim().starts_with("at ") {
+                            i += 1;
+                        }
+                        start_i = i;
+                    }
+                    if splits[i].ends_with("core::panicking::panic_fmt") {
+                        i += 1;
+                        if i < splits.len() && splits[i].trim().starts_with("at ") {
+                            i += 1;
+                        }
+                        start_i = i;
                         break;
                     }
+                    i += 1;
+                }
 
-                    let proc = if let Some(val) = splits.next() {
+                // print backtrace
+                let mut i = start_i;
+                let n = 80;
+                while i < n {
+                    let proc = if let Some(val) = splits.get(i) {
                         val.trim()
                     } else {
                         break;
                     };
 
+                    i += 1;
                     let file_loc = if proc.ends_with("___rust_try") {
                         ""
-                    } else if let Some(val) = splits.next() {
+                    } else if let Some(val) = splits.get(i) {
                         val.trim()
                     } else {
                         break;
                     };
 
-                    eprintln!("  {}{} {}", if i < 10 { " " } else { "" }, proc, file_loc);
+                    eprintln!("  {}{} {}", if i < 20 { " " } else { "" }, proc, file_loc);
+                    i += 1;
                 }
+                if i == n {
+                    eprintln!("...");
+                }
+
 
                 std::process::abort();
             }
