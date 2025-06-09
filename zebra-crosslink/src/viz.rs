@@ -338,7 +338,12 @@ pub mod serialization {
                             0
                         };
 
-                        bft_blocks.push((parent_id, BftBlock { payload: node.header.as_bft().unwrap().clone() }));
+                        bft_blocks.push((
+                            parent_id,
+                            BftBlock {
+                                payload: node.header.as_bft().unwrap().clone(),
+                            },
+                        ));
                     }
                 }
             }
@@ -696,14 +701,18 @@ pub async fn service_viz_requests(
         // TODO: O(<n)
         for i in 0..bft_blocks.len() {
             let block = &mut bft_blocks[i].1;
-            if block.payload.finalization_candidate_height == 0 && !block.payload.headers.is_empty() {
+            if block.payload.finalization_candidate_height == 0 && !block.payload.headers.is_empty()
+            {
                 // TODO: block.finalized()
                 if let Some(BlockHeight(h)) =
                     block_height_from_hash(&call, block.payload.headers[0].hash()).await
                 {
                     block.payload.finalization_candidate_height = h;
                     let mut internal = tfl_handle.internal.lock().await;
-                    internal.bft_blocks[i].1.payload.finalization_candidate_height = h;
+                    internal.bft_blocks[i]
+                        .1
+                        .payload
+                        .finalization_candidate_height = h;
                 }
             }
         }
@@ -2433,7 +2442,8 @@ pub async fn viz_main(
                         if let Some(bc_hdr) = bft_hdr.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
                                 clear_bft_bc_h = Some(
-                                    bft_hdr.finalization_candidate_height + bft_hdr.headers.len() as u32
+                                    bft_hdr.finalization_candidate_height
+                                        + bft_hdr.headers.len() as u32
                                         - 1,
                                 );
                                 is_done = true;
@@ -2583,11 +2593,11 @@ pub async fn viz_main(
 
                     NodeKind::BFT => {
                         let payload = BftPayload {
-                                version: 0,
-                                height: 0,
-                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
-                                finalization_candidate_height: 0,
-                                headers: Vec::new(),
+                            version: 0,
+                            height: 0,
+                            previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                            finalization_candidate_height: 0,
+                            headers: Vec::new(),
                         };
 
                         // TODO: hash for id
@@ -2667,14 +2677,15 @@ pub async fn viz_main(
                 if node.kind == NodeKind::BFT {
                     if let Some(payload) = node.header.as_bft() {
                         if !payload.headers.is_empty() {
-                            let hdr_lo = ctx
-                                .find_bc_node_by_hash(&payload.headers.first().unwrap().hash());
-                            let hdr_hi = ctx
-                                .find_bc_node_by_hash(&payload.headers.last().unwrap().hash());
+                            let hdr_lo =
+                                ctx.find_bc_node_by_hash(&payload.headers.first().unwrap().hash());
+                            let hdr_hi =
+                                ctx.find_bc_node_by_hash(&payload.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
-                                    let max_hdr_h =
-                                        payload.finalization_candidate_height + payload.headers.len() as u32 - 1;
+                                    let max_hdr_h = payload.finalization_candidate_height
+                                        + payload.headers.len() as u32
+                                        - 1;
                                     if max_hdr_h < bc_lo.height {
                                         offscreen_new_pt = Some(vec2(
                                             node.pt.x,

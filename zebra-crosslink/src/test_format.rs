@@ -177,7 +177,7 @@ impl TF {
     }
 
     fn is_a_power_of_2(v: usize) -> bool {
-         v != 0 && ((v & (v-1)) == 0)
+        v != 0 && ((v & (v - 1)) == 0)
     }
 
     fn align_up(v: usize, mut align: usize) -> usize {
@@ -198,15 +198,13 @@ impl TF {
             };
             file.write_all(hdr.as_bytes())
                 .expect("writing shouldn't fail");
-            file.write_all(&self.data)
-                .expect("writing shouldn't fail");
+            file.write_all(&self.data).expect("writing shouldn't fail");
 
             if instrs_o > instrs_o_unaligned {
                 const ALIGN_0S: [u8; align_of::<TFInstr>()] = [0u8; align_of::<TFInstr>()];
                 let align_size = instrs_o - instrs_o_unaligned;
                 let align_bytes = &ALIGN_0S[..align_size];
                 file.write_all(align_bytes);
-
             }
             file.write_all(self.instrs.as_bytes())
                 .expect("writing shouldn't fail");

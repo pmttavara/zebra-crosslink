@@ -16,6 +16,7 @@ use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
+use crate::chain::BftBlock;
 use crate::{
     tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
 };
@@ -126,6 +127,25 @@ pub(crate) type ForceFeedPoWBlockProcedure = Arc<
         + Sync,
 >;
 
+/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
+/// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
+pub(crate) type ForceFeedPoSBlockProcedure =
+    Arc<dyn Fn(Arc<BftBlock>) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
+/// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
+/// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
+#[derive(Clone)]
+pub struct TFLServiceCalls {
+    pub(crate) read_state: ReadStateServiceProcedure,
+    pub(crate) force_feed_pow: ForceFeedPoWBlockProcedure,
+    pub(crate) force_feed_pos: ForceFeedPoSBlockProcedure,
+}
+impl fmt::Debug for TFLServiceCalls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TFLServiceCalls")
+    }
+}
+
 /// Spawn a Trailing Finality Service that uses the provided
 /// closures to call out to other services.
 ///
@@ -137,19 +157,30 @@ pub fn spawn_new_tfl_service(
     force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
+    let internal = Arc::new(Mutex::new(TFLServiceInternal {
+        latest_final_block: None,
+        tfl_is_activated: false,
+        stakers: Vec::new(),
+        final_change_tx: broadcast::channel(16).0,
+        bft_msg_flags: 0,
+        bft_blocks: Vec::new(),
+        proposed_bft_string: None,
+    }));
+
+    let internal2 = Arc::clone(&internal);
+    let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block| {
+        let internal = Arc::clone(&internal2);
+        Box::pin(async move {
+            println!("TODO FORCE FEED POS");
+        })
+    });
+
     let handle1 = TFLServiceHandle {
-        internal: Arc::new(Mutex::new(TFLServiceInternal {
-            latest_final_block: None,
-            tfl_is_activated: false,
-            stakers: Vec::new(),
-            final_change_tx: broadcast::channel(16).0,
-            bft_msg_flags: 0,
-            bft_blocks: Vec::new(),
-            proposed_bft_string: None,
-        })),
+        internal,
         call: TFLServiceCalls {
             read_state: read_state_service_call,
             force_feed_pow: force_feed_pow_call,
+            force_feed_pos,
         },
         config,
     };
@@ -159,19 +190,6 @@ pub fn spawn_new_tfl_service(
         handle1,
         tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
     )
-}
-
-/// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
-/// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
-#[derive(Clone)]
-pub struct TFLServiceCalls {
-    pub(crate) read_state: ReadStateServiceProcedure,
-    pub(crate) force_feed_pow: ForceFeedPoWBlockProcedure,
-}
-impl fmt::Debug for TFLServiceCalls {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TFLServiceCalls")
-    }
 }
 
 /// A wrapper around the `TFLServiceInternal` and `TFLServiceCalls` types, used to manage

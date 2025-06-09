@@ -167,7 +167,6 @@ impl<'a> From<&'a BftPayload> for zebra_chain::block::Hash {
     }
 }
 
-
 /// Validation error for [BftPayload]
 #[derive(Debug, Error)]
 pub enum InvalidBftPayload {
@@ -210,9 +209,7 @@ impl ZcashDeserialize for BftBlock {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let payload = BftPayload::zcash_deserialize(&mut reader)?;
 
-        Ok(BftBlock {
-            payload
-        })
+        Ok(BftBlock { payload })
     }
 }
 
@@ -225,7 +222,6 @@ impl<'a> From<&'a BftBlock> for zebra_chain::block::Hash {
         Self(hash_writer.finish())
     }
 }
-
 
 /// Zcash Crosslink protocol parameters
 ///
