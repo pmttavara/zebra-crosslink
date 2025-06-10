@@ -290,6 +290,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
     let call = internal_handle.call.clone();
     println!("Starting test");
 
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
     let (bytes, tf) = match TF::read_from_file(&path) {
         Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics
         Ok((bytes, tf)) => (bytes, tf),

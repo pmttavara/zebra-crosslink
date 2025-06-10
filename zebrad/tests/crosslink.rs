@@ -28,10 +28,5 @@ pub fn test_file(path: &str) {
 
 #[test]
 fn read_from_file() {
-    test_file("../blocks.zeccltf");
-}
-
-#[test]
-fn read_from_file2() {
-    test_file("../blocks.zeccltf");
+    test_file("../crosslink-test-data/blocks.zeccltf");
 }
