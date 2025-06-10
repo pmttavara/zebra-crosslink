@@ -195,6 +195,12 @@ impl BftBlock {
     pub fn hash(&self) -> zebra_chain::block::Hash {
         self.into()
     }
+
+    /// Blake3 hash
+    pub fn blake3_hash(&self) -> Blake3Hash {
+        let buffer = self.zcash_serialize_to_vec().unwrap();
+        Blake3Hash(blake3::hash(&buffer).into())
+    }
 }
 
 impl ZcashSerialize for BftBlock {
