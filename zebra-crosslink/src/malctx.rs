@@ -41,6 +41,15 @@ use malachitebft_core_consensus::SignedConsensusMsg;
 use malachitebft_core_types::{PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;
 
+pub use malachitebft_app_channel::app::config as mconfig;
+pub use malachitebft_app_channel::app::events::RxEvent;
+pub use malachitebft_app_channel::app::node::NodeConfig;
+pub use malachitebft_app_channel::app::types::sync::RawDecidedValue;
+pub use malachitebft_app_channel::AppMsg as BFTAppMsg;
+pub use malachitebft_app_channel::NetworkMsg;
+pub use malachitebft_app_channel::Channels;
+pub use malachitebft_app::node::EngineHandle;
+
 use super::{BftPayload, Blake3Hash};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -573,7 +582,7 @@ impl malachitebft_core_types::Validator<MalContext> for MalValidator {
 /// A validator set contains a list of validators sorted by address.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MalValidatorSet {
-    pub validators: Arc<Vec<MalValidator>>,
+    pub validators: Vec<MalValidator>,
 }
 
 impl MalValidatorSet {
@@ -584,7 +593,7 @@ impl MalValidatorSet {
         assert!(!validators.is_empty());
 
         Self {
-            validators: Arc::new(validators),
+            validators: validators,
         }
     }
 
