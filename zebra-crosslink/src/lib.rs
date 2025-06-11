@@ -626,15 +626,18 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                                     })
                                                     .await;
 
-                                                    let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
+                                                    let (headers, finalization_candidate_height): (Vec<BlockHeader>, BlockHeight) = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
                                                         // TODO: do we want these in chain order or "walk-back order"
-                                                        hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+                                                        let headers: Vec<_> = hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect();
+                                                        let finalization_candidate_hash = headers.get(0).expect("must be at least 1 header").hash();
+                                                        let finalization_candidate_height = block_height_from_hash(&call, finalization_candidate_hash).await.expect("know height of block we're proposing");
+                                                        (headers, finalization_candidate_height)
                                                     } else {
                                                         // Error or unexpected response type:
                                                         panic!("TODO: improve error handling.");
                                                     };
 
-                                                    break match BftPayload::try_from(params, current_bft_height.as_u64() as u32, zebra_chain::block::Hash([0u8; 32]), 0, headers) {
+                                                    break match BftPayload::try_from(params, current_bft_height.as_u64() as u32, zebra_chain::block::Hash([0u8; 32]), finalization_candidate_height.0, headers) {
                                                         Ok(v) => Some(v),
                                                         Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); None }
                                                     };
@@ -833,7 +836,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                                         let headers = &payload.headers;
                                         let new_final_hash = headers.first().expect("at least 1 header").hash();
                                         if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
-                                            // assert_eq!(new_final_height.0, payload.finalization_candidate_height);
+                                            assert_eq!(new_final_height.0, payload.finalization_candidate_height);
                                             let mut internal = internal_handle.internal.lock().await;
                                             let insert_i = certificate.height.as_u64() as usize - 1;
 
