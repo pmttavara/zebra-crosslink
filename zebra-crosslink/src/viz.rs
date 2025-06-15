@@ -340,9 +340,7 @@ pub mod serialization {
 
                         bft_blocks.push((
                             parent_id,
-                            BftBlock {
-                                payload: node.header.as_bft().unwrap().clone(),
-                            },
+                            node.header.as_bft().unwrap().clone(),
                         ));
                     }
                 }
@@ -764,13 +762,13 @@ type NodeRef = Option<NodeHdl>;
 enum VizHeader {
     None,
     BlockHeader(BlockHeader),
-    BftPayload(BftPayload), // ALT: just keep an array of *hashes*
+    BftBlock(BftBlock), // ALT: just keep an array of *hashes*
 }
 
 impl VizHeader {
-    fn as_bft(&self) -> Option<&BftPayload> {
+    fn as_bft(&self) -> Option<&BftBlock> {
         match self {
-            VizHeader::BftPayload(val) => Some(val),
+            VizHeader::BftBlock(val) => Some(val),
             _ => None,
         }
     }
@@ -783,10 +781,10 @@ impl VizHeader {
     }
 }
 
-impl From<Option<BftPayload>> for VizHeader {
-    fn from(v: Option<BftPayload>) -> VizHeader {
+impl From<Option<BftBlock>> for VizHeader {
+    fn from(v: Option<BftBlock>) -> VizHeader {
         match v {
-            Some(val) => VizHeader::BftPayload(val),
+            Some(val) => VizHeader::BftBlock(val),
             None => VizHeader::None,
         }
     }
@@ -830,9 +828,9 @@ struct Node {
 
 fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
-        VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.headers.last() {
-                ctx.find_bc_node_by_hash(&block.hash())
+        VizHeader::BftBlock(bft_block) => {
+            if let Some(pow_block) = bft_block.payload.headers.last() {
+                ctx.find_bc_node_by_hash(&pow_block.hash())
             } else {
                 None
             }
@@ -844,9 +842,9 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
 
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
-        VizHeader::BftPayload(payload) => {
-            if let Some(block) = payload.headers.first() {
-                ctx.find_bc_node_by_hash(&block.hash())
+        VizHeader::BftBlock(bft_block) => {
+            if let Some(pow_block) = bft_block.payload.headers.first() {
+                ctx.find_bc_node_by_hash(&pow_block.hash())
             } else {
                 None
             }
@@ -891,7 +889,7 @@ enum NodeInit {
 
     BFT {
         parent: NodeRef, // TODO: do we need explicit edges?
-        id: usize,
+        hash: [u8; 32],
         text: String,
         bft_block: BftBlock,
         height: Option<u32>, // if None, works out from parent
@@ -957,20 +955,6 @@ fn find_bc_node_i_by_height(nodes: &[Node], height: BlockHeight) -> NodeRef {
     nodes
         .iter()
         .position(|node| node.kind == NodeKind::BC && node.height == height.0)
-        .map(|i| NodeHdl { idx: i as u32 })
-}
-
-fn find_bft_node_by_id(nodes: &[Node], id: usize) -> NodeRef {
-    let _z = ZoneGuard::new("find_bft_node_by_id");
-    nodes
-        .iter()
-        .position(|node| {
-            node.kind == NodeKind::BFT
-                && match node.id {
-                    NodeId::Index(i) => i == id,
-                    _ => false,
-                }
-        })
         .map(|i| NodeHdl { idx: i as u32 })
 }
 
@@ -1050,6 +1034,7 @@ pub(crate) struct VizCtx {
     missing_bc_parents: HashMap<[u8; 32], NodeRef>,
     bc_by_hash: HashMap<[u8; 32], NodeRef>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
 
+    bft_by_hash: HashMap<[u8; 32], NodeRef>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
     bft_block_hi_i: usize,
     bft_last_added: NodeRef,
     bft_fake_id: usize,
@@ -1187,7 +1172,7 @@ impl VizCtx {
                 parent,
                 height,
                 bft_block,
-                id,
+                hash,
                 text,
                 is_real,
             } => {
@@ -1209,13 +1194,13 @@ impl VizCtx {
                     Node {
                         parent,
 
-                        id: NodeId::Index(id),
+                        id: NodeId::Hash(hash),
                         difficulty: None,
                         txs_n: 0,
 
                         kind: NodeKind::BFT,
                         height,
-                        header: VizHeader::BftPayload(bft_block.payload),
+                        header: VizHeader::BftBlock(bft_block),
                         text,
                         bc_block: None,
 
@@ -1235,7 +1220,15 @@ impl VizCtx {
         // NOTE: currently referencing OOB until this is added
         let node_ref = Some(NodeHdl { idx: i as u32 });
 
-        let child_ref: NodeRef = if new_node.kind == NodeKind::BC {
+        if let Some(node_hash) = new_node.hash() {
+            match new_node.kind {
+                NodeKind::BC => self.bc_by_hash.insert(node_hash, node_ref),
+                NodeKind::BFT => self.bft_by_hash.insert(node_hash, node_ref),
+            };
+        }
+
+        let mut child_ref: NodeRef = None;
+        if new_node.kind == NodeKind::BC {
             if let Some(hi_node) = self.get_node(self.bc_hi) {
                 new_node.pt = hi_node.pt;
             }
@@ -1260,38 +1253,24 @@ impl VizCtx {
 
             // find & link possible child
             if let Some(node_hash) = new_node.hash() {
-                self.bc_by_hash.insert(node_hash, node_ref);
+                if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
+                    if let Some(child) = self.node(child_ref) {
+                        new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
-                let child_ref: NodeRef =
-                    if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
-                        if let Some(child) = self.node(child_ref) {
-                            new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
+                        assert!(child.parent.is_none());
+                        assert!(
+                            child.height == new_node.height + 1,
+                            "child height: {}, new height: {}",
+                            child.height,
+                            new_node.height
+                        );
+                        child.parent = node_ref;
+                    }
 
-                            assert!(child.parent.is_none());
-                            assert!(
-                                child.height == new_node.height + 1,
-                                "child height: {}, new height: {}",
-                                child.height,
-                                new_node.height
-                            );
-                            child.parent = node_ref;
-                        }
-                        child_ref
-                    } else {
-                        None
-                    };
-
-                if child_ref.is_some() {
                     self.missing_bc_parents.remove(&node_hash);
                 }
-
-                child_ref
-            } else {
-                None
             }
-        } else {
-            None
-        };
+        }
 
         if needs_fixup {
             if let Some(parent) = self.get_node(new_node.parent) {
@@ -1419,6 +1398,11 @@ impl VizCtx {
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
     }
 
+    fn find_bft_node_by_hash(&self, hash: &Blake3Hash) -> NodeRef {
+        let _z = ZoneGuard::new("find_bft_node_by_hash");
+        *self.bft_by_hash.get(&hash.0).unwrap_or(&None)
+    }
+
     fn move_node_to(&mut self, node_ref: NodeRef, new_pos: Vec2) {
         let node = if let Some(node) = self.node(node_ref) {
             node
@@ -1481,6 +1465,7 @@ impl Default for VizCtx {
             bc_work_max: 0,
             missing_bc_parents: HashMap::new(),
             bc_by_hash: HashMap::new(),
+            bft_by_hash: HashMap::new(),
 
             bft_block_hi_i: 0,
             bft_last_added: None,
@@ -2045,11 +2030,12 @@ pub async fn viz_main(
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
-                if find_bft_node_by_id(&ctx.nodes, i).is_none() {
+                let hash = blocks[i].1.blake3_hash();
+                if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let (bft_parent_i, bft_block) = (blocks[i].0, blocks[i].1.clone());
                     let bft_parent = if i == 0 && bft_parent_i == 0 {
                         None
-                    } else if let Some(bft_parent) = find_bft_node_by_id(&ctx.nodes, bft_parent_i) {
+                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&blocks[bft_parent_i].1.blake3_hash()) { // TODO: parent_hash
                         Some(bft_parent)
                     } else {
                         None
@@ -2062,7 +2048,7 @@ pub async fn viz_main(
                             parent: bft_parent,
                             is_real: true,
 
-                            id: i,
+                            hash: hash.0,
 
                             bft_block,
                             text: "".to_string(),
@@ -2362,7 +2348,7 @@ pub async fn viz_main(
                                 parent: ctx.bft_last_added,
                                 is_real: false,
 
-                                id,
+                                hash: bft_block.blake3_hash().0,
 
                                 bft_block,
                                 text: node_str.clone(),
@@ -2443,12 +2429,12 @@ pub async fn viz_main(
                 let mut clear_bft_bc_h = None;
                 if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
                     let mut is_done = false;
-                    if let Some(bft_hdr) = node.header.as_bft() {
-                        if let Some(bc_hdr) = bft_hdr.headers.last() {
+                    if let Some(bft_block) = node.header.as_bft() {
+                        if let Some(bc_hdr) = bft_block.payload.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
                                 clear_bft_bc_h = Some(
-                                    bft_hdr.finalization_candidate_height
-                                        + bft_hdr.headers.len() as u32
+                                    bft_block.payload.finalization_candidate_height
+                                        + bft_block.payload.headers.len() as u32
                                         - 1,
                                 );
                                 is_done = true;
@@ -2597,18 +2583,18 @@ pub async fn viz_main(
                     }
 
                     NodeKind::BFT => {
-                        let payload = BftPayload {
-                            version: 0,
-                            height: 0,
-                            previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
-                            finalization_candidate_height: 0,
-                            headers: Vec::new(),
+                        let bft_block = BftBlock {
+                            payload: BftPayload {
+                                version: 0,
+                                height: 0,
+                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                finalization_candidate_height: 0,
+                                headers: Vec::new(),
+                            }
                         };
 
-                        // TODO: hash for id
-                        ctx.bft_fake_id -= 1;
-                        let id = NodeId::Index(ctx.bft_fake_id + 1);
-                        (VizHeader::BftPayload(payload), id, None)
+                        let id = NodeId::Hash(bft_block.blake3_hash().0);
+                        (VizHeader::BftBlock(bft_block), id, None)
                     }
                 };
 
@@ -2680,7 +2666,8 @@ pub async fn viz_main(
             let mut offscreen_new_pt = None;
             let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
                 if node.kind == NodeKind::BFT {
-                    if let Some(payload) = node.header.as_bft() {
+                    if let Some(bft_block) = node.header.as_bft() {
+                        let payload = &bft_block.payload;
                         if !payload.headers.is_empty() {
                             let hdr_lo =
                                 ctx.find_bc_node_by_hash(&payload.headers.first().unwrap().hash());
@@ -2974,7 +2961,8 @@ pub async fn viz_main(
                     match &click_node.header {
                         VizHeader::None => {}
                         VizHeader::BlockHeader(hdr) => {}
-                        VizHeader::BftPayload(payload) => {
+                        VizHeader::BftBlock(bft_block) => {
+                            let payload = &bft_block.payload;
                             ui.label(None, "PoW headers:");
                             for i in 0..payload.headers.len() {
                                 let pow_hdr = &payload.headers[i];
@@ -3122,7 +3110,8 @@ pub async fn viz_main(
         end_zone(z_draw_nodes);
 
         if let Some(node) = ctx.get_node(hover_node_i) {
-            if let Some(payload) = node.header.as_bft() {
+            if let Some(bft_block) = node.header.as_bft() {
+                let payload = &bft_block.payload;
                 for i in 0..payload.headers.len() {
                     let link = if let Some(link) =
                         ctx.get_node(ctx.find_bc_node_by_hash(&payload.headers[i].hash()))
@@ -3342,6 +3331,11 @@ pub async fn viz_main(
                                 tf.push_instr_serialize(
                                     TFInstr::LOAD_POW,
                                     node.bc_block.as_ref().unwrap(),
+                                );
+                            } else if node.kind == NodeKind::BFT && node.header.as_bft().is_some() {
+                                tf.push_instr_serialize(
+                                    TFInstr::LOAD_POS,
+                                    *node.header.as_bft().as_ref().unwrap(),
                                 );
                             }
                         }
