@@ -255,9 +255,11 @@ pub const PROTOTYPE_PARAMETERS: ZcashCrosslinkParameters = ZcashCrosslinkParamet
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
 pub struct Blake3Hash(pub [u8; 32]);
 
-// TODO(Sam): Make this display similarly to other ZCash hashes.
 impl std::fmt::Display for Blake3Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
+        for &b in self.0.iter() {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
     }
 }

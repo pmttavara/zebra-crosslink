@@ -47,6 +47,7 @@ pub use malachitebft_app_channel::app::node::NodeConfig;
 pub use malachitebft_app_channel::app::types::sync::RawDecidedValue;
 pub use malachitebft_app_channel::AppMsg as BFTAppMsg;
 pub use malachitebft_app_channel::NetworkMsg;
+pub use malachitebft_app_channel::ConsensusMsg;
 pub use malachitebft_app_channel::Channels;
 pub use malachitebft_app::node::EngineHandle;
 
