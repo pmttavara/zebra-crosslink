@@ -1315,7 +1315,7 @@ impl malachitebft_core_types::Vote<MalContext> for MalVote {
         None
     }
 
-    fn extend(self, extension: SignedExtension<MalContext>) -> Self { self.clone() }
+    fn extend(self, extension: SignedExtension<MalContext>) -> Self { use tracing::error; error!("SILENTLY DROPPING VOTE EXTENSION"); self.clone() }
 }
 
 impl Default for MalContext {
