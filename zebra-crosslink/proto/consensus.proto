@@ -14,15 +14,9 @@ message ValueId {
     optional bytes value = 1;
 }
 
-enum VoteType {
-   PREVOTE = 0;
-   PRECOMMIT = 1;
-}
-
 message Vote {
-    VoteType vote_type = 1;
     uint64 height = 2;
-    uint32 round = 3;
+    uint32 round_and_is_commit = 3;
     ValueId value = 4;
     Address validator_address = 5;
 }
@@ -68,11 +62,6 @@ message StreamedProposalData {
 
 message StreamedProposalFin {
     Signature signature = 1;
-}
-
-message Extension {
-    bytes data = 1;
-    Signature signature = 2;
 }
 
 message StreamMessage {

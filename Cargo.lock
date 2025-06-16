@@ -8804,6 +8804,7 @@ dependencies = [
  "chrono",
  "color-eyre",
  "derive-where",
+ "ed25519-zebra",
  "eyre",
  "futures",
  "hex",

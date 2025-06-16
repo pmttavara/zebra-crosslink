@@ -1251,26 +1251,6 @@ pub fn mal_encode_commit_certificate(
     })
 }
 
-pub fn mal_decode_extension(
-    ext: malctx_schema_proto::Extension,
-) -> Result<SignedExtension<MalContext>, ProtoError> {
-    let signature = ext
-        .signature
-        .ok_or_else(|| ProtoError::missing_field::<malctx_schema_proto::Extension>("signature"))
-        .and_then(mal_decode_signature)?;
-
-    Ok(SignedExtension::new(ext.data, signature))
-}
-
-pub fn mal_encode_extension(
-    ext: &SignedExtension<MalContext>,
-) -> Result<malctx_schema_proto::Extension, ProtoError> {
-    Ok(malctx_schema_proto::Extension {
-        data: ext.message.clone(),
-        signature: Some(mal_encode_signature(&ext.signature)),
-    })
-}
-
 pub fn mal_encode_vote_set(
     vote_set: &VoteSet<MalContext>,
 ) -> Result<malctx_schema_proto::VoteSet, ProtoError> {
@@ -1403,9 +1383,9 @@ impl Protobuf for MalVote {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
         Ok(Self {
-            typ: mal_decode_votetype(proto.vote_type()),
+            typ: if proto.round_and_is_commit & 0x8000_0000 != 0 { VoteType::Precommit } else { VoteType::Prevote },
             height: MalHeight::from_proto(proto.height)?,
-            round: Round::new(proto.round),
+            round: Round::new(proto.round_and_is_commit & 0x7fff_ffff),
             value: match proto.value {
                 Some(value) => NilOrVal::Val(MalValueId::from_proto(value)?),
                 None => NilOrVal::Nil,
@@ -1421,32 +1401,21 @@ impl Protobuf for MalVote {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
+        let round_u31 = self.round.as_u32().expect("round should not be nil");
+        assert!(round_u31 & 0x8000_0000 == 0);
+        let is_commit_flag: u32 = match self.typ {
+            VoteType::Prevote => 0,
+            VoteType::Precommit => 0x8000_0000,
+        };
         Ok(Self::Proto {
-            vote_type: mal_encode_votetype(self.typ).into(),
             height: self.height.to_proto()?,
-            round: self.round.as_u32().expect("round should not be nil"),
+            round_and_is_commit: is_commit_flag | round_u31,
             value: match &self.value {
                 NilOrVal::Nil => None,
                 NilOrVal::Val(v) => Some(v.to_proto()?),
             },
             validator_address: Some(self.validator_address.to_proto()?),
         })
-    }
-}
-
-#[cfg_attr(coverage_nightly, coverage(off))]
-fn mal_encode_votetype(vote_type: VoteType) -> malctx_schema_proto::VoteType {
-    match vote_type {
-        VoteType::Prevote => malctx_schema_proto::VoteType::Prevote,
-        VoteType::Precommit => malctx_schema_proto::VoteType::Precommit,
-    }
-}
-
-#[cfg_attr(coverage_nightly, coverage(off))]
-fn mal_decode_votetype(vote_type: malctx_schema_proto::VoteType) -> VoteType {
-    match vote_type {
-        malctx_schema_proto::VoteType::Prevote => VoteType::Prevote,
-        malctx_schema_proto::VoteType::Precommit => VoteType::Precommit,
     }
 }
 
