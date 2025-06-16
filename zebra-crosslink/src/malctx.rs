@@ -9,6 +9,7 @@ use malachitebft_core_types::{
 };
 
 use malachitebft_signing_ed25519::Signature;
+use malctx_schema_proto::Vote;
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
@@ -1228,17 +1229,51 @@ pub fn mal_decode_signature(
 /// A vote for a value in a round
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MalVote {
-    pub typ: VoteType,
-    pub height: MalHeight,
-    pub round: Round,
-    pub value: NilOrVal<MalValueId>,
     pub validator_address: MalPublicKey2,
+    pub value: NilOrVal<MalValueId>,
+    pub height: MalHeight,
+    pub typ: VoteType,
+    pub round: Round,
 }
 
+/*
+DATA LAYOUT FOR VOTE
+32 byte ed25519 public key of the finalizer who's vote this is
+32 byte blake3 hash of value, or all zeroes to indicate Nil vote
+8 byte height
+4 byte round where MSB is used to indicate is_commit for the vote type. 1 bit is_commit, 31 bits round index
+
+TOTAL: 76 B
+
+A signed vote will be this same layout followed by the 64 byte ed25519 signature of the previous 76 bytes.
+*/
+
 impl MalVote {
-    // TODO(Sam) replace this with something less proto
-    pub fn to_bytes(&self) -> Bytes {
-        Protobuf::to_bytes(self).unwrap()
+    pub fn to_bytes(&self) -> [u8; 76] {
+        let mut buf = [0_u8; 76];
+        buf[0..32].copy_from_slice(self.validator_address.0.as_bytes());
+        if let NilOrVal::Val(value) = self.value {
+            buf[32..64].copy_from_slice(&value.0.0);
+        }
+        buf[64..72].copy_from_slice(&self.height.0.to_le_bytes());
+        
+        let mut merged_round_val: u32 = self.round.as_u32().unwrap() & 0x7fff_ffff;
+        if self.typ == VoteType::Precommit { merged_round_val |= 0x8000_0000; }
+        buf[72..76].copy_from_slice(&merged_round_val.to_le_bytes());
+        buf
+    }
+    pub fn from_bytes(bytes: &[u8; 76]) -> MalVote {
+        let validator_address = MalPublicKey2(MalPublicKey::from_bytes(bytes[0..32].try_into().unwrap()));
+        let value_hash_bytes = bytes[32..64].try_into().unwrap();
+        let value = if value_hash_bytes == [0_u8; 32] { NilOrVal::Nil } else { NilOrVal::Val(MalValueId(Blake3Hash(value_hash_bytes))) };
+        let height = MalHeight(u64::from_le_bytes(bytes[64..72].try_into().unwrap()));
+        
+        let merged_round_val = u32::from_le_bytes(bytes[72..76].try_into().unwrap());
+        
+        let typ = if merged_round_val & 0x8000_0000 != 0 { VoteType::Precommit } else { VoteType::Prevote };
+        let round = Round::Some(merged_round_val & 0x7fff_ffff);
+        
+        MalVote { validator_address, value, height, typ, round }
     }
 }
 
