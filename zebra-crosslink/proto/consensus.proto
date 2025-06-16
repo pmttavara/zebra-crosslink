@@ -10,17 +10,10 @@ message ValueId {
     optional bytes value = 1;
 }
 
-message Vote {
-    uint64 height = 2;
-    uint32 round_and_is_commit = 3;
-    ValueId value = 4;
-    bytes validator_address = 5;
-}
-
 message SignedMessage {
     oneof message {
         Proposal proposal = 1;
-        Vote vote = 2;
+        bytes vote = 2;
     }
     Signature signature = 3;
 }

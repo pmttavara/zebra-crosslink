@@ -9,7 +9,6 @@ use malachitebft_core_types::{
 };
 
 use malachitebft_signing_ed25519::Signature;
-use malctx_schema_proto::Vote;
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
@@ -746,7 +745,7 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
                 )))
             }
             malctx_schema_proto::signed_message::Message::Vote(vote) => {
-                let vote = MalVote::from_proto(vote)?;
+                let vote = MalVote::from_bytes(&vote.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("vote")))?);
                 Ok(SignedConsensusMsg::Vote(SignedVote::new(vote, signature)))
             }
         }
@@ -757,7 +756,7 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
             SignedConsensusMsg::Vote(vote) => {
                 let proto = malctx_schema_proto::SignedMessage {
                     message: Some(malctx_schema_proto::signed_message::Message::Vote(
-                        vote.message.to_proto()?,
+                        vote.message.to_bytes().to_vec().into(),
                     )),
                     signature: Some(mal_encode_signature(&vote.signature)),
                 };
@@ -1175,7 +1174,7 @@ pub fn mal_encode_vote(
 ) -> Result<malctx_schema_proto::SignedMessage, ProtoError> {
     Ok(malctx_schema_proto::SignedMessage {
         message: Some(malctx_schema_proto::signed_message::Message::Vote(
-            vote.message.to_proto()?,
+            vote.message.to_bytes().to_vec().into(),
         )),
         signature: Some(mal_encode_signature(&vote.signature)),
     })
@@ -1208,7 +1207,7 @@ pub fn mal_decode_vote(
     }?;
 
     let signature = mal_decode_signature(signature)?;
-    let vote = MalVote::from_proto(vote)?;
+    let vote = MalVote::from_bytes(&vote.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("vote")))?);
     Ok(SignedVote::new(vote, signature))
 }
 
@@ -1274,43 +1273,6 @@ impl MalVote {
         let round = Round::Some(merged_round_val & 0x7fff_ffff);
         
         MalVote { validator_address, value, height, typ, round }
-    }
-}
-
-impl Protobuf for MalVote {
-    type Proto = malctx_schema_proto::Vote;
-
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        Ok(Self {
-            typ: if proto.round_and_is_commit & 0x8000_0000 != 0 { VoteType::Precommit } else { VoteType::Prevote },
-            height: MalHeight::from_proto(proto.height)?,
-            round: Round::new(proto.round_and_is_commit & 0x7fff_ffff),
-            value: match proto.value {
-                Some(value) => NilOrVal::Val(MalValueId::from_proto(value)?),
-                None => NilOrVal::Nil,
-            },
-            validator_address: MalPublicKey2(MalPublicKey::from_bytes(proto.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("validator_address")))?)),
-        })
-    }
-
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        let round_u31 = self.round.as_u32().expect("round should not be nil");
-        assert!(round_u31 & 0x8000_0000 == 0);
-        let is_commit_flag: u32 = match self.typ {
-            VoteType::Prevote => 0,
-            VoteType::Precommit => 0x8000_0000,
-        };
-        Ok(Self::Proto {
-            height: self.height.to_proto()?,
-            round_and_is_commit: is_commit_flag | round_u31,
-            value: match &self.value {
-                NilOrVal::Nil => None,
-                NilOrVal::Val(v) => Some(v.to_proto()?),
-            },
-            validator_address: self.validator_address.0.as_bytes().as_slice().to_vec().into(),
-        })
     }
 }
 
