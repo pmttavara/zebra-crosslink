@@ -91,23 +91,23 @@ pub async fn start_malachite(tfl_handle: TFLServiceHandle, at_height: u64, valid
 }
 
 async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Weak<TokioMutex<RunningMalachite>>, mut channels: Channels<MalContext>, my_private_key: MalPrivateKey) {
-    
+
     let codec = MalProtobufCodec;
     let my_public_key = my_private_key.public_key();
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
-    
+
     let mut pending_block_to_push_to_core: Option<BftBlock> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>> = None;
     let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
-    
+
     let mut bft_msg_flags = 0;
     let mut at_this_height_previously_seen_proposals: Vec<Option<Box<MalProposedValue<MalContext>>>> = Vec::new();
-    
+
     let mut decided_certificates_by_height = HashMap::new();
-    
+
     // TODO REMOVE
     let mut streams_map = strm::PartStreamsMap::new();
-    
+
     loop {
         let running_malachite = if let Some(arc) = weak_self.upgrade() { arc } else { return; };
 
@@ -122,7 +122,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
             pending_block_to_push_to_core = None;
             post_pending_block_to_push_to_core_reply.take().unwrap().send(post_pending_block_to_push_to_core_reply_data.take().unwrap()).unwrap();
         }
-        
+
         let mut something_to_do_maybe = None;
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -135,6 +135,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
         if something_to_do_maybe.is_none() { continue; }
         let app_msg = something_to_do_maybe.unwrap();
 
+        #[allow(clippy::never_loop)]
         loop {
         match app_msg {
             BFTAppMsg::ConsensusReady { reply } => {
@@ -179,11 +180,11 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
 
                 if pending_block_to_push_to_core.is_some() { warn!("Still waiting to push previous block."); break; }
-                
+
                 // Here it is important that, if we have previously built a value for this height and round,
                 // we send back the very same value.
                 let maybe_prev_seen_payload = at_this_height_previously_seen_proposals.get(round).map(|x| x.as_ref().map(|x| x.as_ref().clone())).flatten();
-                
+
                 let proposal = if let Some(proposal) = maybe_prev_seen_payload {
                     info!(%height, %round, "Replaying already known proposed value (That I proposed?): {}", proposal.value.id());
 
@@ -224,9 +225,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         break;
                     }
                 };
-                
+
                 reply.send(proposal.clone()).unwrap();
-                
+
                 // The POL round is always nil when we propose a newly built value.
                 // See L15/L18 of the Tendermint algorithm.
                 let pol_round = MalRound::Nil;
@@ -296,7 +297,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
             },
             BFTAppMsg::GetDecidedValue { height, reply } => {
                 bft_msg_flags |= 1 << BFTMsgFlag::GetDecidedValue as u64;
-                
+
                 // TODO load certificate from a local lookaside buffer keyed by height that is persistant across restarts in case someone wants to sync from us.
                 // This will not be necessary when we have the alternate sync mechanism that is out of band.
 
@@ -358,9 +359,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 let decided_value = at_this_height_previously_seen_proposals[lock.round as usize].take().unwrap();
                 assert_eq!(decided_value.value.id(), certificate.value_id);
-                
+
                 assert!(decided_certificates_by_height.insert(lock.height, certificate).is_none());
-                
+
                 assert!(pending_block_to_push_to_core.is_none());
                 pending_block_to_push_to_core = Some(BftBlock {
                     payload: decided_value.value.value
@@ -419,7 +420,29 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 let sequence = part.sequence;
 
                 // Check if we have a full proposal
-                if let Some(parts) = streams_map.insert(from, part) {
+                let peer_id = from;
+                let msg = part;
+                let parts : Option<strm::MalStreamedProposalParts> = loop {
+                    let stream_id = msg.stream_id.clone();
+                    let state = streams_map
+                        .streams
+                        .entry((peer_id, stream_id.clone()))
+                        .or_default();
+
+                    if !state.seen_sequences.insert(msg.sequence) {
+                        // We have already seen a message with this sequence number.
+                        break None;
+                    }
+
+                    let result = state.insert(msg);
+
+                    if state.is_done() {
+                        streams_map.streams.remove(&(peer_id, stream_id));
+                    }
+
+                    break result;
+                };
+                if let Some(parts) = parts {
 
                     // NOTE(Sam): It seems VERY odd that we don't drop individual stream parts for being too
                     // old. Why assemble something that might never finish and is known to be stale?

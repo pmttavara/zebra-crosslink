@@ -1269,7 +1269,7 @@ mod strm {
         }
     }
 
-    struct MinHeap<T>(BinaryHeap<MinSeq<T>>);
+    pub struct MinHeap<T>(BinaryHeap<MinSeq<T>>);
 
     impl<T> Default for MinHeap<T> {
         fn default() -> Self {
@@ -1298,22 +1298,22 @@ mod strm {
     }
 
     #[derive(Default)]
-    struct StreamState {
-        buffer: MinHeap<MalStreamedProposalPart>,
-        init_info: Option<MalStreamedProposalInit>,
-        seen_sequences: HashSet<Sequence>,
-        total_messages: usize,
-        fin_received: bool,
+    pub struct StreamState {
+        pub buffer: MinHeap<MalStreamedProposalPart>,
+        pub init_info: Option<MalStreamedProposalInit>,
+        pub seen_sequences: HashSet<Sequence>,
+        pub total_messages: usize,
+        pub fin_received: bool,
     }
 
     impl StreamState {
-        fn is_done(&self) -> bool {
+        pub fn is_done(&self) -> bool {
             self.init_info.is_some()
                 && self.fin_received
                 && self.buffer.len() == self.total_messages
         }
 
-        fn insert(
+        pub fn insert(
             &mut self,
             msg: StreamMessage<MalStreamedProposalPart>,
         ) -> Option<MalStreamedProposalParts> {
@@ -1363,7 +1363,7 @@ mod strm {
 
     #[derive(Default)]
     pub struct PartStreamsMap {
-        streams: BTreeMap<(PeerId, StreamId), StreamState>,
+        pub streams: BTreeMap<(PeerId, StreamId), StreamState>,
     }
 
     impl PartStreamsMap {
