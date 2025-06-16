@@ -1,4 +1,5 @@
 #![allow(unexpected_cfgs, unused, missing_docs)]
+use std::io::Read;
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
@@ -115,11 +116,11 @@ pub struct MalStreamedProposalInit {
     pub round: Round,
     #[serde(with = "RoundDef")]
     pub pol_round: Round,
-    pub proposer: MalAddress,
+    pub proposer: MalPublicKey,
 }
 
 impl MalStreamedProposalInit {
-    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalAddress) -> Self {
+    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey) -> Self {
         Self {
             height,
             round,
@@ -166,10 +167,7 @@ impl Protobuf for MalStreamedProposalPart {
                 height: MalHeight::new(init.height),
                 round: Round::new(init.round),
                 pol_round: Round::from(init.pol_round),
-                proposer: init
-                    .proposer
-                    .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("proposer"))
-                    .and_then(MalAddress::from_proto)?,
+                proposer: MalPublicKey::from_bytes(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
             })),
             Part::Data(data) => Ok(Self::Data(MalStreamedProposalData {
                 data_bytes: data.data_bytes.to_vec(),
@@ -193,7 +191,7 @@ impl Protobuf for MalStreamedProposalPart {
                     height: init.height.as_u64(),
                     round: init.round.as_u32().unwrap(),
                     pol_round: init.pol_round.as_u32(),
-                    proposer: Some(init.proposer.to_proto()?),
+                    proposer: init.proposer.as_bytes().to_vec().into(),
                 })),
             }),
             Self::Data(data) => Ok(Self::Proto {
@@ -279,84 +277,26 @@ impl Protobuf for MalHeight {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MalAddress(
-    #[serde(
-        serialize_with = "hex::serde::serialize_upper",
-        deserialize_with = "hex::serde::deserialize"
-    )]
-    [u8; Self::LENGTH],
-);
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MalPublicKey2(pub MalPublicKey);
 
-impl MalAddress {
-    const LENGTH: usize = 20;
-
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    pub const fn new(value: [u8; Self::LENGTH]) -> Self {
-        Self(value)
-    }
-
-    #[cfg_attr(coverage_nightly, coverage(off))]
-    pub fn from_public_key(public_key: &MalPublicKey) -> Self {
-        let hash: [u8; 32] = {
-            use sha3::{Digest, Keccak256};
-            let mut hasher = Keccak256::new();
-            hasher.update(public_key.as_bytes());
-            hasher.finalize().into()
-        };
-        let mut address = [0; Self::LENGTH];
-        address.copy_from_slice(&hash[..Self::LENGTH]);
-        Self(address)
-    }
-
-    pub fn into_inner(self) -> [u8; Self::LENGTH] {
-        self.0
-    }
-}
-
-impl fmt::Display for MalAddress {
-    #[cfg_attr(coverage_nightly, coverage(off))]
+impl fmt::Display for MalPublicKey2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0.iter() {
+        for byte in self.0.as_bytes() {
             write!(f, "{:02X}", byte)?;
         }
         Ok(())
     }
 }
 
-impl fmt::Debug for MalAddress {
+impl fmt::Debug for MalPublicKey2 {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "MalAddress({})", self)
+        write!(f, "{}", self)
     }
 }
 
-impl malachitebft_core_types::Address for MalAddress {}
-
-impl Protobuf for MalAddress {
-    type Proto = malctx_schema_proto::Address;
-
-    fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        if proto.value.len() != Self::LENGTH {
-            return Err(ProtoError::Other(format!(
-                "Invalid address length: expected {}, got {}",
-                Self::LENGTH,
-                proto.value.len()
-            )));
-        }
-
-        let mut address = [0; Self::LENGTH];
-        address.copy_from_slice(&proto.value);
-        Ok(Self(address))
-    }
-
-    fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        Ok(malctx_schema_proto::Address {
-            value: self.0.to_vec().into(),
-        })
-    }
-}
+impl malachitebft_core_types::Address for MalPublicKey2 {}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
 pub struct MalValueId(pub Blake3Hash);
@@ -472,7 +412,7 @@ impl MalEd25519Provider {
 
 impl SigningProvider<MalContext> for MalEd25519Provider {
     fn sign_vote(&self, vote: MalVote) -> SignedVote<MalContext> {
-        let signature = self.sign(&vote.to_sign_bytes());
+        let signature = self.sign(&vote.to_bytes());
         SignedVote::new(vote, signature)
     }
 
@@ -482,7 +422,7 @@ impl SigningProvider<MalContext> for MalEd25519Provider {
         signature: &Signature,
         public_key: &MalPublicKey,
     ) -> bool {
-        public_key.verify(&vote.to_sign_bytes(), signature).is_ok()
+        public_key.verify(&vote.to_bytes(), signature).is_ok()
     }
 
     fn sign_proposal(&self, proposal: MalProposal) -> SignedProposal<MalContext> {
@@ -536,9 +476,9 @@ impl SigningProvider<MalContext> for MalEd25519Provider {
 }
 
 /// A validator is a public key and voting power
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MalValidator {
-    pub address: MalAddress,
+    pub address: MalPublicKey2,
     pub public_key: MalPublicKey,
     pub voting_power: VotingPower,
 }
@@ -547,7 +487,7 @@ impl MalValidator {
     #[cfg_attr(coverage_nightly, coverage(off))]
     pub fn new(public_key: MalPublicKey, voting_power: VotingPower) -> Self {
         Self {
-            address: MalAddress::from_public_key(&public_key),
+            address: MalPublicKey2(public_key),
             public_key,
             voting_power,
         }
@@ -567,7 +507,7 @@ impl Ord for MalValidator {
 }
 
 impl malachitebft_core_types::Validator<MalContext> for MalValidator {
-    fn address(&self) -> &MalAddress {
+    fn address(&self) -> &MalPublicKey2 {
         &self.address
     }
 
@@ -581,7 +521,7 @@ impl malachitebft_core_types::Validator<MalContext> for MalValidator {
 }
 
 /// A validator set contains a list of validators sorted by address.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MalValidatorSet {
     pub validators: Vec<MalValidator>,
 }
@@ -604,8 +544,8 @@ impl MalValidatorSet {
     }
 
     /// Get a validator by its address
-    pub fn get_by_address(&self, address: &MalAddress) -> Option<&MalValidator> {
-        self.validators.iter().find(|v| &v.address == address)
+    pub fn get_by_address(&self, address: &MalPublicKey) -> Option<&MalValidator> {
+        self.validators.iter().find(|v| &v.address.0 == address)
     }
 
     pub fn get_by_public_key(&self, public_key: &MalPublicKey) -> Option<&MalValidator> {
@@ -642,8 +582,8 @@ impl malachitebft_core_types::ValidatorSet<MalContext> for MalValidatorSet {
         self.total_voting_power()
     }
 
-    fn get_by_address(&self, address: &MalAddress) -> Option<&MalValidator> {
-        self.get_by_address(address)
+    fn get_by_address(&self, address: &MalPublicKey2) -> Option<&MalValidator> {
+        self.get_by_address(&address.0)
     }
 
     fn get_by_index(&self, index: usize) -> Option<&MalValidator> {
@@ -658,26 +598,10 @@ pub struct MalProposal {
     pub round: Round,
     pub value: MalValue,
     pub pol_round: Round,
-    pub validator_address: MalAddress,
+    pub validator_address: MalPublicKey2,
 }
 
 impl MalProposal {
-    pub fn new(
-        height: MalHeight,
-        round: Round,
-        value: MalValue,
-        pol_round: Round,
-        validator_address: MalAddress,
-    ) -> Self {
-        Self {
-            height,
-            round,
-            value,
-            pol_round,
-            validator_address,
-        }
-    }
-
     pub fn to_bytes(&self) -> Bytes {
         Protobuf::to_bytes(self).unwrap()
     }
@@ -708,7 +632,7 @@ impl malachitebft_core_types::Proposal<MalContext> for MalProposal {
         self.pol_round
     }
 
-    fn validator_address(&self) -> &MalAddress {
+    fn validator_address(&self) -> &MalPublicKey2 {
         &self.validator_address
     }
 }
@@ -723,7 +647,7 @@ impl Protobuf for MalProposal {
             round: self.round.as_u32().expect("round should not be nil"),
             value: Some(self.value.to_proto()?),
             pol_round: self.pol_round.as_u32(),
-            validator_address: Some(self.validator_address.to_proto()?),
+            validator_address: self.validator_address.0.as_bytes().to_vec().into(),
         })
     }
 
@@ -738,11 +662,9 @@ impl Protobuf for MalProposal {
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?,
             )?,
             pol_round: Round::from(proto.pol_round),
-            validator_address: MalAddress::from_proto(
-                proto
-                    .validator_address
-                    .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("validator_address"))?,
-            )?,
+            validator_address: MalPublicKey2(MalPublicKey::from_bytes(
+                proto.validator_address.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("validator_address")))?,
+            )),
         })
     }
 }
@@ -899,10 +821,6 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
     fn decode(&self, bytes: Bytes) -> Result<MalProposedValue<MalContext>, Self::Error> {
         let proto = malctx_schema_proto::ProposedValue::decode(bytes.as_ref())?;
 
-        let proposer = proto.proposer.ok_or_else(|| {
-            ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer")
-        })?;
-
         let value = proto.value.ok_or_else(|| {
             ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("value")
         })?;
@@ -911,7 +829,7 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
             height: MalHeight::new(proto.height),
             round: Round::new(proto.round),
             valid_round: proto.valid_round.map(Round::new).unwrap_or(Round::Nil),
-            proposer: MalAddress::from_proto(proposer)?,
+            proposer: MalPublicKey2(MalPublicKey::from_bytes(proto.proposer.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer")))?)),
             value: MalValue::from_proto(value)?,
             validity: MalValidity::from_bool(proto.validity),
         })
@@ -922,7 +840,7 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
             height: msg.height.as_u64(),
             round: msg.round.as_u32().unwrap(),
             valid_round: msg.valid_round.as_u32(),
-            proposer: Some(msg.proposer.to_proto()?),
+            proposer: msg.proposer.0.as_bytes().to_vec().into(),
             value: Some(msg.value.to_proto()?),
             validity: msg.validity.to_bool(),
         };
@@ -1143,10 +1061,9 @@ pub(crate) fn encode_polka_certificate(
             .iter()
             .map(
                 |sig| -> Result<malctx_schema_proto::PolkaSignature, ProtoError> {
-                    let address = sig.address.to_proto()?;
                     let signature = mal_encode_signature(&sig.signature);
                     Ok(malctx_schema_proto::PolkaSignature {
-                        validator_address: Some(address),
+                        validator_address: sig.address.0.as_bytes().to_vec().into(),
                         signature: Some(signature),
                     })
                 },
@@ -1173,16 +1090,11 @@ pub(crate) fn decode_polka_certificate(
             .signatures
             .into_iter()
             .map(|sig| -> Result<PolkaSignature<MalContext>, ProtoError> {
-                let address = sig.validator_address.ok_or_else(|| {
-                    ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>(
-                        "validator_address",
-                    )
-                })?;
                 let signature = sig.signature.ok_or_else(|| {
                     ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("signature")
                 })?;
                 let signature = mal_decode_signature(signature)?;
-                let address = MalAddress::from_proto(address)?;
+                let address = MalPublicKey2(MalPublicKey::from_bytes(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
                 Ok(PolkaSignature::new(address, signature))
             })
             .collect::<Result<Vec<_>, _>>()?,
@@ -1203,16 +1115,11 @@ pub fn mal_decode_commit_certificate(
         .signatures
         .into_iter()
         .map(|sig| -> Result<CommitSignature<MalContext>, ProtoError> {
-            let address = sig.validator_address.ok_or_else(|| {
-                ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>(
-                    "validator_address",
-                )
-            })?;
             let signature = sig.signature.ok_or_else(|| {
                 ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("signature")
             })?;
             let signature = mal_decode_signature(signature)?;
-            let address = MalAddress::from_proto(address)?;
+            let address = MalPublicKey2(MalPublicKey::from_bytes(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
             Ok(CommitSignature::new(address, signature))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1239,10 +1146,9 @@ pub fn mal_encode_commit_certificate(
             .iter()
             .map(
                 |sig| -> Result<malctx_schema_proto::CommitSignature, ProtoError> {
-                    let address = sig.address.to_proto()?;
                     let signature = mal_encode_signature(&sig.signature);
                     Ok(malctx_schema_proto::CommitSignature {
-                        validator_address: Some(address),
+                        validator_address: sig.address.0.as_bytes().to_vec().into(),
                         signature: Some(signature),
                     })
                 },
@@ -1326,54 +1232,13 @@ pub struct MalVote {
     pub height: MalHeight,
     pub round: Round,
     pub value: NilOrVal<MalValueId>,
-    pub validator_address: MalAddress,
-    pub extension: Option<SignedExtension<MalContext>>,
+    pub validator_address: MalPublicKey2,
 }
 
 impl MalVote {
-    pub fn new_prevote(
-        height: MalHeight,
-        round: Round,
-        value: NilOrVal<MalValueId>,
-        validator_address: MalAddress,
-    ) -> Self {
-        Self {
-            typ: VoteType::Prevote,
-            height,
-            round,
-            value,
-            validator_address,
-            extension: None,
-        }
-    }
-
-    pub fn new_precommit(
-        height: MalHeight,
-        round: Round,
-        value: NilOrVal<MalValueId>,
-        address: MalAddress,
-    ) -> Self {
-        Self {
-            typ: VoteType::Precommit,
-            height,
-            round,
-            value,
-            validator_address: address,
-            extension: None,
-        }
-    }
-
+    // TODO(Sam) replace this with something less proto
     pub fn to_bytes(&self) -> Bytes {
         Protobuf::to_bytes(self).unwrap()
-    }
-
-    pub fn to_sign_bytes(&self) -> Bytes {
-        let vote = Self {
-            extension: None,
-            ..self.clone()
-        };
-
-        Protobuf::to_bytes(&vote).unwrap()
     }
 }
 
@@ -1390,12 +1255,7 @@ impl Protobuf for MalVote {
                 Some(value) => NilOrVal::Val(MalValueId::from_proto(value)?),
                 None => NilOrVal::Nil,
             },
-            validator_address: MalAddress::from_proto(
-                proto
-                    .validator_address
-                    .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("validator_address"))?,
-            )?,
-            extension: Default::default(),
+            validator_address: MalPublicKey2(MalPublicKey::from_bytes(proto.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("validator_address")))?)),
         })
     }
 
@@ -1414,7 +1274,7 @@ impl Protobuf for MalVote {
                 NilOrVal::Nil => None,
                 NilOrVal::Val(v) => Some(v.to_proto()?),
             },
-            validator_address: Some(self.validator_address.to_proto()?),
+            validator_address: self.validator_address.0.as_bytes().as_slice().to_vec().into(),
         })
     }
 }
@@ -1443,24 +1303,19 @@ impl malachitebft_core_types::Vote<MalContext> for MalVote {
         self.typ
     }
 
-    fn validator_address(&self) -> &MalAddress {
+    fn validator_address(&self) -> &MalPublicKey2 {
         &self.validator_address
     }
 
     fn extension(&self) -> Option<&SignedExtension<MalContext>> {
-        self.extension.as_ref()
+        None
     }
 
     fn take_extension(&mut self) -> Option<SignedExtension<MalContext>> {
-        self.extension.take()
+        None
     }
 
-    fn extend(self, extension: SignedExtension<MalContext>) -> Self {
-        Self {
-            extension: Some(extension),
-            ..self
-        }
-    }
+    fn extend(self, extension: SignedExtension<MalContext>) -> Self { self.clone() }
 }
 
 impl Default for MalContext {
@@ -1470,7 +1325,7 @@ impl Default for MalContext {
 }
 
 impl Context for MalContext {
-    type Address = MalAddress;
+    type Address = MalPublicKey2;
     type ProposalPart = MalStreamedProposalPart;
     type Height = MalHeight;
     type Proposal = MalProposal;
@@ -1508,9 +1363,15 @@ impl Context for MalContext {
         round: Round,
         value: MalValue,
         pol_round: Round,
-        address: MalAddress,
+        address: MalPublicKey2,
     ) -> MalProposal {
-        MalProposal::new(height, round, value, pol_round, address)
+        MalProposal {
+            height,
+            round,
+            value,
+            pol_round,
+            validator_address: address,
+        }
     }
 
     fn new_prevote(
@@ -1518,9 +1379,15 @@ impl Context for MalContext {
         height: MalHeight,
         round: Round,
         value_id: NilOrVal<MalValueId>,
-        address: MalAddress,
+        address: MalPublicKey2,
     ) -> MalVote {
-        MalVote::new_prevote(height, round, value_id, address)
+        MalVote {
+            typ: VoteType::Prevote,
+            height,
+            round,
+            value: value_id,
+            validator_address: address,
+        }
     }
 
     fn new_precommit(
@@ -1528,8 +1395,14 @@ impl Context for MalContext {
         height: MalHeight,
         round: Round,
         value_id: NilOrVal<MalValueId>,
-        address: MalAddress,
+        address: MalPublicKey2,
     ) -> MalVote {
-        MalVote::new_precommit(height, round, value_id, address)
+        MalVote {
+            typ: VoteType::Precommit,
+            height,
+            round,
+            value: value_id,
+            validator_address: address,
+        }
     }
 }

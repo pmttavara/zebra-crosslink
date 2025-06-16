@@ -521,7 +521,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         MalValidatorSet::new(array)
     };
 
-    let my_address = MalAddress::from_public_key(&my_public_key);
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
     let ctx = MalContext {};
 
@@ -740,8 +739,8 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
         std::path::PathBuf::from(td.as_ref().unwrap().path())
     }
 
-    fn get_address(&self, pk: &MalPublicKey) -> MalAddress {
-        MalAddress::from_public_key(pk)
+    fn get_address(&self, pk: &MalPublicKey) -> MalPublicKey2 {
+        MalPublicKey2(pk.clone())
     }
 
     fn get_public_key(&self, pk: &MalPrivateKey) -> MalPublicKey {
@@ -1242,7 +1241,7 @@ mod strm {
     use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
     use super::{
-        MalAddress, MalHeight, MalRound, MalStreamedProposalFin, MalStreamedProposalInit,
+        MalPublicKey, MalHeight, MalRound, MalStreamedProposalFin, MalStreamedProposalInit,
         MalStreamedProposalPart,
     };
     use malachitebft_app_channel::app::consensus::PeerId;
@@ -1348,7 +1347,7 @@ mod strm {
     pub struct MalStreamedProposalParts {
         pub height: MalHeight,
         pub round: MalRound,
-        pub proposer: MalAddress,
+        pub proposer: MalPublicKey,
         pub parts: Vec<MalStreamedProposalPart>,
     }
 

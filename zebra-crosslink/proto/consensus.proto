@@ -2,10 +2,6 @@ syntax = "proto3";
 
 package mal_schema;
 
-message Address {
-    bytes value = 1;
-}
-
 message Value {
     optional bytes value = 1;
 }
@@ -18,7 +14,7 @@ message Vote {
     uint64 height = 2;
     uint32 round_and_is_commit = 3;
     ValueId value = 4;
-    Address validator_address = 5;
+    bytes validator_address = 5;
 }
 
 message SignedMessage {
@@ -34,7 +30,7 @@ message Proposal {
     uint32 round = 2;
     Value value = 3;
     optional uint32 pol_round = 4;
-    Address validator_address = 5;
+    bytes validator_address = 5;
 }
 
 message Signature {
@@ -52,7 +48,7 @@ message StreamedProposalPart {
 message StreamedProposalInit {
     uint64 height = 1;
     uint32 round = 2;
-    Address proposer = 4;
+    bytes proposer = 4;
     optional uint32 pol_round = 5;
 }
 

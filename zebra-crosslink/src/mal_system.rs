@@ -94,7 +94,6 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
     
     let codec = MalProtobufCodec;
     let my_public_key = my_private_key.public_key();
-    let my_address = MalAddress::from_public_key(&my_public_key);
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
     
     let mut pending_block_to_push_to_core: Option<BftBlock> = None;
@@ -212,7 +211,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                                 height: other_type.height,
                                 round: other_type.round,
                                 valid_round: pol_round,
-                                proposer: my_address,
+                                proposer: MalPublicKey2(my_public_key),
                                 value: other_type.value.clone(),
                                 validity: MalValidity::Valid,
                             };
@@ -247,7 +246,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         height: proposal.height,
                         round: proposal.round,
                         pol_round,
-                        proposer: my_address,
+                        proposer: my_public_key,
                     }));
 
                     hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
@@ -462,8 +461,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             for peer in tfl_handle.config.malachite_peers.iter() {
                                 let (_, _, public_key) =
                                     rng_private_public_key_from_address(&peer);
-                                let address = MalAddress::from_public_key(&public_key);
-                                if address == parts.proposer {
+                                if public_key == parts.proposer {
                                     proposer_public_key = Some(public_key);
                                     break;
                                 }
@@ -495,7 +493,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                                 height: parts.height,
                                 round: parts.round,
                                 valid_round: init.pol_round,
-                                proposer: parts.proposer,
+                                proposer: MalPublicKey2(parts.proposer),
                                 value,
                                 validity,
                             }

@@ -30,7 +30,7 @@ message SyncedValue {
 
 message CommitSignature {
     // TODO: Add flag (no vote, nil, value?)
-    Address validator_address = 1;
+    bytes validator_address = 1;
     Signature signature = 2;
 }
 
@@ -43,7 +43,7 @@ message CommitCertificate {
 
 message PolkaSignature {
     // TODO: Add flag (no vote, nil, value?)
-    Address validator_address = 1;
+    bytes validator_address = 1;
     Signature signature = 2;
 }
 
@@ -58,7 +58,7 @@ message ProposedValue {
     uint64 height = 1;
     uint32 round = 2;
     optional uint32 valid_round = 3;
-    Address proposer = 4;
+    bytes proposer = 4;
     Value value = 5;
     bool validity = 6;
 }
