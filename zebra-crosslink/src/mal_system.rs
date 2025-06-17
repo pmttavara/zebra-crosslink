@@ -240,28 +240,25 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 // of this circus is. Why not just send the value with a simple signature?
                 // I am sure there is a good reason.
 
-                let mut hasher = sha3::Keccak256::new();
+                let mut hasher = sha3::Keccak256::new(); // TODO(azmr): blake3?
                 let mut parts = Vec::new();
 
                 // Init
                 // Include metadata about the proposal
                 {
+                    let data_bytes = proposal.value.value.zcash_serialize_to_vec().unwrap();
+
+                    hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                    hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                    hasher.update(&data_bytes);
+
                     parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
                         height: proposal.height,
                         round: proposal.round,
                         pol_round,
                         proposer: my_public_key,
+                        data_bytes,
                     }));
-
-                    hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
-                    hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
-                }
-
-                // Data
-                {
-                    let piece = MalStreamedProposalData { data_bytes: proposal.value.value.zcash_serialize_to_vec().unwrap() };
-                    hasher.update(&piece.data_bytes);
-                    parts.push(MalStreamedProposalPart::Data(piece));
                 }
 
                 // Fin
@@ -498,12 +495,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             let hash = {
                                 hasher.update(init.height.as_u64().to_be_bytes());
                                 hasher.update(init.round.as_i64().to_be_bytes());
-
-                                // The correctness of the hash computation relies on the parts being ordered by sequence
-                                // number, which is guaranteed by the `PartStreamsMap`.
-                                for part in parts.parts.iter().filter_map(|part| part.as_data()) {
-                                    hasher.update(&part.data_bytes);
-                                }
+                                hasher.update(&init.data_bytes);
 
                                 hasher.finalize()
                             };
@@ -526,11 +518,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         // Re-assemble the proposal from its parts
                         let value : MalProposedValue::<MalContext> = {
                             let init = parts.init().unwrap();
-
-                            let pieces : Vec<MalStreamedProposalData> = parts.parts.iter().filter_map(|part| part.as_data()).cloned().collect();
-                            assert!(pieces.len() == 1);
-                            let piece = &pieces[0];
-                            let value = MalValue::new(piece.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
+                            let value = MalValue::new(init.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
 
                             let new_final_hash = value.value.headers.first().expect("at least 1 header").hash();
 

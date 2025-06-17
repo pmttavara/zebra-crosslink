@@ -54,11 +54,6 @@ pub use malachitebft_app::node::EngineHandle;
 
 use super::{BftPayload, Blake3Hash};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MalStreamedProposalData {
-    pub data_bytes: Vec<u8>,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Round")]
 enum RoundDef {
@@ -69,7 +64,6 @@ enum RoundDef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MalStreamedProposalPart {
     Init(MalStreamedProposalInit),
-    Data(MalStreamedProposalData),
     Fin(MalStreamedProposalFin),
 }
 
@@ -77,7 +71,6 @@ impl MalStreamedProposalPart {
     pub fn get_type(&self) -> &'static str {
         match self {
             Self::Init(_) => "init",
-            Self::Data(_) => "data",
             Self::Fin(_) => "fin",
         }
     }
@@ -85,13 +78,6 @@ impl MalStreamedProposalPart {
     pub fn as_init(&self) -> Option<&MalStreamedProposalInit> {
         match self {
             Self::Init(init) => Some(init),
-            _ => None,
-        }
-    }
-
-    pub fn as_data(&self) -> Option<&MalStreamedProposalData> {
-        match self {
-            Self::Data(data) => Some(data),
             _ => None,
         }
     }
@@ -117,15 +103,17 @@ pub struct MalStreamedProposalInit {
     #[serde(with = "RoundDef")]
     pub pol_round: Round,
     pub proposer: MalPublicKey,
+    pub data_bytes: Vec<u8>,
 }
 
 impl MalStreamedProposalInit {
-    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey) -> Self {
+    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey, data_bytes: Vec<u8>) -> Self {
         Self {
             height,
             round,
             pol_round,
             proposer,
+            data_bytes,
         }
     }
 }
@@ -168,9 +156,7 @@ impl Protobuf for MalStreamedProposalPart {
                 round: Round::new(init.round),
                 pol_round: Round::from(init.pol_round),
                 proposer: MalPublicKey::from_bytes(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
-            })),
-            Part::Data(data) => Ok(Self::Data(MalStreamedProposalData {
-                data_bytes: data.data_bytes.to_vec(),
+                data_bytes: init.data_bytes.to_vec(),
             })),
             Part::Fin(fin) => Ok(Self::Fin(MalStreamedProposalFin {
                 signature: fin
@@ -192,11 +178,7 @@ impl Protobuf for MalStreamedProposalPart {
                     round: init.round.as_u32().unwrap(),
                     pol_round: init.pol_round.as_u32(),
                     proposer: init.proposer.as_bytes().to_vec().into(),
-                })),
-            }),
-            Self::Data(data) => Ok(Self::Proto {
-                part: Some(Part::Data(malctx_schema_proto::StreamedProposalData {
-                    data_bytes: data.data_bytes.clone().into(),
+                    data_bytes: init.data_bytes.clone().into(),
                 })),
             }),
             Self::Fin(fin) => Ok(Self::Proto {
@@ -1255,7 +1237,7 @@ impl MalVote {
             buf[32..64].copy_from_slice(&value.0.0);
         }
         buf[64..72].copy_from_slice(&self.height.0.to_le_bytes());
-        
+
         let mut merged_round_val: u32 = self.round.as_u32().unwrap() & 0x7fff_ffff;
         if self.typ == VoteType::Precommit { merged_round_val |= 0x8000_0000; }
         buf[72..76].copy_from_slice(&merged_round_val.to_le_bytes());
@@ -1266,12 +1248,12 @@ impl MalVote {
         let value_hash_bytes = bytes[32..64].try_into().unwrap();
         let value = if value_hash_bytes == [0_u8; 32] { NilOrVal::Nil } else { NilOrVal::Val(MalValueId(Blake3Hash(value_hash_bytes))) };
         let height = MalHeight(u64::from_le_bytes(bytes[64..72].try_into().unwrap()));
-        
+
         let merged_round_val = u32::from_le_bytes(bytes[72..76].try_into().unwrap());
-        
+
         let typ = if merged_round_val & 0x8000_0000 != 0 { VoteType::Precommit } else { VoteType::Prevote };
         let round = Round::Some(merged_round_val & 0x7fff_ffff);
-        
+
         MalVote { validator_address, value, height, typ, round }
     }
 }
