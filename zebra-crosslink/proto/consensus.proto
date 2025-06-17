@@ -30,23 +30,13 @@ message Signature {
     bytes bytes = 1;
 }
 
-message StreamedProposalPart {
-    oneof part {
-        StreamedProposalInit init = 1;
-        StreamedProposalFin fin = 2;
-    }
-}
-
-message StreamedProposalInit {
+message StreamedProposal {
     uint64 height = 1;
     uint32 round = 2;
     bytes proposer = 4;
     optional uint32 pol_round = 5;
     bytes data_bytes = 6;
     Signature signature = 7;
-}
-
-message StreamedProposalFin {
 }
 
 message StreamMessage {

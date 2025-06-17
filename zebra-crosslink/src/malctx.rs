@@ -61,42 +61,9 @@ enum RoundDef {
     Some(u32),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MalStreamedProposalPart {
-    Init(MalStreamedProposalInit),
-    Fin,
-}
-
-impl MalStreamedProposalPart {
-    pub fn get_type(&self) -> &'static str {
-        match self {
-            Self::Init(_) => "init",
-            Self::Fin => "fin",
-        }
-    }
-
-    pub fn as_init(&self) -> Option<&MalStreamedProposalInit> {
-        match self {
-            Self::Init(init) => Some(init),
-            _ => None,
-        }
-    }
-
-    // pub fn as_fin(&self) -> Option<&MalStreamedProposalFin> {
-    //     match self {
-    //         Self::Fin(fin) => Some(fin),
-    //         _ => None,
-    //     }
-    // }
-
-    pub fn to_sign_bytes(&self) -> Bytes {
-        malachitebft_proto::Protobuf::to_bytes(self).unwrap()
-    }
-}
-
 /// A part of a value for a height, round. Identified in this scope by the sequence.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MalStreamedProposalInit {
+pub struct MalStreamedProposal {
     pub height: MalHeight,
     #[serde(with = "RoundDef")]
     pub round: Round,
@@ -107,7 +74,7 @@ pub struct MalStreamedProposalInit {
     pub signature: Signature,
 }
 
-impl MalStreamedProposalInit {
+impl MalStreamedProposal {
     pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey, data_bytes: Vec<u8>, signature: Signature) -> Self {
         Self {
             height,
@@ -118,9 +85,13 @@ impl MalStreamedProposalInit {
             signature
         }
     }
+
+    pub fn to_sign_bytes(&self) -> Bytes {
+        malachitebft_proto::Protobuf::to_bytes(self).unwrap()
+    }
 }
 
-impl malachitebft_core_types::ProposalPart<MalContext> for MalStreamedProposalPart {
+impl malachitebft_core_types::ProposalPart<MalContext> for MalStreamedProposal {
     fn is_first(&self) -> bool {
         true
     }
@@ -130,52 +101,34 @@ impl malachitebft_core_types::ProposalPart<MalContext> for MalStreamedProposalPa
     }
 }
 
-impl Protobuf for MalStreamedProposalPart {
-    type Proto = malctx_schema_proto::StreamedProposalPart;
+impl Protobuf for MalStreamedProposal {
+    type Proto = malctx_schema_proto::StreamedProposal;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        use malctx_schema_proto::streamed_proposal_part::Part;
-
-        let part = proto
-            .part
-            .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("part"))?;
-
-        match part {
-            Part::Init(init) => Ok(Self::Init(MalStreamedProposalInit {
-                height: MalHeight::new(init.height),
-                round: Round::new(init.round),
-                pol_round: Round::from(init.pol_round),
-                proposer: MalPublicKey::from_bytes(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
-                data_bytes: init.data_bytes.to_vec(),
-                signature: init
-                    .signature
-                    .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("signature"))
-                    .and_then(mal_decode_signature)?,
-            })),
-            Part::Fin(_) => Ok(Self::Fin),
-        }
+        Ok(MalStreamedProposal {
+            height: MalHeight::new(proto.height),
+            round: Round::new(proto.round),
+            pol_round: Round::from(proto.pol_round),
+            proposer: MalPublicKey::from_bytes(proto.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
+            data_bytes: proto.data_bytes.to_vec(),
+            signature: proto
+                .signature
+                .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("signature"))
+                .and_then(mal_decode_signature)?,
+        })
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
-        use malctx_schema_proto::streamed_proposal_part::Part;
-
-        match self {
-            Self::Init(init) => Ok(Self::Proto {
-                part: Some(Part::Init(malctx_schema_proto::StreamedProposalInit {
-                    height: init.height.as_u64(),
-                    round: init.round.as_u32().unwrap(),
-                    pol_round: init.pol_round.as_u32(),
-                    proposer: init.proposer.as_bytes().to_vec().into(),
-                    data_bytes: init.data_bytes.clone().into(),
-                    signature: Some(mal_encode_signature(&init.signature)),
-                })),
-            }),
-            Self::Fin => Ok(Self::Proto {
-                part: Some(Part::Fin(malctx_schema_proto::StreamedProposalFin{})),
-            }),
-        }
+        Ok(Self::Proto {
+            height: self.height.as_u64(),
+            round: self.round.as_u32().unwrap(),
+            pol_round: self.pol_round.as_u32(),
+            proposer: self.proposer.as_bytes().to_vec().into(),
+            data_bytes: self.data_bytes.clone().into(),
+            signature: Some(mal_encode_signature(&self.signature)),
+        })
     }
 }
 
@@ -414,7 +367,7 @@ impl SigningProvider<MalContext> for MalEd25519Provider {
 
     fn sign_proposal_part(
         &self,
-        proposal_part: MalStreamedProposalPart,
+        proposal_part: MalStreamedProposal,
     ) -> SignedProposalPart<MalContext> {
         let signature = self.private_key.sign(&proposal_part.to_sign_bytes());
         SignedProposalPart::new(proposal_part, signature)
@@ -422,7 +375,7 @@ impl SigningProvider<MalContext> for MalEd25519Provider {
 
     fn verify_signed_proposal_part(
         &self,
-        proposal_part: &MalStreamedProposalPart,
+        proposal_part: &MalStreamedProposal,
         signature: &Signature,
         public_key: &MalPublicKey,
     ) -> bool {
@@ -661,14 +614,14 @@ impl Codec<MalValue> for MalProtobufCodec {
     }
 }
 
-impl Codec<MalStreamedProposalPart> for MalProtobufCodec {
+impl Codec<MalStreamedProposal> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<MalStreamedProposalPart, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<MalStreamedProposal, Self::Error> {
         Protobuf::from_bytes(&bytes)
     }
 
-    fn encode(&self, msg: &MalStreamedProposalPart) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &MalStreamedProposal) -> Result<Bytes, Self::Error> {
         Protobuf::to_bytes(msg)
     }
 }
@@ -746,10 +699,10 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
     }
 }
 
-impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
+impl Codec<StreamMessage<MalStreamedProposal>> for MalProtobufCodec {
     type Error = ProtoError;
 
-    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<MalStreamedProposalPart>, Self::Error> {
+    fn decode(&self, bytes: Bytes) -> Result<StreamMessage<MalStreamedProposal>, Self::Error> {
         let proto = malctx_schema_proto::StreamMessage::decode(bytes.as_ref())?;
 
         let proto_content = proto.content.ok_or_else(|| {
@@ -758,7 +711,7 @@ impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
 
         let content = match proto_content {
             malctx_schema_proto::stream_message::Content::Data(data) => {
-                StreamContent::Data(MalStreamedProposalPart::from_bytes(&data)?)
+                StreamContent::Data(MalStreamedProposal::from_bytes(&data)?)
             }
             malctx_schema_proto::stream_message::Content::Fin(_) => StreamContent::Fin,
         };
@@ -770,7 +723,7 @@ impl Codec<StreamMessage<MalStreamedProposalPart>> for MalProtobufCodec {
         })
     }
 
-    fn encode(&self, msg: &StreamMessage<MalStreamedProposalPart>) -> Result<Bytes, Self::Error> {
+    fn encode(&self, msg: &StreamMessage<MalStreamedProposal>) -> Result<Bytes, Self::Error> {
         let proto = malctx_schema_proto::StreamMessage {
             stream_id: msg.stream_id.to_bytes(),
             sequence: msg.sequence,
@@ -1294,7 +1247,7 @@ impl Default for MalContext {
 
 impl Context for MalContext {
     type Address = MalPublicKey2;
-    type ProposalPart = MalStreamedProposalPart;
+    type ProposalPart = MalStreamedProposal;
     type Height = MalHeight;
     type Proposal = MalProposal;
     type ValidatorSet = MalValidatorSet;

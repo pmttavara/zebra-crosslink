@@ -240,34 +240,24 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 // of this circus is. Why not just send the value with a simple signature?
                 // I am sure there is a good reason.
 
-                let mut hasher = sha3::Keccak256::new(); // TODO(azmr): blake3?
-                let mut parts = Vec::new();
-
-                // Init
                 // Include metadata about the proposal
-                {
-                    let data_bytes = proposal.value.value.zcash_serialize_to_vec().unwrap();
+                let data_bytes = proposal.value.value.zcash_serialize_to_vec().unwrap();
 
-                    hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
-                    hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
-                    hasher.update(&data_bytes);
-                    let hash = hasher.finalize().to_vec();
-                    let signature = my_signing_provider.sign(&hash);
+                let mut hasher = sha3::Keccak256::new(); // TODO(azmr): blake3/remove?
+                hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                hasher.update(&data_bytes);
+                let hash = hasher.finalize().to_vec();
+                let signature = my_signing_provider.sign(&hash);
 
-                    parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
-                        height: proposal.height,
-                        round: proposal.round,
-                        pol_round,
-                        proposer: my_public_key,
-                        data_bytes,
-                        signature,
-                    }));
-                }
-
-                // Fin
-                {
-                    parts.push(MalStreamedProposalPart::Fin);
-                }
+                let streamed_proposal = MalStreamedProposal {
+                    height: proposal.height,
+                    round: proposal.round,
+                    pol_round,
+                    proposer: my_public_key,
+                    data_bytes,
+                    signature,
+                };
 
                 let stream_id = {
                     let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
@@ -276,16 +266,10 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
                 };
 
-                let mut msgs = Vec::with_capacity(parts.len() + 1);
-                let mut sequence = 0;
-
-                for part in parts {
-                    let msg = malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), sequence, malachitebft_app_channel::app::streaming::StreamContent::Data(part));
-                    sequence += 1;
-                    msgs.push(msg);
-                }
-
-                msgs.push(malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, sequence, malachitebft_app_channel::app::streaming::StreamContent::Fin));
+                let mut msgs = vec![
+                    malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id.clone(), 0, malachitebft_app_channel::app::streaming::StreamContent::Data(streamed_proposal)),
+                    malachitebft_app_channel::app::types::streaming::StreamMessage::new(stream_id, 1, malachitebft_app_channel::app::streaming::StreamContent::Fin)
+                ];
 
                 for stream_message in msgs {
                     //info!(%height, %round, "Streaming proposal part: {stream_message:?}");
@@ -410,93 +394,14 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
             // consider and vote for or against it (ie. vote `nil`), depending on its validity.
             BFTAppMsg::ReceivedProposalPart { from, part, reply } => {
                 bft_msg_flags |= 1 << BFTMsgFlag::ReceivedProposalPart as u64;
-                let part_type = match &part.content {
-                    malachitebft_app_channel::app::streaming::StreamContent::Data(part) => part.get_type(),
-                    malachitebft_app_channel::app::streaming::StreamContent::Fin => "end of stream",
-                };
-
-                info!(%from, %part.sequence, part.type = %part_type, "Received proposal part");
-
                 let sequence = part.sequence;
 
-                use strm::MalStreamedProposalParts;
+                use malctx::MalStreamedProposal;
                 // Check if we have a full proposal
                 let peer_id = from;
                 let msg = part;
-                let parts: Option<MalStreamedProposalParts> = {
-                    // let stream_id = msg.stream_id.clone();
-                    // let state = streams
-                    //     .entry((peer_id, stream_id.clone()))
-                    //     .or_default();
 
-                    // if !state.seen_sequences.insert(msg.sequence) {
-                    //     // We have already seen a message with this sequence number.
-                    //     break None;
-                    // }
-
-                    let msg_data = msg.content.as_data();
-
-                    if let Some(init_info) = msg_data.and_then(|p| p.as_init()).cloned() {
-                        Some(MalStreamedProposalParts {
-                            height: init_info.height,
-                            round: init_info.round,
-                            proposer: init_info.proposer,
-                            parts: vec![msg_data.unwrap().clone()],
-                        })
-                    } else {
-                        None
-                    }
-                };
-
-                /*
-                let parts : Option<MalStreamedProposalParts> = loop {
-                    let stream_id = msg.stream_id.clone();
-                    let state = streams
-                        .entry((peer_id, stream_id.clone()))
-                        .or_default();
-
-                    if !state.seen_sequences.insert(msg.sequence) {
-                        // We have already seen a message with this sequence number.
-                        break None;
-                    }
-
-                    let result: Option<MalStreamedProposalParts> = {
-                        if msg.is_first() {
-                            state.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
-                        }
-
-                        if msg.is_fin() {
-                            state.fin_received = true;
-                            state.total_messages = msg.sequence as usize + 1;
-                        }
-
-                        state.buffer.push(msg);
-
-                        if state.is_done() {
-                            if let Some(init_info) = state.init_info.take() {
-                                Some(MalStreamedProposalParts {
-                                    height: init_info.height,
-                                    round: init_info.round,
-                                    proposer: init_info.proposer,
-                                    parts: state.buffer.drain(),
-                                })
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    };
-
-                    if state.is_done() {
-                        streams.remove(&(peer_id, stream_id));
-                    }
-
-                    break result;
-                };
-                */
-
-                if let Some(parts) = parts {
+                if let Some(parts) = msg.content.as_data().cloned() {
 
                     // NOTE(Sam): It seems VERY odd that we don't drop individual stream parts for being too
                     // old. Why assemble something that might never finish and is known to be stale?
@@ -517,12 +422,10 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         {
                             let mut hasher = sha3::Keccak256::new();
 
-                            let init = parts.init().unwrap();
-
                             let hash = {
-                                hasher.update(init.height.as_u64().to_be_bytes());
-                                hasher.update(init.round.as_i64().to_be_bytes());
-                                hasher.update(&init.data_bytes);
+                                hasher.update(parts.height.as_u64().to_be_bytes());
+                                hasher.update(parts.round.as_i64().to_be_bytes());
+                                hasher.update(&parts.data_bytes);
                                 hasher.finalize()
                             };
 
@@ -538,13 +441,12 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             }
 
                             // Verify the signature
-                            assert!(my_signing_provider.verify(&hash, &init.signature, &proposer_public_key.expect("proposer not found")));
+                            assert!(my_signing_provider.verify(&hash, &parts.signature, &proposer_public_key.expect("proposer not found")));
                         }
 
                         // Re-assemble the proposal from its parts
                         let value : MalProposedValue::<MalContext> = {
-                            let init = parts.init().unwrap();
-                            let value = MalValue::new(init.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
+                            let value = MalValue::new(parts.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
 
                             let new_final_hash = value.value.headers.first().expect("at least 1 header").hash();
 
@@ -558,7 +460,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             MalProposedValue {
                                 height: parts.height,
                                 round: parts.round,
-                                valid_round: init.pol_round,
+                                valid_round: parts.pol_round,
                                 proposer: MalPublicKey2(parts.proposer),
                                 value,
                                 validity,
