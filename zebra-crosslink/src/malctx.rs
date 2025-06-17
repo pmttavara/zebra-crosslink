@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 
+use malachitebft_core_types::SigningScheme;
 use malachitebft_core_types::{
     Context, Extension, NilOrVal, Round, SignedExtension, ValidatorSet as _, VoteType, VotingPower,
 };
 
-use malachitebft_signing_ed25519::Signature;
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
@@ -30,9 +30,10 @@ pub use malachitebft_core_types::{
     Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions,
 };
 
-pub use malachitebft_signing_ed25519::{
-    Ed25519 as MalEd25519, PrivateKey as MalPrivateKey, PublicKey as MalPublicKey,
-};
+pub use ed25519_zebra::SigningKey as MalPrivateKey;
+pub use ed25519_zebra::VerificationKeyBytes as MalPublicKey;
+pub use ed25519_zebra::Signature;
+pub use ed25519_zebra::ed25519::SignatureBytes;
 
 use prost::Message;
 
@@ -167,7 +168,7 @@ impl Protobuf for MalStreamedProposalPart {
                 height: MalHeight::new(init.height),
                 round: Round::new(init.round),
                 pol_round: Round::from(init.pol_round),
-                proposer: MalPublicKey::from_bytes(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
+                proposer: From::<[u8; 32]>::from(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
             })),
             Part::Data(data) => Ok(Self::Data(MalStreamedProposalData {
                 data_bytes: data.data_bytes.to_vec(),
@@ -191,7 +192,7 @@ impl Protobuf for MalStreamedProposalPart {
                     height: init.height.as_u64(),
                     round: init.round.as_u32().unwrap(),
                     pol_round: init.pol_round.as_u32(),
-                    proposer: init.proposer.as_bytes().to_vec().into(),
+                    proposer: init.proposer.as_ref().to_vec().into(),
                 })),
             }),
             Self::Data(data) => Ok(Self::Proto {
@@ -282,7 +283,7 @@ pub struct MalPublicKey2(pub MalPublicKey);
 
 impl fmt::Display for MalPublicKey2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0.as_bytes() {
+        for byte in self.0.as_ref() {
             write!(f, "{:02X}", byte)?;
         }
         Ok(())
@@ -397,83 +398,96 @@ impl MalEd25519Provider {
         Self { private_key }
     }
 
-    pub fn private_key(&self) -> &MalPrivateKey {
-        &self.private_key
-    }
-
     pub fn sign(&self, data: &[u8]) -> Signature {
         self.private_key.sign(data)
     }
 
     pub fn verify(&self, data: &[u8], signature: &Signature, public_key: &MalPublicKey) -> bool {
-        public_key.verify(data, signature).is_ok()
+        ed25519_zebra::VerificationKey::try_from(public_key.clone()).and_then(|vk| vk.verify(signature, data)).is_ok()
     }
 }
 
 impl SigningProvider<MalContext> for MalEd25519Provider {
     fn sign_vote(&self, vote: MalVote) -> SignedVote<MalContext> {
-        let signature = self.sign(&vote.to_bytes());
+        let signature = self.sign(&vote.to_bytes()).to_bytes();
         SignedVote::new(vote, signature)
     }
 
     fn verify_signed_vote(
         &self,
         vote: &MalVote,
-        signature: &Signature,
+        signature: &SignatureBytes,
         public_key: &MalPublicKey,
     ) -> bool {
-        public_key.verify(&vote.to_bytes(), signature).is_ok()
+        self.verify(&vote.to_bytes(), &Signature::from_bytes(signature), public_key)
     }
 
     fn sign_proposal(&self, proposal: MalProposal) -> SignedProposal<MalContext> {
-        let signature = self.private_key.sign(&proposal.to_sign_bytes());
+        let signature = self.sign(&proposal.to_sign_bytes()).to_bytes();
         SignedProposal::new(proposal, signature)
     }
 
     fn verify_signed_proposal(
         &self,
         proposal: &MalProposal,
-        signature: &Signature,
+        signature: &SignatureBytes,
         public_key: &MalPublicKey,
     ) -> bool {
-        public_key
-            .verify(&proposal.to_sign_bytes(), signature)
-            .is_ok()
+        self.verify(&proposal.to_sign_bytes(), &Signature::from_bytes(signature), public_key)
     }
 
     fn sign_proposal_part(
         &self,
         proposal_part: MalStreamedProposalPart,
     ) -> SignedProposalPart<MalContext> {
-        let signature = self.private_key.sign(&proposal_part.to_sign_bytes());
+        let signature = self.sign(&proposal_part.to_sign_bytes()).to_bytes();
         SignedProposalPart::new(proposal_part, signature)
     }
 
     fn verify_signed_proposal_part(
         &self,
         proposal_part: &MalStreamedProposalPart,
-        signature: &Signature,
+        signature: &SignatureBytes,
         public_key: &MalPublicKey,
     ) -> bool {
-        public_key
-            .verify(&proposal_part.to_sign_bytes(), signature)
-            .is_ok()
+        self.verify(&proposal_part.to_sign_bytes(), &Signature::from_bytes(signature), public_key)
     }
 
     fn sign_vote_extension(&self, extension: Bytes) -> SignedExtension<MalContext> {
-        let signature = self.private_key.sign(extension.as_ref());
+        let signature = self.sign(extension.as_ref()).to_bytes();
         malachitebft_core_types::SignedMessage::new(extension, signature)
     }
 
     fn verify_signed_vote_extension(
         &self,
         extension: &Bytes,
-        signature: &Signature,
+        signature: &SignatureBytes,
         public_key: &MalPublicKey,
     ) -> bool {
-        public_key.verify(extension.as_ref(), signature).is_ok()
+        self.verify(&extension, &Signature::from_bytes(signature), public_key)
     }
 }
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct MalEd25519SigningScheme;
+
+impl SigningScheme for MalEd25519SigningScheme {
+    type DecodingError = &'static str;
+    type Signature = ed25519_zebra::ed25519::SignatureBytes;
+    type PublicKey = MalPublicKey;
+    type PrivateKey = MalPrivateKey;
+
+    /// Decode a signature from a byte array.
+    fn decode_signature(bytes: &[u8]) -> Result<Self::Signature, Self::DecodingError> {
+        bytes.try_into().map_err(|_| "The size was not 64 bytes.")
+    }
+
+    /// Encode a signature to a byte array.
+    fn encode_signature(signature: &Self::Signature) -> Vec<u8> {
+        signature.to_vec()
+    }
+}
+
 
 /// A validator is a public key and voting power
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -647,7 +661,7 @@ impl Protobuf for MalProposal {
             round: self.round.as_u32().expect("round should not be nil"),
             value: Some(self.value.to_proto()?),
             pol_round: self.pol_round.as_u32(),
-            validator_address: self.validator_address.0.as_bytes().to_vec().into(),
+            validator_address: self.validator_address.0.as_ref().to_vec().into(),
         })
     }
 
@@ -662,7 +676,7 @@ impl Protobuf for MalProposal {
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?,
             )?,
             pol_round: Round::from(proto.pol_round),
-            validator_address: MalPublicKey2(MalPublicKey::from_bytes(
+            validator_address: MalPublicKey2(From::<[u8; 32]>::from(
                 proto.validator_address.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("validator_address")))?,
             )),
         })
@@ -731,7 +745,7 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
             .ok_or_else(|| {
                 ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("signature")
             })
-            .and_then(mal_decode_signature)?;
+            .and_then(mal_decode_signature)?.to_bytes();
 
         let proto_message = proto.message.ok_or_else(|| {
             ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("message")
@@ -758,7 +772,7 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
                     message: Some(malctx_schema_proto::signed_message::Message::Vote(
                         vote.message.to_bytes().to_vec().into(),
                     )),
-                    signature: Some(mal_encode_signature(&vote.signature)),
+                    signature: Some(mal_encode_signature(&Signature::from_bytes(&vote.signature))),
                 };
                 Ok(Bytes::from(proto.encode_to_vec()))
             }
@@ -767,7 +781,7 @@ impl Codec<SignedConsensusMsg<MalContext>> for MalProtobufCodec {
                     message: Some(malctx_schema_proto::signed_message::Message::Proposal(
                         proposal.message.to_proto()?,
                     )),
-                    signature: Some(mal_encode_signature(&proposal.signature)),
+                    signature: Some(mal_encode_signature(&Signature::from_bytes(&proposal.signature))),
                 };
                 Ok(Bytes::from(proto.encode_to_vec()))
             }
@@ -829,7 +843,7 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
             height: MalHeight::new(proto.height),
             round: Round::new(proto.round),
             valid_round: proto.valid_round.map(Round::new).unwrap_or(Round::Nil),
-            proposer: MalPublicKey2(MalPublicKey::from_bytes(proto.proposer.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer")))?)),
+            proposer: MalPublicKey2(From::<[u8; 32]>::from(proto.proposer.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::ProposedValue>("proposer")))?)),
             value: MalValue::from_proto(value)?,
             validity: MalValidity::from_bool(proto.validity),
         })
@@ -840,7 +854,7 @@ impl Codec<MalProposedValue<MalContext>> for MalProtobufCodec {
             height: msg.height.as_u64(),
             round: msg.round.as_u32().unwrap(),
             valid_round: msg.valid_round.as_u32(),
-            proposer: msg.proposer.0.as_bytes().to_vec().into(),
+            proposer: msg.proposer.0.as_ref().to_vec().into(),
             value: Some(msg.value.to_proto()?),
             validity: msg.validity.to_bool(),
         };
@@ -1061,9 +1075,9 @@ pub(crate) fn encode_polka_certificate(
             .iter()
             .map(
                 |sig| -> Result<malctx_schema_proto::PolkaSignature, ProtoError> {
-                    let signature = mal_encode_signature(&sig.signature);
+                    let signature = mal_encode_signature(&Signature::from_bytes(&sig.signature));
                     Ok(malctx_schema_proto::PolkaSignature {
-                        validator_address: sig.address.0.as_bytes().to_vec().into(),
+                        validator_address: sig.address.0.as_ref().to_vec().into(),
                         signature: Some(signature),
                     })
                 },
@@ -1093,8 +1107,8 @@ pub(crate) fn decode_polka_certificate(
                 let signature = sig.signature.ok_or_else(|| {
                     ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("signature")
                 })?;
-                let signature = mal_decode_signature(signature)?;
-                let address = MalPublicKey2(MalPublicKey::from_bytes(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
+                let signature = mal_decode_signature(signature)?.to_bytes();
+                let address = MalPublicKey2(From::<[u8; 32]>::from(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
                 Ok(PolkaSignature::new(address, signature))
             })
             .collect::<Result<Vec<_>, _>>()?,
@@ -1118,8 +1132,8 @@ pub fn mal_decode_commit_certificate(
             let signature = sig.signature.ok_or_else(|| {
                 ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("signature")
             })?;
-            let signature = mal_decode_signature(signature)?;
-            let address = MalPublicKey2(MalPublicKey::from_bytes(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
+            let signature = mal_decode_signature(signature)?.to_bytes();
+            let address = MalPublicKey2(From::<[u8; 32]>::from(sig.validator_address.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::PolkaCertificate>("validator_address")))?));
             Ok(CommitSignature::new(address, signature))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1146,9 +1160,9 @@ pub fn mal_encode_commit_certificate(
             .iter()
             .map(
                 |sig| -> Result<malctx_schema_proto::CommitSignature, ProtoError> {
-                    let signature = mal_encode_signature(&sig.signature);
+                    let signature = mal_encode_signature(&Signature::from_bytes(&sig.signature));
                     Ok(malctx_schema_proto::CommitSignature {
-                        validator_address: sig.address.0.as_bytes().to_vec().into(),
+                        validator_address: sig.address.0.as_ref().to_vec().into(),
                         signature: Some(signature),
                     })
                 },
@@ -1176,7 +1190,7 @@ pub fn mal_encode_vote(
         message: Some(malctx_schema_proto::signed_message::Message::Vote(
             vote.message.to_bytes().to_vec().into(),
         )),
-        signature: Some(mal_encode_signature(&vote.signature)),
+        signature: Some(mal_encode_signature(&Signature::from_bytes(&vote.signature))),
     })
 }
 
@@ -1206,7 +1220,7 @@ pub fn mal_decode_vote(
         )),
     }?;
 
-    let signature = mal_decode_signature(signature)?;
+    let signature = mal_decode_signature(signature)?.to_bytes();
     let vote = MalVote::from_bytes(&vote.as_ref().to_vec().try_into().or_else(|_| Err(ProtoError::missing_field::<malctx_schema_proto::SignedMessage>("vote")))?);
     Ok(SignedVote::new(vote, signature))
 }
@@ -1222,7 +1236,7 @@ pub fn mal_decode_signature(
 ) -> Result<Signature, ProtoError> {
     let bytes = <[u8; 64]>::try_from(signature.bytes.as_ref())
         .map_err(|_| ProtoError::Other("Invalid signature length".to_string()))?;
-    Ok(Signature::from_bytes(bytes))
+    Ok(Signature::from_bytes(&bytes))
 }
 
 /// A vote for a value in a round
@@ -1250,7 +1264,7 @@ A signed vote will be this same layout followed by the 64 byte ed25519 signature
 impl MalVote {
     pub fn to_bytes(&self) -> [u8; 76] {
         let mut buf = [0_u8; 76];
-        buf[0..32].copy_from_slice(self.validator_address.0.as_bytes());
+        buf[0..32].copy_from_slice(self.validator_address.0.as_ref());
         if let NilOrVal::Val(value) = self.value {
             buf[32..64].copy_from_slice(&value.0.0);
         }
@@ -1262,7 +1276,7 @@ impl MalVote {
         buf
     }
     pub fn from_bytes(bytes: &[u8; 76]) -> MalVote {
-        let validator_address = MalPublicKey2(MalPublicKey::from_bytes(bytes[0..32].try_into().unwrap()));
+        let validator_address = MalPublicKey2(From::<[u8; 32]>::from(bytes[0..32].try_into().unwrap()));
         let value_hash_bytes = bytes[32..64].try_into().unwrap();
         let value = if value_hash_bytes == [0_u8; 32] { NilOrVal::Nil } else { NilOrVal::Val(MalValueId(Blake3Hash(value_hash_bytes))) };
         let height = MalHeight(u64::from_le_bytes(bytes[64..72].try_into().unwrap()));
@@ -1331,7 +1345,7 @@ impl Context for MalContext {
     type Value = MalValue;
     type Vote = MalVote;
     type Extension = Bytes;
-    type SigningScheme = MalEd25519;
+    type SigningScheme = MalEd25519SigningScheme;
 
     fn select_proposer<'a>(
         &self,

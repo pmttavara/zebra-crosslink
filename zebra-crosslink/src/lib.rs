@@ -303,8 +303,8 @@ fn rng_private_public_key_from_address(
     hasher.write(addr.as_bytes());
     let seed = hasher.finish();
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let private_key = MalPrivateKey::generate(&mut rng);
-    let public_key = private_key.public_key();
+    let private_key = MalPrivateKey::new(&mut rng);
+    let public_key = (&private_key).into();
     (rng, private_key, public_key)
 }
 
@@ -744,11 +744,11 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     }
 
     fn get_public_key(&self, pk: &MalPrivateKey) -> MalPublicKey {
-        pk.public_key()
+        pk.into()
     }
 
     fn get_keypair(&self, pk: MalPrivateKey) -> MalKeyPair {
-        MalKeyPair::ed25519_from_bytes(pk.inner().to_bytes()).unwrap()
+        MalKeyPair::ed25519_from_bytes(pk.as_ref().to_vec()).unwrap()
     }
 
     fn load_private_key(&self, _file: ()) -> MalPrivateKey {

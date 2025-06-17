@@ -87,13 +87,6 @@ git = "https://github.com/ShieldedLabs/malachite.git"
 rev = "4c2a9560ceb75868af23de388991a1eafc42ec9b"
 package = "informalsystems-malachitebft-proto"
 
-[dependencies.malachitebft-signing-ed25519]
-version = "0.2.0"
-git = "https://github.com/ShieldedLabs/malachite.git"
-rev = "4c2a9560ceb75868af23de388991a1eafc42ec9b"
-package = "informalsystems-malachitebft-signing-ed25519"
-features = ["serde", "rand"]
-
 [dependencies.malachitebft-core-types]
 version = "0.2.0"
 git = "https://github.com/ShieldedLabs/malachite.git"
