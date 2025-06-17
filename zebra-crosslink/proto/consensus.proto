@@ -43,10 +43,10 @@ message StreamedProposalInit {
     bytes proposer = 4;
     optional uint32 pol_round = 5;
     bytes data_bytes = 6;
+    Signature signature = 7;
 }
 
 message StreamedProposalFin {
-    Signature signature = 1;
 }
 
 message StreamMessage {

@@ -251,6 +251,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
                     hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
                     hasher.update(&data_bytes);
+                    let hash = hasher.finalize().to_vec();
+                    let signature = my_signing_provider.sign(&hash);
 
                     parts.push(MalStreamedProposalPart::Init(MalStreamedProposalInit {
                         height: proposal.height,
@@ -258,15 +260,13 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         pol_round,
                         proposer: my_public_key,
                         data_bytes,
+                        signature,
                     }));
                 }
 
                 // Fin
-                // Sign the hash of the proposal parts
                 {
-                    let hash = hasher.finalize().to_vec();
-                    let signature = my_signing_provider.sign(&hash);
-                    parts.push(MalStreamedProposalPart::Fin(MalStreamedProposalFin::new(signature)));
+                    parts.push(MalStreamedProposalPart::Fin);
                 }
 
                 let stream_id = {
@@ -423,6 +423,32 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 // Check if we have a full proposal
                 let peer_id = from;
                 let msg = part;
+                let parts: Option<MalStreamedProposalParts> = {
+                    // let stream_id = msg.stream_id.clone();
+                    // let state = streams
+                    //     .entry((peer_id, stream_id.clone()))
+                    //     .or_default();
+
+                    // if !state.seen_sequences.insert(msg.sequence) {
+                    //     // We have already seen a message with this sequence number.
+                    //     break None;
+                    // }
+
+                    let msg_data = msg.content.as_data();
+
+                    if let Some(init_info) = msg_data.and_then(|p| p.as_init()).cloned() {
+                        Some(MalStreamedProposalParts {
+                            height: init_info.height,
+                            round: init_info.round,
+                            proposer: init_info.proposer,
+                            parts: vec![msg_data.unwrap().clone()],
+                        })
+                    } else {
+                        None
+                    }
+                };
+
+                /*
                 let parts : Option<MalStreamedProposalParts> = loop {
                     let stream_id = msg.stream_id.clone();
                     let state = streams
@@ -468,6 +494,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                     break result;
                 };
+                */
+
                 if let Some(parts) = parts {
 
                     // NOTE(Sam): It seems VERY odd that we don't drop individual stream parts for being too
@@ -490,13 +518,11 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             let mut hasher = sha3::Keccak256::new();
 
                             let init = parts.init().unwrap();
-                            let fin = parts.fin().unwrap();
 
                             let hash = {
                                 hasher.update(init.height.as_u64().to_be_bytes());
                                 hasher.update(init.round.as_i64().to_be_bytes());
                                 hasher.update(&init.data_bytes);
-
                                 hasher.finalize()
                             };
 
@@ -512,7 +538,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             }
 
                             // Verify the signature
-                            assert!(my_signing_provider.verify(&hash, &fin.signature, &proposer_public_key.expect("proposer not found")));
+                            assert!(my_signing_provider.verify(&hash, &init.signature, &proposer_public_key.expect("proposer not found")));
                         }
 
                         // Re-assemble the proposal from its parts

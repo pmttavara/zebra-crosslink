@@ -1241,7 +1241,7 @@ mod strm {
     use std::collections::{BTreeMap, BinaryHeap, HashSet};
 
     use super::{
-        MalPublicKey, MalHeight, MalRound, MalStreamedProposalFin, MalStreamedProposalInit,
+        MalPublicKey, MalHeight, MalRound, MalStreamedProposalInit,
         MalStreamedProposalPart,
     };
     use malachitebft_app_channel::app::consensus::PeerId;
@@ -1299,10 +1299,10 @@ mod strm {
 
     #[derive(Default)]
     pub struct StreamState {
-        pub buffer: MinHeap<MalStreamedProposalPart>,
+        // pub buffer: MinHeap<MalStreamedProposalPart>,
         pub init_info: Option<MalStreamedProposalInit>,
         pub seen_sequences: HashSet<Sequence>,
-        pub total_messages: usize,
+        // pub total_messages: usize,
         pub fin_received: bool,
     }
 
@@ -1310,7 +1310,7 @@ mod strm {
         pub fn is_done(&self) -> bool {
             self.init_info.is_some()
                 && self.fin_received
-                && self.buffer.len() == self.total_messages
+                // && self.buffer.len() == self.total_messages
         }
     }
 
@@ -1325,10 +1325,6 @@ mod strm {
     impl MalStreamedProposalParts {
         pub fn init(&self) -> Option<&MalStreamedProposalInit> {
             self.parts.iter().find_map(|p| p.as_init())
-        }
-
-        pub fn fin(&self) -> Option<&MalStreamedProposalFin> {
-            self.parts.iter().find_map(|p| p.as_fin())
         }
     }
 

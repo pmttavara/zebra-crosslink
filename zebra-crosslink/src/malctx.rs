@@ -64,14 +64,14 @@ enum RoundDef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MalStreamedProposalPart {
     Init(MalStreamedProposalInit),
-    Fin(MalStreamedProposalFin),
+    Fin,
 }
 
 impl MalStreamedProposalPart {
     pub fn get_type(&self) -> &'static str {
         match self {
             Self::Init(_) => "init",
-            Self::Fin(_) => "fin",
+            Self::Fin => "fin",
         }
     }
 
@@ -82,12 +82,12 @@ impl MalStreamedProposalPart {
         }
     }
 
-    pub fn as_fin(&self) -> Option<&MalStreamedProposalFin> {
-        match self {
-            Self::Fin(fin) => Some(fin),
-            _ => None,
-        }
-    }
+    // pub fn as_fin(&self) -> Option<&MalStreamedProposalFin> {
+    //     match self {
+    //         Self::Fin(fin) => Some(fin),
+    //         _ => None,
+    //     }
+    // }
 
     pub fn to_sign_bytes(&self) -> Bytes {
         malachitebft_proto::Protobuf::to_bytes(self).unwrap()
@@ -104,38 +104,29 @@ pub struct MalStreamedProposalInit {
     pub pol_round: Round,
     pub proposer: MalPublicKey,
     pub data_bytes: Vec<u8>,
+    pub signature: Signature,
 }
 
 impl MalStreamedProposalInit {
-    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey, data_bytes: Vec<u8>) -> Self {
+    pub fn new(height: MalHeight, round: Round, pol_round: Round, proposer: MalPublicKey, data_bytes: Vec<u8>, signature: Signature) -> Self {
         Self {
             height,
             round,
             pol_round,
             proposer,
             data_bytes,
+            signature
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MalStreamedProposalFin {
-    pub signature: Signature,
-}
-
-impl MalStreamedProposalFin {
-    pub fn new(signature: Signature) -> Self {
-        Self { signature }
     }
 }
 
 impl malachitebft_core_types::ProposalPart<MalContext> for MalStreamedProposalPart {
     fn is_first(&self) -> bool {
-        matches!(self, Self::Init(_))
+        true
     }
 
     fn is_last(&self) -> bool {
-        matches!(self, Self::Fin(_))
+        true
     }
 }
 
@@ -157,13 +148,12 @@ impl Protobuf for MalStreamedProposalPart {
                 pol_round: Round::from(init.pol_round),
                 proposer: MalPublicKey::from_bytes(init.proposer.as_ref().try_into().or_else(|_| Err(ProtoError::missing_field::<Self::Proto>("proposer")))?),
                 data_bytes: init.data_bytes.to_vec(),
-            })),
-            Part::Fin(fin) => Ok(Self::Fin(MalStreamedProposalFin {
-                signature: fin
+                signature: init
                     .signature
                     .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("signature"))
                     .and_then(mal_decode_signature)?,
             })),
+            Part::Fin(_) => Ok(Self::Fin),
         }
     }
 
@@ -179,12 +169,11 @@ impl Protobuf for MalStreamedProposalPart {
                     pol_round: init.pol_round.as_u32(),
                     proposer: init.proposer.as_bytes().to_vec().into(),
                     data_bytes: init.data_bytes.clone().into(),
+                    signature: Some(mal_encode_signature(&init.signature)),
                 })),
             }),
-            Self::Fin(fin) => Ok(Self::Proto {
-                part: Some(Part::Fin(malctx_schema_proto::StreamedProposalFin {
-                    signature: Some(mal_encode_signature(&fin.signature)),
-                })),
+            Self::Fin => Ok(Self::Proto {
+                part: Some(Part::Fin(malctx_schema_proto::StreamedProposalFin{})),
             }),
         }
     }
