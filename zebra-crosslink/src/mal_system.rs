@@ -422,10 +422,11 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 let sequence = part.sequence;
 
+                use strm::MalStreamedProposalParts;
                 // Check if we have a full proposal
                 let peer_id = from;
                 let msg = part;
-                let parts : Option<strm::MalStreamedProposalParts> = loop {
+                let parts : Option<MalStreamedProposalParts> = loop {
                     let stream_id = msg.stream_id.clone();
                     let state = streams
                         .entry((peer_id, stream_id.clone()))
@@ -436,7 +437,33 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         break None;
                     }
 
-                    let result = state.insert(msg);
+                    let result: Option<MalStreamedProposalParts> = {
+                        if msg.is_first() {
+                            state.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
+                        }
+
+                        if msg.is_fin() {
+                            state.fin_received = true;
+                            state.total_messages = msg.sequence as usize + 1;
+                        }
+
+                        state.buffer.push(msg);
+
+                        if state.is_done() {
+                            if let Some(init_info) = state.init_info.take() {
+                                Some(MalStreamedProposalParts {
+                                    height: init_info.height,
+                                    round: init_info.round,
+                                    proposer: init_info.proposer,
+                                    parts: state.buffer.drain(),
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
 
                     if state.is_done() {
                         streams.remove(&(peer_id, stream_id));

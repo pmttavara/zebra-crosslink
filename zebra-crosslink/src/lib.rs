@@ -1278,7 +1278,7 @@ mod strm {
     }
 
     impl<T> MinHeap<T> {
-        fn push(&mut self, msg: StreamMessage<T>) {
+        pub fn push(&mut self, msg: StreamMessage<T>) {
             self.0.push(MinSeq(msg));
         }
 
@@ -1286,7 +1286,7 @@ mod strm {
             self.0.len()
         }
 
-        fn drain(&mut self) -> Vec<T> {
+        pub fn drain(&mut self) -> Vec<T> {
             let mut vec = Vec::with_capacity(self.0.len());
             while let Some(MinSeq(msg)) = self.0.pop() {
                 if let Some(data) = msg.content.into_data() {
@@ -1311,35 +1311,6 @@ mod strm {
             self.init_info.is_some()
                 && self.fin_received
                 && self.buffer.len() == self.total_messages
-        }
-
-        pub fn insert(
-            &mut self,
-            msg: StreamMessage<MalStreamedProposalPart>,
-        ) -> Option<MalStreamedProposalParts> {
-            if msg.is_first() {
-                self.init_info = msg.content.as_data().and_then(|p| p.as_init()).cloned();
-            }
-
-            if msg.is_fin() {
-                self.fin_received = true;
-                self.total_messages = msg.sequence as usize + 1;
-            }
-
-            self.buffer.push(msg);
-
-            if self.is_done() {
-                let init_info = self.init_info.take()?;
-
-                Some(MalStreamedProposalParts {
-                    height: init_info.height,
-                    round: init_info.round,
-                    proposer: init_info.proposer,
-                    parts: self.buffer.drain(),
-                })
-            } else {
-                None
-            }
         }
     }
 
