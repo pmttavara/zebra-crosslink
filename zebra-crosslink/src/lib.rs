@@ -399,7 +399,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
                     }
             ));
         }
-        
+
         assert!(internal.bft_blocks[insert_i].1.payload.headers.is_empty());
         internal.bft_blocks[insert_i].1.payload = new_block.payload.clone();
         internal.latest_final_block = Some((new_final_height, new_final_hash));
@@ -407,7 +407,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
         warn!("Didn't have hash available for confirmation: {}", new_final_hash);
         return false;
     }
-        
+
     true
 }
 
@@ -527,7 +527,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let codec = MalProtobufCodec;
 
     let init_bft_height = MalHeight::new(1);
-    
+
 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
@@ -1361,41 +1361,6 @@ mod strm {
         }
     }
 
-    #[derive(Default)]
-    pub struct PartStreamsMap {
-        pub streams: BTreeMap<(PeerId, StreamId), StreamState>,
-    }
-
-    impl PartStreamsMap {
-        pub fn new() -> Self {
-            Self::default()
-        }
-
-        pub fn insert(
-            &mut self,
-            peer_id: PeerId,
-            msg: StreamMessage<MalStreamedProposalPart>,
-        ) -> Option<MalStreamedProposalParts> {
-            let stream_id = msg.stream_id.clone();
-            let state = self
-                .streams
-                .entry((peer_id, stream_id.clone()))
-                .or_default();
-
-            if !state.seen_sequences.insert(msg.sequence) {
-                // We have already seen a message with this sequence number.
-                return None;
-            }
-
-            let result = state.insert(msg);
-
-            if state.is_done() {
-                self.streams.remove(&(peer_id, stream_id));
-            }
-
-            result
-        }
-    }
 }
 
 /// Malachite configuration options

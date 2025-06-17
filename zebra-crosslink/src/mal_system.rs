@@ -106,7 +106,10 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
     let mut decided_certificates_by_height = HashMap::new();
 
     // TODO REMOVE
-    let mut streams_map = strm::PartStreamsMap::new();
+    // let mut streams_map = strm::PartStreamsMap::new();
+    use malachitebft_app_channel::app::consensus::PeerId;
+    use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
+    let mut streams: std::collections::BTreeMap<(PeerId, StreamId), strm::StreamState> = Default::default();
 
     loop {
         let running_malachite = if let Some(arc) = weak_self.upgrade() { arc } else { return; };
@@ -424,8 +427,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 let msg = part;
                 let parts : Option<strm::MalStreamedProposalParts> = loop {
                     let stream_id = msg.stream_id.clone();
-                    let state = streams_map
-                        .streams
+                    let state = streams
                         .entry((peer_id, stream_id.clone()))
                         .or_default();
 
@@ -437,7 +439,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     let result = state.insert(msg);
 
                     if state.is_done() {
-                        streams_map.streams.remove(&(peer_id, stream_id));
+                        streams.remove(&(peer_id, stream_id));
                     }
 
                     break result;
