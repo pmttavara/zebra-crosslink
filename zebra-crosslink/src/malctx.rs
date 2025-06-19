@@ -12,7 +12,7 @@ use malachitebft_core_types::{
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
-use zebra_chain::serialization::ZcashDeserializeInto;
+use zebra_chain::serialization::{ ZcashDeserialize, ZcashDeserializeInto, ZcashSerialize };
 
 use core::fmt;
 
@@ -263,16 +263,16 @@ impl Protobuf for MalValueId {
 /// The value to decide on
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MalValue {
-    pub value: BftPayload,
+    pub value_bytes: Vec<u8>, // BftPayload,
 }
 
 impl MalValue {
-    pub fn new(value: BftPayload) -> Self {
-        Self { value }
+    pub fn new_payload(value: BftPayload) -> Self {
+        Self { value_bytes: value.zcash_serialize_to_vec().unwrap() }
     }
 
     pub fn id(&self) -> MalValueId {
-        MalValueId(self.value.blake3_hash())
+        MalValueId(Blake3Hash(blake3::hash(&self.value_bytes).into()))
     }
 }
 
@@ -289,25 +289,21 @@ impl Protobuf for MalValue {
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn from_proto(proto: Self::Proto) -> Result<Self, ProtoError> {
-        use zebra_chain::serialization::ZcashDeserialize;
         let value_bytes = proto
             .value
             .ok_or_else(|| ProtoError::missing_field::<Self::Proto>("value"))?;
 
         Ok(MalValue {
-            value: value_bytes
-                .zcash_deserialize_into()
-                .map_err(|e| ProtoError::Other(format!("ZCashDeserializeError: {:?}", e)))?,
+            value_bytes: value_bytes.to_vec(),
         })
     }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn to_proto(&self) -> Result<Self::Proto, ProtoError> {
         use bytes::BufMut;
-        use zebra_chain::serialization::ZcashSerialize;
 
         Ok(malctx_schema_proto::Value {
-            value: Some(self.value.zcash_serialize_to_vec().unwrap().into()),
+            value: Some(self.value_bytes.clone().into()),
         })
     }
 }

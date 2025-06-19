@@ -198,7 +198,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         let other_type: MalLocallyProposedValue<MalContext> = MalLocallyProposedValue {
                             height: height,
                             round: MalRound::new(round as u32),
-                            value: MalValue::new(payload),
+                            value: MalValue::new_payload(payload),
                         };
                         {
                             // The POL round is always nil when we propose a newly built value.
@@ -235,7 +235,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 // I am sure there is a good reason.
 
                 // Include metadata about the proposal
-                let data_bytes = proposal.value.value.zcash_serialize_to_vec().unwrap();
+                let data_bytes = proposal.value.value_bytes;
 
                 let mut hasher = sha3::Keccak256::new(); // TODO(azmr): blake3/remove?
                 hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
@@ -340,9 +340,10 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 assert!(decided_certificates_by_height.insert(lock.height, certificate).is_none());
 
+                use zebra_chain::serialization::ZcashDeserialize;
                 assert!(pending_block_to_push_to_core.is_none());
                 pending_block_to_push_to_core = Some(BftBlock {
-                    payload: decided_value.value.value
+                    payload: BftPayload::zcash_deserialize(&*decided_value.value.value_bytes).expect("infallible"),
                 });
                 // TODO wait for another round to canonicalize the votes.
 
@@ -440,9 +441,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                         // Re-assemble the proposal from its parts
                         let value : MalProposedValue::<MalContext> = {
-                            let value = MalValue::new(parts.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap());
-
-                            let new_final_hash = value.value.headers.first().expect("at least 1 header").hash();
+                            let payload = parts.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap();
+                            let new_final_hash = payload.headers.first().expect("at least 1 header").hash();
 
                             let validity = if let Some(new_final_height) = block_height_from_hash(&tfl_handle.call, new_final_hash).await {
                                 MalValidity::Valid
@@ -451,6 +451,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                                 MalValidity::Invalid
                             };
 
+                            let value = MalValue::new_payload(payload);
                             MalProposedValue {
                                 height: parts.height,
                                 round: parts.round,
