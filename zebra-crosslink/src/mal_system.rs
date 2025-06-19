@@ -93,7 +93,7 @@ pub async fn start_malachite(tfl_handle: TFLServiceHandle, at_height: u64, valid
 async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Weak<TokioMutex<RunningMalachite>>, mut channels: Channels<MalContext>, my_private_key: MalPrivateKey) {
 
     let codec = MalProtobufCodec;
-    let my_public_key = my_private_key.public_key();
+    let my_public_key = (&my_private_key).into();
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
     let mut pending_block_to_push_to_core: Option<BftBlock> = None;
