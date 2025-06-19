@@ -105,12 +105,6 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
     let mut decided_certificates_by_height = HashMap::new();
 
-    // TODO REMOVE
-    // let mut streams_map = strm::PartStreamsMap::new();
-    use malachitebft_app_channel::app::consensus::PeerId;
-    use malachitebft_app_channel::app::streaming::{Sequence, StreamId, StreamMessage};
-    let mut streams: std::collections::BTreeMap<(PeerId, StreamId), strm::StreamState> = Default::default();
-
     loop {
         let running_malachite = if let Some(arc) = weak_self.upgrade() { arc } else { return; };
 
@@ -254,7 +248,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     height: proposal.height,
                     round: proposal.round,
                     pol_round,
-                    proposer: my_public_key,
+                    proposer: my_public_key, // @Zooko: security orange flag: should be hash of key instead; this should only be used for lookup
                     data_bytes,
                     signature,
                 };

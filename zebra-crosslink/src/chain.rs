@@ -59,12 +59,14 @@ pub struct BftPayload {
     /// The Version Number
     pub version: u32,
     /// The Height of this BFT Payload
+    // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
     /// Hash of the previous BFT Block. Not the previous payload!
     pub previous_block_hash: zebra_chain::block::Hash,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
     /// The PoW Headers
+    // @Zooko: PoPoW?
     pub headers: Vec<BcBlockHeader>,
 }
 
