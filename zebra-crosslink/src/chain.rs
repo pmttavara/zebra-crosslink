@@ -12,7 +12,7 @@ use thiserror::Error;
 use tracing::error;
 use zebra_chain::block::Header as BcBlockHeader;
 
-use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ZcashSerialize};
+use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcashExt, ZcashSerialize};
 
 /// The BFT block content for Crosslink
 ///
@@ -62,7 +62,7 @@ pub struct BftPayload {
     // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
     /// Hash of the previous BFT Block. Not the previous payload!
-    pub previous_block_hash: zebra_chain::block::Hash,
+    pub previous_block_hash: Blake3Hash,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
     /// The PoW Headers
@@ -89,7 +89,7 @@ impl ZcashDeserialize for BftPayload {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
-        let previous_block_hash = zebra_chain::block::Hash::zcash_deserialize(&mut reader)?;
+        let previous_block_hash = Blake3Hash::zcash_deserialize(&mut reader)?;
         let finalization_candidate_height = reader.read_u32::<LittleEndian>()?;
         let header_count = reader.read_u32::<LittleEndian>()?;
         if header_count > 2048 {
@@ -125,7 +125,7 @@ impl BftPayload {
     pub fn try_from(
         params: &ZcashCrosslinkParameters,
         height: u32,
-        previous_block_hash: zebra_chain::block::Hash,
+        previous_block_hash: Blake3Hash,
         finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftPayload> {
@@ -147,25 +147,22 @@ impl BftPayload {
     }
 
     /// Blake3 hash
+
+    /// Hash for the payload; N.B. this is not the same as the hash for the block as a whole
+    /// ([BftBlock::hash]).
     pub fn blake3_hash(&self) -> Blake3Hash {
         let buffer = self.zcash_serialize_to_vec().unwrap();
         Blake3Hash(blake3::hash(&buffer).into())
     }
-
-    /// Hash for the payload; N.B. this is not the same as the hash for the block as a whole
-    /// ([BftBlock::hash]).
-    pub fn hash(&self) -> zebra_chain::block::Hash {
-        self.into()
-    }
 }
 
-impl<'a> From<&'a BftPayload> for zebra_chain::block::Hash {
+impl<'a> From<&'a BftPayload> for Blake3Hash {
     fn from(payload: &'a BftPayload) -> Self {
-        let mut hash_writer = zebra_chain::serialization::sha256d::Writer::default();
+        let mut hash_writer = blake3::Hasher::new();
         payload
             .zcash_serialize(&mut hash_writer)
             .expect("Sha256dWriter is infallible");
-        Self(hash_writer.finish())
+        Self(hash_writer.finalize().into())
     }
 }
 
@@ -193,12 +190,7 @@ pub struct BftBlock {
 }
 
 impl BftBlock {
-    /// Hash for the *full* block
-    pub fn hash(&self) -> zebra_chain::block::Hash {
-        self.into()
-    }
-
-    /// Blake3 hash
+    /// Blake3 hash for the *full* block
     pub fn blake3_hash(&self) -> Blake3Hash {
         let buffer = self.zcash_serialize_to_vec().unwrap();
         Blake3Hash(blake3::hash(&buffer).into())
@@ -271,3 +263,18 @@ impl std::fmt::Display for Blake3Hash {
         Ok(())
     }
 }
+
+impl ZcashSerialize for Blake3Hash {
+    #[allow(clippy::unwrap_in_result)]
+    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
+        writer.write_all(&self.0);
+        Ok(())
+    }
+}
+
+impl ZcashDeserialize for Blake3Hash {
+    fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
+        Ok(Blake3Hash(reader.read_32_bytes()?))
+    }
+}
+

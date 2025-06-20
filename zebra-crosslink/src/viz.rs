@@ -1394,7 +1394,7 @@ impl VizCtx {
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
     }
 
-    fn find_bft_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
+    fn find_bft_node_by_hash(&self, hash: &Blake3Hash) -> NodeRef {
         let _z = ZoneGuard::new("find_bft_node_by_hash");
         *self.bft_by_hash.get(&hash.0).unwrap_or(&None)
     }
@@ -2026,10 +2026,10 @@ pub async fn viz_main(
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
-                let hash = blocks[i].hash();
+                let hash = blocks[i].blake3_hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
-                    let bft_parent = if bft_block.payload.previous_block_hash == BlockHash([0u8; 32]) {
+                    let bft_parent = if bft_block.payload.previous_block_hash == Blake3Hash([0u8; 32]) {
                         None
                     } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.payload.previous_block_hash) {
                         Some(bft_parent)
@@ -2312,7 +2312,7 @@ pub async fn viz_main(
                             payload: BftPayload {
                                 version: 0,
                                 height: 0,
-                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                previous_block_hash: Blake3Hash([0u8; 32]),
                                 finalization_candidate_height: 0,
                                 headers: loop {
                                     let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -2583,7 +2583,7 @@ pub async fn viz_main(
                             payload: BftPayload {
                                 version: 0,
                                 height: 0,
-                                previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                                previous_block_hash: Blake3Hash([0u8; 32]),
                                 finalization_candidate_height: 0,
                                 headers: Vec::new(),
                             }

@@ -367,7 +367,7 @@ async fn propose_new_bft_payload(tfl_handle: &TFLServiceHandle, my_public_key: &
         panic!("TODO: improve error handling.");
     };
 
-    match BftPayload::try_from(params, payload_height as u32, zebra_chain::block::Hash([0u8; 32]), 0, headers) {
+    match BftPayload::try_from(params, payload_height as u32, Blake3Hash([0u8; 32]), 0, headers) {
         Ok(v) => { return Some(v); },
         Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); return None; }
     };
@@ -391,7 +391,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
                     payload: BftPayload {
                         version: 0,
                         height: i as u32,
-                        previous_block_hash: zebra_chain::block::Hash([0u8; 32]),
+                        previous_block_hash: Blake3Hash([0u8; 32]),
                         finalization_candidate_height: 0,
                         headers: Vec::new(),
                     }
