@@ -243,7 +243,7 @@ pub struct VizState {
     /// Flags of the BFT messages
     pub bft_msg_flags: u64,
     /// Vector of all decided BFT blocks, indexed by height-1.
-    pub bft_blocks: Vec<(usize, BftBlock)>,
+    pub bft_blocks: Vec<BftBlock>,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -272,7 +272,7 @@ pub mod serialization {
         bc_tip: Option<(u32, [u8; 32])>,
         height_hashes: Vec<(u32, [u8; 32])>,
         blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<(usize, BftBlock)>,
+        bft_blocks: Vec<BftBlock>,
     }
 
     impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
@@ -338,10 +338,7 @@ pub mod serialization {
                             0
                         };
 
-                        bft_blocks.push((
-                            parent_id,
-                            node.header.as_bft().unwrap().clone(),
-                        ));
+                        bft_blocks.push(node.header.as_bft().unwrap().clone());
                     }
                 }
             }
@@ -698,7 +695,7 @@ pub async fn service_viz_requests(
 
         // TODO: O(<n)
         for i in 0..bft_blocks.len() {
-            let block = &mut bft_blocks[i].1;
+            let block = &mut bft_blocks[i];
             if block.payload.finalization_candidate_height == 0 && !block.payload.headers.is_empty()
             {
                 // TODO: block.finalized()
@@ -708,7 +705,6 @@ pub async fn service_viz_requests(
                     block.payload.finalization_candidate_height = h;
                     let mut internal = tfl_handle.internal.lock().await;
                     internal.bft_blocks[i]
-                        .1
                         .payload
                         .finalization_candidate_height = h;
                 }
@@ -1398,7 +1394,7 @@ impl VizCtx {
         *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
     }
 
-    fn find_bft_node_by_hash(&self, hash: &Blake3Hash) -> NodeRef {
+    fn find_bft_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
         let _z = ZoneGuard::new("find_bft_node_by_hash");
         *self.bft_by_hash.get(&hash.0).unwrap_or(&None)
     }
@@ -2030,12 +2026,12 @@ pub async fn viz_main(
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
-                let hash = blocks[i].1.blake3_hash();
+                let hash = blocks[i].hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
-                    let (bft_parent_i, bft_block) = (blocks[i].0, blocks[i].1.clone());
-                    let bft_parent = if i == 0 && bft_parent_i == 0 {
+                    let bft_block = blocks[i].clone();
+                    let bft_parent = if bft_block.payload.previous_block_hash == BlockHash([0u8; 32]) {
                         None
-                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&blocks[bft_parent_i].1.blake3_hash()) { // TODO: parent_hash
+                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.payload.previous_block_hash) {
                         Some(bft_parent)
                     } else {
                         None
