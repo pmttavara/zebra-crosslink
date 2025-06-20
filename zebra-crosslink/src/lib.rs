@@ -15,7 +15,6 @@ use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
 use rand::{Rng, SeedableRng};
-use sha3::Digest;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hasher};
 use std::str::FromStr;

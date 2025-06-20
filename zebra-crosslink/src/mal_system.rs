@@ -237,11 +237,11 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 // Include metadata about the proposal
                 let data_bytes = proposal.value.value_bytes;
 
-                let mut hasher = sha3::Keccak256::new(); // TODO(azmr): blake3/remove?
-                hasher.update(proposal.height.as_u64().to_be_bytes().as_slice());
+                let mut hasher = blake3::Hasher::new(); // TODO(azmr): blake3/remove?
+                hasher.update(proposal.height.as_u64().to_be_bytes().as_slice()); // TODO: le?
                 hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
                 hasher.update(&data_bytes);
-                let hash = hasher.finalize().to_vec();
+                let hash: [u8; 32] = hasher.finalize().into();
                 let signature = my_signing_provider.sign(&hash);
 
                 let streamed_proposal = MalStreamedProposal {
@@ -415,14 +415,11 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                         // signature verification
                         {
-                            let mut hasher = sha3::Keccak256::new();
-
-                            let hash = {
-                                hasher.update(parts.height.as_u64().to_be_bytes());
-                                hasher.update(parts.round.as_i64().to_be_bytes());
-                                hasher.update(&parts.data_bytes);
-                                hasher.finalize()
-                            };
+                            let mut hasher = blake3::Hasher::new(); // TODO(azmr): remove?
+                            hasher.update(parts.height.as_u64().to_be_bytes().as_slice()); // TODO: le?
+                            hasher.update(parts.round.as_i64().to_be_bytes().as_slice());
+                            hasher.update(&parts.data_bytes);
+                            let hash: [u8; 32] = hasher.finalize().into();
 
                             // TEMP get the proposers key
                             let mut proposer_public_key = None;
