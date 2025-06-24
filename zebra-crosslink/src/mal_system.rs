@@ -13,13 +13,14 @@ use super::*;
 
 TODO LIST
 DONE 1. Make sure multiplayer works.
-2. Remove streaming and massively simplify how payloads are communicated. And also refactor the MalValue to just be an array of bytes.
+DONE 2. Remove streaming and massively simplify how payloads are communicated. And also refactor the MalValue to just be an array of bytes.
 DONE 3. Sledgehammer in malachite to allow the vote extension scheme that we want.
-4. Upgrade to the double rate scheme in order to make blocks with canonical votes on them. Also define the BFTChainTipEvidence type.
+4. Define the FAT pointer type that contains a blake3hash and signatures.
 5. Make sure that syncing within malachite works.
-6. Make sure the payload has the Roster for H + 1 for easy light client validation.
+6. Merge BFTPayload and BFTBlock into one single structure. And remove fields zooko wants removed.
 7. Lock in the formats and bake out some tests.
 8. See if we can forget proposals for lower rounds than the current round. Then stop at_this_height_previously_seen_proposals from being an infinitely growing array.
+9. Remove redundant integrity hash from the "streamed" proposal.
 
 */
 
