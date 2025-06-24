@@ -3,6 +3,7 @@ use std::{ops::Deref, panic::AssertUnwindSafe, sync::Weak};
 
 use color_eyre::owo_colors::OwoColorize;
 use futures::FutureExt;
+use malachitebft_core_types::{NilOrVal, VoteType};
 use tracing_subscriber::fmt::format::PrettyVisitor;
 
 use crate::malctx::malctx_schema_proto::CommitCertificate;
@@ -15,7 +16,7 @@ TODO LIST
 DONE 1. Make sure multiplayer works.
 DONE 2. Remove streaming and massively simplify how payloads are communicated. And also refactor the MalValue to just be an array of bytes.
 DONE 3. Sledgehammer in malachite to allow the vote extension scheme that we want.
-4. Define the FAT pointer type that contains a blake3hash and signatures.
+DONE 4. Define the FAT pointer type that contains a blake3hash and signatures.
 5. Make sure that syncing within malachite works.
 6. Merge BFTPayload and BFTBlock into one single structure. And remove fields zooko wants removed.
 7. Lock in the formats and bake out some tests.
@@ -336,6 +337,30 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 assert_eq!(lock.round as i64, certificate.round.as_i64());
                 bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
+
+                let fat_pointer = {
+                    let vote_template = MalVote {
+                        validator_address: MalPublicKey2([0_u8; 32].into()),
+                        value: NilOrVal::Val(certificate.value_id),
+                        height: certificate.height,
+                        typ: VoteType::Precommit,
+                        round: certificate.round,
+                    };
+                    let vote_for_block_without_finalizer_public_key: [u8; 76-32] = vote_template.to_bytes()[32..].try_into().unwrap();
+
+                    FatPointerToBftBlock {
+                        vote_for_block_without_finalizer_public_key,
+                        signatures: certificate.commit_signatures.iter().map(|commit_signature| {
+                            let public_key: MalPublicKey2 = commit_signature.address;
+                            let signature: [u8; 64] = commit_signature.signature;
+
+                            FatPointerSignature {public_key: public_key.0.into(), vote_signature: signature}
+                        }).collect(),
+                    }
+                };
+                info!("Fat pointer to tip is now: {}", fat_pointer);
+                assert!(fat_pointer.validate_signatures());
+
                 let decided_value = at_this_height_previously_seen_proposals[lock.round as usize].take().unwrap();
                 assert_eq!(decided_value.value.id(), certificate.value_id);
 
@@ -483,5 +508,113 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
         }
 
         push_new_bft_msg_flags(&tfl_handle, bft_msg_flags).await;
+    }
+}
+
+
+/// A bundle of signed votes for a payload/block
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FatPointerToBftBlock {
+    pub vote_for_block_without_finalizer_public_key: [u8; 76-32],
+    pub signatures: Vec<FatPointerSignature>,
+}
+
+impl std::fmt::Display for FatPointerToBftBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{{hash:")?;
+        for b in &self.vote_for_block_without_finalizer_public_key[0..32] {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, " ovd:")?;
+        for b in &self.vote_for_block_without_finalizer_public_key[32..] {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, " signatures:[")?;
+        for (i, s) in self.signatures.iter().enumerate() {
+            write!(f, "{{pk:")?;
+            for b in s.public_key {
+                write!(f, "{:02x}", b)?;
+            }
+            write!(f, " sig:")?;
+            for b in s.vote_signature {
+                write!(f, "{:02x}", b)?;
+            }
+            write!(f, "}}")?;
+            if i + 1 < self.signatures.len() { write!(f, " ")?; }
+        }
+        write!(f, "]}}")?;
+        Ok(())
+    }
+}
+
+impl FatPointerToBftBlock {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
+        for s in &self.signatures {
+            buf.extend_from_slice(&s.to_bytes());
+        }
+        buf
+    }
+    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
+        if bytes.len() < 76-32 { return None; }
+        let vote_for_block_without_finalizer_public_key = bytes[0..76-32].try_into().unwrap();
+        // TODO(Sam): len
+        let rem = &bytes[76-32..];
+        if rem.len() % (32+64) != 0 { return None; }
+        let signatures = rem.chunks_exact(32+64)
+            .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap())).collect();
+        
+        Some(Self { vote_for_block_without_finalizer_public_key, signatures })
+    }
+
+    pub fn inflate(&self) -> Vec<(MalVote, ed25519_zebra::ed25519::SignatureBytes)> {
+        let vote_template = {
+            let mut vote_bytes = [0_u8; 76];
+            vote_bytes[32..76].copy_from_slice(&self.vote_for_block_without_finalizer_public_key);
+            MalVote::from_bytes(&vote_bytes)
+        };
+        self.signatures.iter().map(|s| {
+            let mut vote = vote_template.clone();
+            vote.validator_address = MalPublicKey2(MalPublicKey::from(s.public_key));
+            (vote, s.vote_signature)
+        }).collect()
+    }
+    pub fn validate_signatures(&self) -> bool {
+        let mut batch = ed25519_zebra::batch::Verifier::new();
+        for (vote, signature) in self.inflate() {
+            let vk_bytes = ed25519_zebra::VerificationKeyBytes::from(vote.validator_address.0);
+            let sig = ed25519_zebra::Signature::from_bytes(&signature);
+            let msg = vote.to_bytes();
+
+            batch.queue((vk_bytes, sig, &msg));
+        }
+        batch.verify(rand::thread_rng()).is_ok()
+    }
+    pub fn points_at_block_hash(&self) -> Blake3Hash {
+        Blake3Hash(self.vote_for_block_without_finalizer_public_key[0..32].try_into().unwrap())
+    }
+}
+
+
+/// A vote signature for a payload/block
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FatPointerSignature {
+    pub public_key: [u8; 32],
+    pub vote_signature: [u8; 64],
+}
+
+impl FatPointerSignature {
+    pub fn to_bytes(&self) -> [u8; 32+64] {
+        let mut buf = [0_u8; 32+64];
+        buf[0..32].copy_from_slice(&self.public_key);
+        buf[32..32+64].copy_from_slice(&self.vote_signature);
+        buf
+    }
+    pub fn from_bytes(bytes: &[u8; 32+64]) -> FatPointerSignature {
+        Self {
+            public_key: bytes[0..32].try_into().unwrap(),
+            vote_signature: bytes[32..32+64].try_into().unwrap(),
+        }
     }
 }
