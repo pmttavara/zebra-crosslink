@@ -696,16 +696,15 @@ pub async fn service_viz_requests(
         // TODO: O(<n)
         for i in 0..bft_blocks.len() {
             let block = &mut bft_blocks[i];
-            if block.payload.finalization_candidate_height == 0 && !block.payload.headers.is_empty()
+            if block.finalization_candidate_height == 0 && !block.headers.is_empty()
             {
                 // TODO: block.finalized()
                 if let Some(BlockHeight(h)) =
-                    block_height_from_hash(&call, block.payload.headers[0].hash()).await
+                    block_height_from_hash(&call, block.headers[0].hash()).await
                 {
-                    block.payload.finalization_candidate_height = h;
+                    block.finalization_candidate_height = h;
                     let mut internal = tfl_handle.internal.lock().await;
                     internal.bft_blocks[i]
-                        .payload
                         .finalization_candidate_height = h;
                 }
             }
@@ -825,7 +824,7 @@ struct Node {
 fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftBlock(bft_block) => {
-            if let Some(pow_block) = bft_block.payload.headers.last() {
+            if let Some(pow_block) = bft_block.headers.last() {
                 ctx.find_bc_node_by_hash(&pow_block.hash())
             } else {
                 None
@@ -839,7 +838,7 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftBlock(bft_block) => {
-            if let Some(pow_block) = bft_block.payload.headers.first() {
+            if let Some(pow_block) = bft_block.headers.first() {
                 ctx.find_bc_node_by_hash(&pow_block.hash())
             } else {
                 None
@@ -2029,9 +2028,9 @@ pub async fn viz_main(
                 let hash = blocks[i].blake3_hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
-                    let bft_parent = if bft_block.payload.previous_block_hash == Blake3Hash([0u8; 32]) {
+                    let bft_parent = if bft_block.previous_block_hash == Blake3Hash([0u8; 32]) {
                         None
-                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.payload.previous_block_hash) {
+                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.previous_block_hash) {
                         Some(bft_parent)
                     } else {
                         None
@@ -2309,32 +2308,30 @@ pub async fn viz_main(
                         };
 
                         let bft_block = BftBlock {
-                            payload: BftPayload {
-                                version: 0,
-                                height: 0,
-                                previous_block_hash: Blake3Hash([0u8; 32]),
-                                finalization_candidate_height: 0,
-                                headers: loop {
-                                    let bc: Option<u32> = target_bc_str.trim().parse().ok();
-                                    if bc.is_none() {
-                                        break Vec::new();
-                                    }
+                            version: 0,
+                            height: 0,
+                            previous_block_hash: Blake3Hash([0u8; 32]),
+                            finalization_candidate_height: 0,
+                            headers: loop {
+                                let bc: Option<u32> = target_bc_str.trim().parse().ok();
+                                if bc.is_none() {
+                                    break Vec::new();
+                                }
 
-                                    let node = if let Some(node) =
-                                        ctx.node(find_bc_node_i_by_height(
+                                let node = if let Some(node) =
+                                    ctx.node(find_bc_node_i_by_height(
                                             &ctx.nodes,
                                             BlockHeight(bc.unwrap()),
-                                        )) {
+                                    )) {
                                         node
                                     } else {
                                         break Vec::new();
                                     };
 
-                                    break match node.header {
-                                        VizHeader::BlockHeader(hdr) => vec![hdr],
-                                        _ => Vec::new(),
-                                    };
-                                },
+                                break match node.header {
+                                    VizHeader::BlockHeader(hdr) => vec![hdr],
+                                    _ => Vec::new(),
+                                };
                             },
                         };
 
@@ -2426,11 +2423,11 @@ pub async fn viz_main(
                 if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
                     let mut is_done = false;
                     if let Some(bft_block) = node.header.as_bft() {
-                        if let Some(bc_hdr) = bft_block.payload.headers.last() {
+                        if let Some(bc_hdr) = bft_block.headers.last() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
                                 clear_bft_bc_h = Some(
-                                    bft_block.payload.finalization_candidate_height
-                                        + bft_block.payload.headers.len() as u32
+                                    bft_block.finalization_candidate_height
+                                        + bft_block.headers.len() as u32
                                         - 1,
                                 );
                                 is_done = true;
@@ -2580,13 +2577,11 @@ pub async fn viz_main(
 
                     NodeKind::BFT => {
                         let bft_block = BftBlock {
-                            payload: BftPayload {
-                                version: 0,
-                                height: 0,
-                                previous_block_hash: Blake3Hash([0u8; 32]),
-                                finalization_candidate_height: 0,
-                                headers: Vec::new(),
-                            }
+                            version: 0,
+                            height: 0,
+                            previous_block_hash: Blake3Hash([0u8; 32]),
+                            finalization_candidate_height: 0,
+                            headers: Vec::new(),
                         };
 
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
@@ -2663,16 +2658,15 @@ pub async fn viz_main(
             let (a_pt, a_vel, a_vel_mag) = if let Some(node) = ctx.get_node(node_ref) {
                 if node.kind == NodeKind::BFT {
                     if let Some(bft_block) = node.header.as_bft() {
-                        let payload = &bft_block.payload;
-                        if !payload.headers.is_empty() {
+                        if !bft_block.headers.is_empty() {
                             let hdr_lo =
-                                ctx.find_bc_node_by_hash(&payload.headers.first().unwrap().hash());
+                                ctx.find_bc_node_by_hash(&bft_block.headers.first().unwrap().hash());
                             let hdr_hi =
-                                ctx.find_bc_node_by_hash(&payload.headers.last().unwrap().hash());
+                                ctx.find_bc_node_by_hash(&bft_block.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
-                                    let max_hdr_h = payload.finalization_candidate_height
-                                        + payload.headers.len() as u32
+                                    let max_hdr_h = bft_block.finalization_candidate_height
+                                        + bft_block.headers.len() as u32
                                         - 1;
                                     if max_hdr_h < bc_lo.height {
                                         offscreen_new_pt = Some(vec2(
@@ -2684,7 +2678,7 @@ pub async fn viz_main(
                                 }
 
                                 if let Some(bc_hi) = ctx.get_node(ctx.bc_hi) {
-                                    let min_hdr_h = payload.finalization_candidate_height;
+                                    let min_hdr_h = bft_block.finalization_candidate_height;
                                     if min_hdr_h > bc_hi.height {
                                         offscreen_new_pt = Some(vec2(
                                             node.pt.x,
@@ -2958,15 +2952,14 @@ pub async fn viz_main(
                         VizHeader::None => {}
                         VizHeader::BlockHeader(hdr) => {}
                         VizHeader::BftBlock(bft_block) => {
-                            let payload = &bft_block.payload;
                             ui.label(None, "PoW headers:");
-                            for i in 0..payload.headers.len() {
-                                let pow_hdr = &payload.headers[i];
+                            for i in 0..bft_block.headers.len() {
+                                let pow_hdr = &bft_block.headers[i];
                                 ui.label(
                                     None,
                                     &format!(
                                         "  {} - {}",
-                                        payload.finalization_candidate_height + i as u32,
+                                        bft_block.finalization_candidate_height + i as u32,
                                         pow_hdr.hash()
                                     ),
                                 );
@@ -3107,10 +3100,9 @@ pub async fn viz_main(
 
         if let Some(node) = ctx.get_node(hover_node_i) {
             if let Some(bft_block) = node.header.as_bft() {
-                let payload = &bft_block.payload;
-                for i in 0..payload.headers.len() {
+                for i in 0..bft_block.headers.len() {
                     let link = if let Some(link) =
-                        ctx.get_node(ctx.find_bc_node_by_hash(&payload.headers[i].hash()))
+                        ctx.get_node(ctx.find_bc_node_by_hash(&bft_block.headers[i].hash()))
                     {
                         link
                     } else {

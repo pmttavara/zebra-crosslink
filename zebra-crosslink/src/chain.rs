@@ -16,17 +16,17 @@ use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcash
 
 /// The BFT block content for Crosslink
 ///
-/// # Constructing [BftPayload]s
+/// # Constructing [BftBlock]s
 ///
-/// A [BftPayload] may be constructed from a node's local view in order to create a new BFT proposal, or they may be constructed from unknown sources across a network protocol.
+/// A [BftBlock] may be constructed from a node's local view in order to create a new BFT proposal, or they may be constructed from unknown sources across a network protocol.
 ///
-/// To construct a [BftPayload] for a new BFT proposal, build a [Vec] of [BcBlockHeader] values, starting from the latest known PoW tip and traversing back in time (following [previous_block_hash](BcBlockHeader::previous_block_hash)) until exactly [bc_confirmation_depth_sigma](ZcashCrosslinkParameters::bc_confirmation_depth_sigma) headers are collected, then pass this to [BftPayload::try_from].
+/// To construct a [BftBlock] for a new BFT proposal, build a [Vec] of [BcBlockHeader] values, starting from the latest known PoW tip and traversing back in time (following [previous_block_hash](BcBlockHeader::previous_block_hash)) until exactly [bc_confirmation_depth_sigma](ZcashCrosslinkParameters::bc_confirmation_depth_sigma) headers are collected, then pass this to [BftBlock::try_from].
 ///
-/// To construct from an untrusted source, call the same [BftPayload::try_from].
+/// To construct from an untrusted source, call the same [BftBlock::try_from].
 ///
 /// ## Validation and Limitations
 ///
-/// The [BftPayload::try_from] method is the only way to construct [BftPayload] values and performs the following validation internally:
+/// The [BftBlock::try_from] method is the only way to construct [BftBlock] values and performs the following validation internally:
 ///
 /// 1. The number of headers matches the expected protocol confirmation depth, [bc_confirmation_depth_sigma](ZcashCrosslinkParameters::bc_confirmation_depth_sigma).
 /// 2. The [version](BcBlockHeader::version) field is a known expected value.
@@ -41,7 +41,7 @@ use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcash
 ///
 /// No other validations are performed.
 ///
-/// **TODO:** Ensure deserialization delegates to [BftPayload::try_from].
+/// **TODO:** Ensure deserialization delegates to [BftBlock::try_from].
 ///
 /// ## Design Notes
 ///
@@ -49,19 +49,19 @@ use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcash
 ///
 /// > Each bft‑proposal has, in addition to origbft‑proposal fields, a headers_bc field containing a sequence of exactly σ bc‑headers (zero‑indexed, deepest first).
 ///
-/// The [TryFrom] impl performs internal validations and is the only way to construct a [BftPayload], whether locally generated or from an unknown source. This is the safest design, though potentially less efficient.
+/// The [TryFrom] impl performs internal validations and is the only way to construct a [BftBlock], whether locally generated or from an unknown source. This is the safest design, though potentially less efficient.
 ///
 /// # References
 ///
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BftPayload {
+pub struct BftBlock {
     /// The Version Number
     pub version: u32,
     /// The Height of this BFT Payload
     // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
-    /// Hash of the previous BFT Block. Not the previous payload!
+    /// Hash of the previous BFT Block.
     pub previous_block_hash: Blake3Hash,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
@@ -70,7 +70,7 @@ pub struct BftPayload {
     pub headers: Vec<BcBlockHeader>,
 }
 
-impl ZcashSerialize for BftPayload {
+impl ZcashSerialize for BftBlock {
     #[allow(clippy::unwrap_in_result)]
     fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
         writer.write_u32::<LittleEndian>(self.version)?;
@@ -85,7 +85,7 @@ impl ZcashSerialize for BftPayload {
     }
 }
 
-impl ZcashDeserialize for BftPayload {
+impl ZcashDeserialize for BftBlock {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
@@ -103,7 +103,7 @@ impl ZcashDeserialize for BftPayload {
             array.push(zebra_chain::block::Header::zcash_deserialize(&mut reader)?);
         }
 
-        Ok(BftPayload {
+        Ok(BftBlock {
             version,
             height,
             previous_block_hash,
@@ -113,31 +113,31 @@ impl ZcashDeserialize for BftPayload {
     }
 }
 
-impl BftPayload {
-    /// Refer to the [BcBlockHeader] that is the finalization candidate for this payload
+impl BftBlock {
+    /// Refer to the [BcBlockHeader] that is the finalization candidate for this block
     ///
-    /// **UNVERIFIED:** The finalization_candidate of a final [BftPayload] is finalized.
+    /// **UNVERIFIED:** The finalization_candidate of a final [BftBlock] is finalized.
     pub fn finalization_candidate(&self) -> &BcBlockHeader {
         &self.headers.last().expect("Vec should never be empty")
     }
 
-    /// Attempt to construct a [BftPayload] from headers while performing immediate validations; see [BftPayload] type docs
+    /// Attempt to construct a [BftBlock] from headers while performing immediate validations; see [BftBlock] type docs
     pub fn try_from(
         params: &ZcashCrosslinkParameters,
         height: u32,
         previous_block_hash: Blake3Hash,
         finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
-    ) -> Result<Self, InvalidBftPayload> {
+    ) -> Result<Self, InvalidBftBlock> {
         let expected = params.bc_confirmation_depth_sigma;
         let actual = headers.len() as u64;
         if actual != expected {
-            return Err(InvalidBftPayload::IncorrectConfirmationDepth { expected, actual });
+            return Err(InvalidBftBlock::IncorrectConfirmationDepth { expected, actual });
         }
 
         error!("not yet implemented: all the documented validations");
 
-        Ok(BftPayload {
+        Ok(BftBlock {
             version: 0,
             height,
             previous_block_hash,
@@ -146,29 +146,26 @@ impl BftPayload {
         })
     }
 
-    /// Blake3 hash
-
-    /// Hash for the payload; N.B. this is not the same as the hash for the block as a whole
+    /// Hash for the block
     /// ([BftBlock::hash]).
     pub fn blake3_hash(&self) -> Blake3Hash {
-        let buffer = self.zcash_serialize_to_vec().unwrap();
-        Blake3Hash(blake3::hash(&buffer).into())
+        self.into()
     }
 }
 
-impl<'a> From<&'a BftPayload> for Blake3Hash {
-    fn from(payload: &'a BftPayload) -> Self {
+impl<'a> From<&'a BftBlock> for Blake3Hash {
+    fn from(block: &'a BftBlock) -> Self {
         let mut hash_writer = blake3::Hasher::new();
-        payload
+        block
             .zcash_serialize(&mut hash_writer)
             .expect("Sha256dWriter is infallible");
         Self(hash_writer.finalize().into())
     }
 }
 
-/// Validation error for [BftPayload]
+/// Validation error for [BftBlock]
 #[derive(Debug, Error)]
-pub enum InvalidBftPayload {
+pub enum InvalidBftBlock {
     /// An incorrect number of headers was present
     #[error(
         "invalid confirmation depth: Crosslink requires {expected} while {actual} were present"
@@ -179,48 +176,6 @@ pub enum InvalidBftPayload {
         /// The number of headers present
         actual: u64,
     },
-}
-
-/// The wrapper around the BftPayload that also contains the finalizer signatures allowing the Block to be
-/// validated offline. The signatures are not included yet! D:
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BftBlock {
-    /// The inner payload
-    pub payload: BftPayload,
-}
-
-impl BftBlock {
-    /// Blake3 hash for the *full* block
-    pub fn blake3_hash(&self) -> Blake3Hash {
-        let buffer = self.zcash_serialize_to_vec().unwrap();
-        Blake3Hash(blake3::hash(&buffer).into())
-    }
-}
-
-impl ZcashSerialize for BftBlock {
-    #[allow(clippy::unwrap_in_result)]
-    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
-        self.payload.zcash_serialize(&mut writer)?;
-        Ok(())
-    }
-}
-
-impl ZcashDeserialize for BftBlock {
-    fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
-        let payload = BftPayload::zcash_deserialize(&mut reader)?;
-
-        Ok(BftBlock { payload })
-    }
-}
-
-impl<'a> From<&'a BftBlock> for zebra_chain::block::Hash {
-    fn from(block: &'a BftBlock) -> Self {
-        let mut hash_writer = zebra_chain::serialization::sha256d::Writer::default();
-        block
-            .zcash_serialize(&mut hash_writer)
-            .expect("Sha256dWriter is infallible");
-        Self(hash_writer.finish())
-    }
 }
 
 /// Zcash Crosslink protocol parameters
