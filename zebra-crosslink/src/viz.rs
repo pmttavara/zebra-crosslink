@@ -2029,6 +2029,9 @@ pub async fn viz_main(
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
                     let bft_parent = if bft_block.previous_block_hash == Blake3Hash([0u8; 32]) {
+                        if i != 0 {
+                            error!("block at height {} does not have a previous_block_hash", i+1);
+                        }
                         None
                     } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.previous_block_hash) {
                         Some(bft_parent)

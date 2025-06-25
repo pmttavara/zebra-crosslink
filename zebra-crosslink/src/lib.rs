@@ -334,7 +334,13 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
         return None;
     };
 
-    let latest_final_block = tfl_handle.internal.lock().await.latest_final_block;
+    let (latest_final_block, latest_bft_block_hash) = {
+        let internal = tfl_handle.internal.lock().await;
+        (
+            internal.latest_final_block,
+            internal.bft_blocks.last().map_or(Blake3Hash([0u8; 32]), |b| b.blake3_hash())
+        )
+    };
     let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
     if ! is_improved_final {
@@ -367,7 +373,7 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
         panic!("TODO: improve error handling.");
     };
 
-    match BftBlock::try_from(params, block_height as u32, Blake3Hash([0u8; 32]), 0, headers) {
+    match BftBlock::try_from(params, block_height as u32, latest_bft_block_hash, 0, headers) {
         Ok(v) => { return Some(v); },
         Err(e) => { warn!("Unable to create BftBlock to propose, Error={:?}", e,); return None; }
     };
@@ -397,6 +403,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
             );
         }
 
+        assert!(insert_i == 0 || new_block.previous_block_hash != Blake3Hash([0u8; 32]));
         assert!(internal.bft_blocks[insert_i].headers.is_empty());
         internal.bft_blocks[insert_i] = new_block.clone();
         internal.latest_final_block = Some((new_final_height, new_final_hash));
