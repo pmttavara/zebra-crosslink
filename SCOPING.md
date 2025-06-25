@@ -7,14 +7,14 @@ Scoping for Shielded Labs's first deployment of Crosslink
 
 ## Why add Proof-of-Stake?
 
-* Staking ZEC replaces sell pressure from mining pools with buy pressure from validators. Reducing supply and increasing demand can potentially put upward pressure on the price of ZEC. This is good because the price of ZEC is the fuel for the mission and attracts users.
+* Staking ZEC replaces sell pressure from mining pools with buy pressure from finalizers. Reducing supply and increasing demand can potentially put upward pressure on the price of ZEC. This is good because the price of ZEC is the fuel for the mission and attracts users.
 * Proof-of-Stake adds economic finality, which protects users from being robbed, reduces and unifies [deposit times at centralized exchanges](https://zechub.wiki/using-zcash/custodial-exchanges) and other services and improves the safety and efficiency of bridges.
 * Proof-of-Stake provides finality more efficiently than Proof-of-Work – at a lower cost in terms of both economics and energy usage. This makes Zcash both more secure (provide better security for the same cost) and more sustainable (provide security long-term even as the rate of issuance shrinks).
 * Staking allows a larger number of users to participate actively in the network than mining does, and to become direct recipients of newly created ZEC from the blockchain. This increases the size and decentralization of the network of users and stakeholders.
-* About the economic disadvantage of a smaller miner/validator/delegator competing with a larger operation:
+* About the economic disadvantage of a smaller miner/finalizer/delegator competing with a larger operation:
   * In Proof-of-Work, smaller miners have a substantial economic disadvantage compared to larger mining operations.
-  * In Proof-of-Stake, smaller validators have an economic disadvantage compared to larger validating services, but the disadvantage is not as pronounced as in Proof-of-Work mining.
-  * In Proof-of-Stake, smaller delegators compete on a level playing field with larger delegators, earning roughly the same reward with roughly the same risk. (Note that delegators get less reward than validators.)
+  * In Proof-of-Stake, smaller finalizers have an economic disadvantage compared to larger finalizer services, but the disadvantage is not as pronounced as in Proof-of-Work mining.
+  * In Proof-of-Stake, smaller delegators compete on a level playing field with larger delegators, earning roughly the same reward with roughly the same risk. (Note that delegators get less reward than finalizer.)
 
 ## Why use a Hybrid Proof-of-Stake plus Proof-of-Work system?
 
@@ -33,7 +33,7 @@ This list of [UX Goals](https://github.com/ShieldedLabs/crosslink-deployment/lab
 * [GH #11](https://github.com/ShieldedLabs/crosslink-deployment/issues/11): Services are willing to rely on incoming Zcash transaction finality. E.g. Coinbase re-enables market orders and reduces required confirmations to a nice small number like 10. All or most services rely on the same canonical (protocol-provided) finality instead of enforcing [their own additional delays or conditions](https://zechub.wiki/using-zcash/custodial-exchanges), and so the user experience is that transaction finality is predictable and recognizable across services.
 * [GH #14](https://github.com/ShieldedLabs/crosslink-deployment/issues/14): Other services that require finality, such as cross-chain bridges, are willing to rely on Zcash’s finality.
 * [GH #15](https://github.com/ShieldedLabs/crosslink-deployment/issues/15): Casual users (who understand little about crypto and do not use specialized tools such as a Linux user interface) delegate ZEC and get rewards from their mobile wallet. They have to learn a minimal set of new concepts in order to do this.
-* [GH #16](https://github.com/ShieldedLabs/crosslink-deployment/issues/16): Users run validators and get rewards. (It is okay if validator operators have to be users who understand a lot and can use specialized tools).
+* [GH #16](https://github.com/ShieldedLabs/crosslink-deployment/issues/16): Users run finalizers and get rewards. (It is okay if finalizers operators have to understand a lot and can use specialized tools).
 
 _Shielded Labs’s First Deployment of Crosslink is not done until substantial numbers of real users are actually gaining these five benefits._
 
@@ -44,8 +44,8 @@ This list of [Deployment Goals](https://github.com/ShieldedLabs/crosslink-deploy
 
 * [GH #18](https://github.com/ShieldedLabs/crosslink-deployment/issues/18): Zcash transactions come with a kind of finality which protects the users as much as possible against all possible attacks, and is sufficient for services such as cross-chain bridges and centralized exchanges.
 * [GH #19](https://github.com/ShieldedLabs/crosslink-deployment/issues/19): Users can delegate their ZEC and earn rewards, safely and while needing to learn only the minimal number of new concepts.
-    * Delegating to a validator does not enable the validator to steal your funds.
-    * Delegating to a validator does not leak information that links the user's action to other information about them, such as their IP address, their other ZEC holdings that they are choosing not to stake, or their previous or future transactions.
+    * Delegating to a finalizer does not enable the finalizer to steal your funds.
+    * Delegating to a finalizer does not leak information that links the user's action to other information about them, such as their IP address, their other ZEC holdings that they are choosing not to stake, or their previous or future transactions.
 * [GH #20](https://github.com/ShieldedLabs/crosslink-deployment/issues/20): The time-to-market and the risk of Shielded Labs's First Deployment of Crosslink is minimized: the benefits listed above start accruing to users as soon as safely possible.
 * [GH #21](https://github.com/ShieldedLabs/crosslink-deployment/issues/21): Activating Crosslink on Zcash mainnet retains as much as possible of Zcash users' safety, security, privacy, and availability guarantees.
 * The first deployment of Crosslink is neutral with regard to Zcash governance -- it doesn't change anything about Zcash governance.
@@ -53,10 +53,11 @@ This list of [Deployment Goals](https://github.com/ShieldedLabs/crosslink-deploy
 Trade-offs
 ---
 
-Goals which we currently believe are not safely achievable in this first deployment without losing some of the above goals and requirements:
+Goals which we currently believe are not safely achievable in this first deployment without losing some of the above goals:
 * Improving Zcash's bandwidth (number of transactions per time) or latency (time for a transaction).
 * Deploying cross-chain interoperation such as the Inter-Blockchain Communication protocol (IBC) or Cross-Chain Interoperability Protocol (CCIP).
-* Supporting a large number of validators so that any user who wants to run their own validator can do so.
+* Supporting a large number of finalizer so that any user who wants to run their own finalizer can do so.
+* Supporting casual users, with minimal computer expertise, running finalizers.
 
 Non-Goals
 ---
