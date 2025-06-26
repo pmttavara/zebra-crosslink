@@ -7,7 +7,7 @@ use malachitebft_core_types::{NilOrVal, VoteType};
 use tracing_subscriber::fmt::format::PrettyVisitor;
 use zerocopy::IntoBytes;
 
-use crate::malctx::malctx_schema_proto::CommitCertificate;
+use crate::malctx::malctx_schema_proto::ProposedValue;
 
 use super::*;
 
@@ -23,6 +23,7 @@ DONE 4. Define the FAT pointer type that contains a blake3hash and signatures.
 7. Lock in the formats and bake out some tests.
 8. See if we can forget proposals for lower rounds than the current round. Then stop at_this_height_previously_seen_proposals from being an infinitely growing array.
 9. Remove redundant integrity hash from the "streamed" proposal.
+10. Hide noisy malachite logs
 
 */
 
@@ -99,7 +100,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
     let my_public_key = (&my_private_key).into();
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
-    let mut pending_block_to_push_to_core: Option<BftBlock> = None;
+    let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock)> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>> = None;
     let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
 
@@ -111,8 +112,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
     loop {
         let running_malachite = if let Some(arc) = weak_self.upgrade() { arc } else { return; };
 
-        if let Some(pending_block) = &pending_block_to_push_to_core {
-            if !new_decided_bft_block_from_malachite(&tfl_handle, pending_block).await {
+        if let Some((pending_block, fat_pointer)) = &pending_block_to_push_to_core {
+            if !new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await {
                 tokio::time::sleep(Duration::from_millis(800)).await;
 
                 let mut lock = running_malachite.lock().await;
@@ -197,7 +198,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     };
                     other_type
                 } else {
-                    if let Some(payload) = propose_new_bft_payload(&tfl_handle, &my_public_key, lock.height).await {
+                    if let Some(payload) = propose_new_bft_payload(&tfl_handle, &my_public_key).await {
                         let other_type: MalLocallyProposedValue<MalContext> = MalLocallyProposedValue {
                             height: height,
                             round: MalRound::new(round as u32),
@@ -279,16 +280,20 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
             BFTAppMsg::GetDecidedValue { height, reply } => {
                 bft_msg_flags |= 1 << BFTMsgFlag::GetDecidedValue as u64;
 
-                // TODO load certificate from a local lookaside buffer keyed by height that is persistant across restarts in case someone wants to sync from us.
-                // This will not be necessary when we have the alternate sync mechanism that is out of band.
+                reply.send(get_historical_bft_block_at_height(&tfl_handle, height.as_u64()).await.map(|(block, fat_pointer)| {
+                    let vote_template = fat_pointer.get_vote_template();
 
-                // TODO Maybe we can send the block including vote extensions to the other peer.
+                    let certificate = MalCommitCertificate {
+                        height: vote_template.height,
+                        round: vote_template.round,
+                        value_id: MalValueId(fat_pointer.points_at_block_hash()),
+                        commit_signatures: fat_pointer.signatures.into_iter().map(|sig| {
+                            MalCommitSignature { address: MalPublicKey2(sig.public_key.into()), signature: sig.vote_signature }
+                        }).collect()
+                    };
 
-                // let certificate = ;
-                // let value_bytes = ;
-
-                // reply.send(RawDecidedValue { certificate, value_bytes }).unwrap();
-                panic!("TODO: certificates look aside buffer and payload look aside");
+                    RawDecidedValue { value_bytes: codec.encode(&MalValue { value_bytes: block.zcash_serialize_to_vec().unwrap().into() }).unwrap(), certificate }
+                })).unwrap();
             },
             BFTAppMsg::ProcessSyncedValue {
                 height,
@@ -297,11 +302,14 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 value_bytes,
                 reply,
             } => {
+                // ASSUMPTION: This will only generate a Decided event if the certificate is correct. Therefore the purpose here is only to decode the value.
+                // We should therefore be able to pospone validation until after decided. Should a catastrophe occur malachite can be restarted.
+
                 info!(%height, %round, "Processing synced value");
                 bft_msg_flags |= 1 << BFTMsgFlag::ProcessSyncedValue as u64;
 
                 let mal_value : MalValue = codec.decode(value_bytes).unwrap();
-                let proposed_value = MalProposedValue {
+                let value: MalProposedValue<MalContext> = MalProposedValue {
                     height,
                     round,
                     valid_round: MalRound::Nil,
@@ -309,13 +317,12 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     value: mal_value,
                     validity: MalValidity::Valid,
                 };
-                // TODO put in local cache and the special delayed commit slot awaiting vote extensions
+                assert_eq!(value.height.as_u64(), lock.height);
+                lock.round = value.round.as_u32().unwrap();
+                while at_this_height_previously_seen_proposals.len() < lock.round as usize + 1 { at_this_height_previously_seen_proposals.push(None); }
+                at_this_height_previously_seen_proposals[lock.round as usize] = Some(Box::new(value.clone()));
 
-                // TODO if special delayed commit slot already contains a value then complete it and commit it
-
-                // TODO validation aka error!("Could not accept synced value. I do not know of PoW hash {}", new_final_hash);
-
-                reply.send(proposed_value).unwrap();
+                reply.send(value).unwrap();
             },
             BFTAppMsg::GetValidatorSet { height, reply } => {
                 bft_msg_flags |= 1 << BFTMsgFlag::GetValidatorSet as u64;
@@ -369,9 +376,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 use zebra_chain::serialization::ZcashDeserialize;
                 assert!(pending_block_to_push_to_core.is_none());
-                pending_block_to_push_to_core = Some(BftBlock {
+                pending_block_to_push_to_core = Some((BftBlock {
                     payload: BftPayload::zcash_deserialize(&*decided_value.value.value_bytes).expect("infallible"),
-                });
+                }, fat_pointer));
                 // TODO wait for another round to canonicalize the votes.
 
                 // TODO form completed block using the vote extensions and insert it into the push to crosslink slot variable, this way we can block while the block is invalid.
@@ -425,18 +432,15 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 if let Some(parts) = msg.content.as_data().cloned() {
 
-                    // NOTE(Sam): It seems VERY odd that we don't drop individual stream parts for being too
-                    // old. Why assemble something that might never finish and is known to be stale?
-
-                    // Check if the proposal is outdated
-                    if parts.height.as_u64() < lock.height {
+                    // Check if the proposal is outdated or from the future...
+                    if parts.height.as_u64() != lock.height || parts.round.as_i64() != lock.round as i64 {
                         info!(
                             height = %lock.height,
                             round = %lock.round,
                             part.height = %parts.height,
                             part.round = %parts.round,
                             part.sequence = %sequence,
-                            "Received outdated proposal part, ignoring"
+                            "Received outdated or future proposal part, ignoring"
                         );
                     } else {
 
@@ -549,6 +553,9 @@ impl std::fmt::Display for FatPointerToBftBlock {
 }
 
 impl FatPointerToBftBlock {
+    pub fn null() -> FatPointerToBftBlock {
+        FatPointerToBftBlock { vote_for_block_without_finalizer_public_key: [0_u8; 76-32], signatures: Vec::new() }
+    }
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
@@ -571,12 +578,13 @@ impl FatPointerToBftBlock {
         Some(Self { vote_for_block_without_finalizer_public_key, signatures })
     }
 
+    pub fn get_vote_template(&self) -> MalVote {
+        let mut vote_bytes = [0_u8; 76];
+        vote_bytes[32..76].copy_from_slice(&self.vote_for_block_without_finalizer_public_key);
+        MalVote::from_bytes(&vote_bytes)
+    }
     pub fn inflate(&self) -> Vec<(MalVote, ed25519_zebra::ed25519::SignatureBytes)> {
-        let vote_template = {
-            let mut vote_bytes = [0_u8; 76];
-            vote_bytes[32..76].copy_from_slice(&self.vote_for_block_without_finalizer_public_key);
-            MalVote::from_bytes(&vote_bytes)
-        };
+        let vote_template = self.get_vote_template();
         self.signatures.iter().map(|s| {
             let mut vote = vote_template.clone();
             vote.validator_address = MalPublicKey2(MalPublicKey::from(s.public_key));

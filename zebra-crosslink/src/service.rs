@@ -17,6 +17,7 @@ use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::chain::BftBlock;
+use crate::mal_system::FatPointerToBftBlock;
 use crate::{
     tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
 };
@@ -164,6 +165,7 @@ pub fn spawn_new_tfl_service(
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,
         bft_blocks: Vec::new(),
+        fat_pointer_to_tip: FatPointerToBftBlock::null(),
         proposed_bft_string: None,
     }));
 
@@ -222,6 +224,7 @@ mod tests {
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
             bft_blocks: Vec::new(),
+            fat_pointer_to_tip: FatPointerToBftBlock::null(),
             bft_msg_flags: 0,
             proposed_bft_string: None,
         }));

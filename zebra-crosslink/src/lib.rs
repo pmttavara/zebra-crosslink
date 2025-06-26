@@ -113,6 +113,7 @@ pub(crate) struct TFLServiceInternal {
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
     bft_blocks: Vec<BftBlock>,
+    fat_pointer_to_tip: FatPointerToBftBlock,
     proposed_bft_string: Option<String>,
 }
 
@@ -312,7 +313,7 @@ async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u6
     internal.bft_msg_flags |= bft_msg_flags;
 }
 
-async fn propose_new_bft_payload(tfl_handle: &TFLServiceHandle, my_public_key: &MalPublicKey, payload_height: u64) -> Option<BftPayload> {
+async fn propose_new_bft_payload(tfl_handle: &TFLServiceHandle, my_public_key: &MalPublicKey) -> Option<BftPayload> {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
     let (tip_height, tip_hash) = if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
@@ -367,13 +368,15 @@ async fn propose_new_bft_payload(tfl_handle: &TFLServiceHandle, my_public_key: &
         panic!("TODO: improve error handling.");
     };
 
-    match BftPayload::try_from(params, payload_height as u32, Blake3Hash([0u8; 32]), 0, headers) {
+    let mut internal = tfl_handle.internal.lock().await;
+
+    match BftPayload::try_from(params, internal.bft_blocks.len() as u32 + 1, internal.fat_pointer_to_tip.points_at_block_hash(), 0, headers) {
         Ok(v) => { return Some(v); },
         Err(e) => { warn!("Unable to create BftPayload to propose, Error={:?}", e,); return None; }
     };
 }
 
-async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new_block: &BftBlock) -> bool {
+async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new_block: &BftBlock, fat_pointer: &FatPointerToBftBlock) -> bool {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -401,6 +404,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
 
         assert!(internal.bft_blocks[insert_i].payload.headers.is_empty());
         internal.bft_blocks[insert_i].payload = new_block.payload.clone();
+        internal.fat_pointer_to_tip = fat_pointer.clone();
         internal.latest_final_block = Some((new_final_height, new_final_hash));
     } else {
         warn!("Didn't have hash available for confirmation: {}", new_final_hash);
@@ -409,6 +413,20 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
 
     true
 }
+
+async fn get_historical_bft_block_at_height(tfl_handle: &TFLServiceHandle, at_height: u64) -> Option<(BftBlock, FatPointerToBftBlock)> {
+    let mut internal = tfl_handle.internal.lock().await;
+    if at_height == 0 || at_height as usize - 1 >= internal.bft_blocks.len() { return None; }
+    let block = internal.bft_blocks[at_height as usize -1].clone();
+    let fp = if at_height as usize == internal.bft_blocks.len() {
+        internal.fat_pointer_to_tip.clone()
+    } else {
+        panic!("not done");
+        // internal.bft_blocks[at_height as usize].payload.previous_block_hash;
+    };
+    Some((block, fp))
+}
+
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);

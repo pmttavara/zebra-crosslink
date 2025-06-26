@@ -27,7 +27,7 @@ pub use malachitebft_core_consensus::{
     VoteExtensionError as MalVoteExtensionError,
 };
 pub use malachitebft_core_types::{
-    Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions,
+    Round as MalRound, Validity as MalValidity, VoteExtensions as MalVoteExtensions, CommitCertificate as MalCommitCertificate, CommitSignature as MalCommitSignature
 };
 
 pub use ed25519_zebra::SigningKey as MalPrivateKey;
