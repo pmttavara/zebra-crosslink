@@ -10,6 +10,7 @@ use zerocopy::IntoBytes;
 use crate::malctx::malctx_schema_proto::ProposedValue;
 
 use super::*;
+use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcashExt, ZcashSerialize};
 
 /*
 
@@ -19,11 +20,13 @@ DONE 2. Remove streaming and massively simplify how payloads are communicated. A
 DONE 3. Sledgehammer in malachite to allow the vote extension scheme that we want.
 DONE 4. Define the FAT pointer type that contains a blake3hash and signatures.
 5. Make sure that syncing within malachite works.
-6. Merge BFTPayload and BFTBlock into one single structure. And remove fields zooko wants removed.
+DONE 6.a. Merge BFTPayload and BFTBlock into one single structure.
+6.b remove fields zooko wants removed.
 7. Lock in the formats and bake out some tests.
 8. See if we can forget proposals for lower rounds than the current round. Then stop at_this_height_previously_seen_proposals from being an infinitely growing array.
 9. Remove redundant integrity hash from the "streamed" proposal.
 10. Hide noisy malachite logs
+9. Sign the proposal data rather the hash
 
 */
 
@@ -162,8 +165,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 // If we have already built or seen a value for this height and round,
                 // send it back to consensus. This may happen when we are restarting after a crash.
-                let maybe_prev_seen_payload = at_this_height_previously_seen_proposals.get(round as usize).cloned().flatten();
-                if let Some(proposal) = maybe_prev_seen_payload {
+                let maybe_prev_seen_block = at_this_height_previously_seen_proposals.get(round as usize).cloned().flatten();
+                if let Some(proposal) = maybe_prev_seen_block {
                     info!(%height, %round, "Replaying already known proposed value: {}", proposal.value.id());
                     reply_value.send(Some(proposal.as_ref().clone())).unwrap();
                 } else {
@@ -184,9 +187,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 // Here it is important that, if we have previously built a value for this height and round,
                 // we send back the very same value.
-                let maybe_prev_seen_payload = at_this_height_previously_seen_proposals.get(round).map(|x| x.as_ref().map(|x| x.as_ref().clone())).flatten();
+                let maybe_prev_seen_block = at_this_height_previously_seen_proposals.get(round).map(|x| x.as_ref().map(|x| x.as_ref().clone())).flatten();
 
-                let proposal = if let Some(proposal) = maybe_prev_seen_payload {
+                let proposal = if let Some(proposal) = maybe_prev_seen_block {
                     info!(%height, %round, "Replaying already known proposed value (That I proposed?): {}", proposal.value.id());
 
                     assert_eq!(height, proposal.height);
@@ -198,11 +201,17 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     };
                     other_type
                 } else {
-                    if let Some(payload) = propose_new_bft_payload(&tfl_handle, &my_public_key).await {
+                    if let Some(block) = propose_new_bft_block(&tfl_handle, &my_public_key).await {
+                        info!("Proposing block with hash: {}", block.blake3_hash());
+                        if let Some(last_block) = tfl_handle.internal.lock().await.bft_blocks.last() {
+                            debug_assert_eq!(
+                                block.previous_block_fat_ptr.points_at_block_hash(),
+                                last_block.blake3_hash());
+                        }
                         let other_type: MalLocallyProposedValue<MalContext> = MalLocallyProposedValue {
                             height: height,
                             round: MalRound::new(round as u32),
-                            value: MalValue::new_payload(payload),
+                            value: MalValue::new_block(block),
                         };
                         {
                             // The POL round is always nil when we propose a newly built value.
@@ -309,7 +318,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 bft_msg_flags |= 1 << BFTMsgFlag::ProcessSyncedValue as u64;
 
                 let mal_value : MalValue = codec.decode(value_bytes).unwrap();
-                let value: MalProposedValue<MalContext> = MalProposedValue {
+                let mut value: MalProposedValue<MalContext> = MalProposedValue {
                     height,
                     round,
                     valid_round: MalRound::Nil,
@@ -317,11 +326,13 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     value: mal_value,
                     validity: MalValidity::Valid,
                 };
-                assert_eq!(value.height.as_u64(), lock.height);
-                lock.round = value.round.as_u32().unwrap();
-                while at_this_height_previously_seen_proposals.len() < lock.round as usize + 1 { at_this_height_previously_seen_proposals.push(None); }
-                at_this_height_previously_seen_proposals[lock.round as usize] = Some(Box::new(value.clone()));
-
+                if value.height.as_u64() != lock.height { // Omg, we have to reject blocks ahead of the current height.
+                    value.validity = MalValidity::Invalid;
+                } else {
+                    lock.round = value.round.as_u32().unwrap();
+                    while at_this_height_previously_seen_proposals.len() < lock.round as usize + 1 { at_this_height_previously_seen_proposals.push(None); }
+                    at_this_height_previously_seen_proposals[lock.round as usize] = Some(Box::new(value.clone()));
+                }
                 reply.send(value).unwrap();
             },
             BFTAppMsg::GetValidatorSet { height, reply } => {
@@ -338,7 +349,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 info!(
                     height = %certificate.height,
                     round = %certificate.round,
-                    payload_hash = %certificate.value_id,
+                    block_hash = %certificate.value_id,
                     "Consensus has decided on value"
                 );
                 assert_eq!(lock.height, certificate.height.as_u64());
@@ -368,23 +379,16 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 };
                 info!("Fat pointer to tip is now: {}", fat_pointer);
                 assert!(fat_pointer.validate_signatures());
+                assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
 
                 let decided_value = at_this_height_previously_seen_proposals[lock.round as usize].take().unwrap();
                 assert_eq!(decided_value.value.id(), certificate.value_id);
 
                 assert!(decided_certificates_by_height.insert(lock.height, certificate).is_none());
 
-                use zebra_chain::serialization::ZcashDeserialize;
                 assert!(pending_block_to_push_to_core.is_none());
-                pending_block_to_push_to_core = Some((BftBlock {
-                    payload: BftPayload::zcash_deserialize(&*decided_value.value.value_bytes).expect("infallible"),
-                }, fat_pointer));
-                // TODO wait for another round to canonicalize the votes.
-
-                // TODO form completed block using the vote extensions and insert it into the push to crosslink slot variable, this way we can block while the block is invalid.
-
-                // decided_bft_values.insert(certificate.height.as_u64(), raw_decided_value);
-
+                pending_block_to_push_to_core = Some((BftBlock::zcash_deserialize(&*decided_value.value.value_bytes).expect("infallible"), fat_pointer));
+                
                 lock.height += 1;
                 lock.round = 0;
                 at_this_height_previously_seen_proposals.clear();
@@ -432,8 +436,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                 if let Some(parts) = msg.content.as_data().cloned() {
 
+                    let proposal_round = parts.round.as_i64();
                     // Check if the proposal is outdated or from the future...
-                    if parts.height.as_u64() != lock.height || parts.round.as_i64() != lock.round as i64 {
+                    if parts.height.as_u64() != lock.height || proposal_round < lock.round as i64 || proposal_round > lock.round as i64 + 1 {
                         info!(
                             height = %lock.height,
                             round = %lock.round,
@@ -469,8 +474,9 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
                         // Re-assemble the proposal from its parts
                         let value : MalProposedValue::<MalContext> = {
-                            let payload = parts.data_bytes.zcash_deserialize_into::<BftPayload>().unwrap();
-                            let new_final_hash = payload.headers.first().expect("at least 1 header").hash();
+                            let block = parts.data_bytes.zcash_deserialize_into::<BftBlock>().unwrap();
+                            info!("Received block proposal with hash: {}", block.blake3_hash());
+                            let new_final_hash = block.headers.first().expect("at least 1 header").hash();
 
                             let validity = if let Some(new_final_height) = block_height_from_hash(&tfl_handle.call, new_final_hash).await {
                                 MalValidity::Valid
@@ -479,7 +485,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                                 MalValidity::Invalid
                             };
 
-                            let value = MalValue::new_payload(payload);
+                            let value = MalValue::new_block(block);
                             MalProposedValue {
                                 height: parts.height,
                                 round: parts.round,
@@ -495,11 +501,10 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                             "Storing undecided proposal {} {}",
                             value.height, value.round
                         );
-
                         assert_eq!(value.height.as_u64(), lock.height);
-                        assert_eq!(value.round.as_u32().unwrap(), lock.round);
-                        while at_this_height_previously_seen_proposals.len() < lock.round as usize + 1 { at_this_height_previously_seen_proposals.push(None); }
-                        at_this_height_previously_seen_proposals[lock.round as usize] = Some(Box::new(value.clone()));
+                        let proposal_round = value.round.as_u32().unwrap() as usize;
+                        while at_this_height_previously_seen_proposals.len() < proposal_round as usize + 1 { at_this_height_previously_seen_proposals.push(None); }
+                        at_this_height_previously_seen_proposals[proposal_round as usize] = Some(Box::new(value.clone()));
 
                         if reply.send(Some(value)).is_err() {
                             error!("Failed to send ReceivedProposalPart reply");
@@ -517,8 +522,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 }
 
 
-/// A bundle of signed votes for a payload/block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// A bundle of signed votes for a block
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, serde::Serialize, serde::Deserialize)]
 pub struct FatPointerToBftBlock {
     pub vote_for_block_without_finalizer_public_key: [u8; 76-32],
     pub signatures: Vec<FatPointerSignature>,
@@ -556,6 +561,7 @@ impl FatPointerToBftBlock {
     pub fn null() -> FatPointerToBftBlock {
         FatPointerToBftBlock { vote_for_block_without_finalizer_public_key: [0_u8; 76-32], signatures: Vec::new() }
     }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
@@ -569,12 +575,12 @@ impl FatPointerToBftBlock {
         if bytes.len() < 76-32 + 2 { return None; }
         let vote_for_block_without_finalizer_public_key = bytes[0..76-32].try_into().unwrap();
         let len = u16::from_le_bytes(bytes[76-32..2].try_into().unwrap()) as usize;
-        
+
         if 76-32 + 2 + len * (32+64) > bytes.len() { return None; }
         let rem = &bytes[76-32 + 2..];
         let signatures = rem.chunks_exact(32+64)
             .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap())).collect();
-        
+
         Some(Self { vote_for_block_without_finalizer_public_key, signatures })
     }
 
@@ -607,9 +613,42 @@ impl FatPointerToBftBlock {
     }
 }
 
+use std::io;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-/// A vote signature for a payload/block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+impl ZcashSerialize for FatPointerToBftBlock {
+    fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        for signature in &self.signatures {
+            writer.write_all(&signature.to_bytes());
+        }
+        Ok(())
+    }
+}
+
+impl ZcashDeserialize for FatPointerToBftBlock {
+    fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let mut vote_for_block_without_finalizer_public_key = [0u8; 76-32];
+        reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
+
+        let len = reader.read_u16::<LittleEndian>()?;
+        let mut signatures: Vec<FatPointerSignature> = Vec::with_capacity(len.into());
+        for _ in 0..len {
+            let mut signature_bytes = [0u8; 32+64];
+            reader.read_exact(&mut signature_bytes)?;
+            signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
+        }
+
+        Ok(FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key,
+            signatures,
+        })
+    }
+}
+
+/// A vote signature for a block
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, serde::Serialize, serde::Deserialize)]
 pub struct FatPointerSignature {
     pub public_key: [u8; 32],
     pub vote_signature: [u8; 64],

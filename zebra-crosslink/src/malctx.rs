@@ -53,7 +53,7 @@ pub use malachitebft_app_channel::ConsensusMsg;
 pub use malachitebft_app_channel::Channels;
 pub use malachitebft_app::node::EngineHandle;
 
-use super::{BftPayload, Blake3Hash};
+use super::{BftBlock, Blake3Hash};
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Round")]
@@ -263,11 +263,11 @@ impl Protobuf for MalValueId {
 /// The value to decide on
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MalValue {
-    pub value_bytes: Vec<u8>, // BftPayload,
+    pub value_bytes: Vec<u8>, // BftBlock,
 }
 
 impl MalValue {
-    pub fn new_payload(value: BftPayload) -> Self {
+    pub fn new_block(value: BftBlock) -> Self {
         Self { value_bytes: value.zcash_serialize_to_vec().unwrap() }
     }
 
