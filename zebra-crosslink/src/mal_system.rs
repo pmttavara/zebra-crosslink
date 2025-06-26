@@ -5,6 +5,7 @@ use color_eyre::owo_colors::OwoColorize;
 use futures::FutureExt;
 use malachitebft_core_types::{NilOrVal, VoteType};
 use tracing_subscriber::fmt::format::PrettyVisitor;
+use zerocopy::IntoBytes;
 
 use crate::malctx::malctx_schema_proto::CommitCertificate;
 
@@ -551,17 +552,19 @@ impl FatPointerToBftBlock {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
+        buf.extend_from_slice(&(self.signatures.len() as u16).to_le_bytes());
         for s in &self.signatures {
             buf.extend_from_slice(&s.to_bytes());
         }
         buf
     }
     pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
-        if bytes.len() < 76-32 { return None; }
+        if bytes.len() < 76-32 + 2 { return None; }
         let vote_for_block_without_finalizer_public_key = bytes[0..76-32].try_into().unwrap();
-        // TODO(Sam): len
-        let rem = &bytes[76-32..];
-        if rem.len() % (32+64) != 0 { return None; }
+        let len = u16::from_le_bytes(bytes[76-32..2].try_into().unwrap()) as usize;
+        
+        if 76-32 + 2 + len * (32+64) > bytes.len() { return None; }
+        let rem = &bytes[76-32 + 2..];
         let signatures = rem.chunks_exact(32+64)
             .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap())).collect();
         
