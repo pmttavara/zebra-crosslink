@@ -5,7 +5,7 @@
 // [ ] non-finalized side-chain
 // [ ] uncross edges
 
-use crate::{ *, test_format::* };
+use crate::{test_format::*, *};
 use macroquad::{
     camera::*,
     color::{self, colors::*},
@@ -1237,7 +1237,8 @@ impl VizCtx {
                 let parent_ref = self.find_bc_node_by_hash(&BlockHash(parent_hash));
                 if let Some(parent) = self.node(parent_ref) {
                     assert!(new_node.parent.is_none() || new_node.parent == parent_ref);
-                    assert!( // NOTE(Sam): Spurius crash sometimes
+                    assert!(
+                        // NOTE(Sam): Spurius crash sometimes
                         parent.height + 1 == new_node.height,
                         "parent height: {}, new height: {}",
                         parent.height,
@@ -1893,10 +1894,7 @@ pub async fn viz_main(
     let mut bft_msg_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
-    let mut edit_tf = (
-        Vec::<u8>::new(),
-        Vec::<TFInstr>::new(),
-    );
+    let mut edit_tf = (Vec::<u8>::new(), Vec::<TFInstr>::new());
 
     init_audio(&config).await;
 
@@ -2032,18 +2030,28 @@ pub async fn viz_main(
                 let hash = blocks[i].blake3_hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
-                    let bft_parent = if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::null() {
-                        if i != 0 {
-                            error!("block at height {} does not have a previous_block_hash", i+1);
-                            assert!(false);
-                        }
-                        None
-                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.previous_block_fat_ptr.points_at_block_hash()) {
-                        Some(bft_parent)
-                    } else {
-                        assert!(false, "couldn't find parent at hash {}", &bft_block.previous_block_fat_ptr.points_at_block_hash());
-                        None
-                    };
+                    let bft_parent =
+                        if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::null() {
+                            if i != 0 {
+                                error!(
+                                    "block at height {} does not have a previous_block_hash",
+                                    i + 1
+                                );
+                                assert!(false);
+                            }
+                            None
+                        } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(
+                            &bft_block.previous_block_fat_ptr.points_at_block_hash(),
+                        ) {
+                            Some(bft_parent)
+                        } else {
+                            assert!(
+                                false,
+                                "couldn't find parent at hash {}",
+                                &bft_block.previous_block_fat_ptr.points_at_block_hash()
+                            );
+                            None
+                        };
 
                     ctx.bft_last_added = ctx.push_node(
                         &config,
@@ -2327,15 +2335,14 @@ pub async fn viz_main(
                                     break Vec::new();
                                 }
 
-                                let node = if let Some(node) =
-                                    ctx.node(find_bc_node_i_by_height(
-                                            &ctx.nodes,
-                                            BlockHeight(bc.unwrap()),
-                                    )) {
-                                        node
-                                    } else {
-                                        break Vec::new();
-                                    };
+                                let node = if let Some(node) = ctx.node(find_bc_node_i_by_height(
+                                    &ctx.nodes,
+                                    BlockHeight(bc.unwrap()),
+                                )) {
+                                    node
+                                } else {
+                                    break Vec::new();
+                                };
 
                                 break match node.header {
                                     VizHeader::BlockHeader(hdr) => vec![hdr],
@@ -2668,8 +2675,8 @@ pub async fn viz_main(
                 if node.kind == NodeKind::BFT {
                     if let Some(bft_block) = node.header.as_bft() {
                         if !bft_block.headers.is_empty() {
-                            let hdr_lo =
-                                ctx.find_bc_node_by_hash(&bft_block.headers.first().unwrap().hash());
+                            let hdr_lo = ctx
+                                .find_bc_node_by_hash(&bft_block.headers.first().unwrap().hash());
                             let hdr_hi =
                                 ctx.find_bc_node_by_hash(&bft_block.headers.last().unwrap().hash());
                             if hdr_lo.is_none() && hdr_hi.is_none() {
@@ -3277,8 +3284,8 @@ pub async fn viz_main(
 
                                         let height_hash = (
                                             block
-                                            .coinbase_height()
-                                            .expect("Block should have a valid height"),
+                                                .coinbase_height()
+                                                .expect("Block should have a valid height"),
                                             block.hash(),
                                         );
 
@@ -3288,14 +3295,16 @@ pub async fn viz_main(
                                         );
 
                                         match config.node_load_kind {
-                                            NODE_LOAD_VIZ => ctx.push_bc_block(&config, &block, &height_hash),
+                                            NODE_LOAD_VIZ => {
+                                                ctx.push_bc_block(&config, &block, &height_hash)
+                                            }
                                             NODE_LOAD_ZEBRA => {
                                                 let mut lock = G_FORCE_BLOCKS.lock().unwrap();
                                                 let mut force_feed_blocks: &mut Vec<Arc<Block>> =
                                                     lock.as_mut();
                                                 force_feed_blocks.push(block);
-                                            },
-                                            _ | NODE_LOAD_INSTRS => {},
+                                            }
+                                            _ | NODE_LOAD_INSTRS => {}
                                         };
                                     }
 
@@ -3311,7 +3320,7 @@ pub async fn viz_main(
                                         todo!("Actually set params");
                                     }
 
-                                    None => {},
+                                    None => {}
                                 }
                             }
 
@@ -3342,19 +3351,18 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w))
-                        .ui(ui, |ui| {
-                            for instr_i in 0..edit_tf.1.len() {
-                                let instr = &edit_tf.1[instr_i];
+                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w)).ui(ui, |ui| {
+                        for instr_i in 0..edit_tf.1.len() {
+                            let instr = &edit_tf.1[instr_i];
 
-                                match tf_read_instr(&edit_tf.0, instr) {
-                                    Some(TestInstr::LoadPoW(block)) => {
-                                        ui.label(None, &format!("PoW block: {}", block.hash()));
-                                    }
-                                    _ => ui.label(None, TFInstr::str_from_kind(instr.kind))
+                            match tf_read_instr(&edit_tf.0, instr) {
+                                Some(TestInstr::LoadPoW(block)) => {
+                                    ui.label(None, &format!("PoW block: {}", block.hash()));
                                 }
+                                _ => ui.label(None, TFInstr::str_from_kind(instr.kind)),
                             }
-                        });
+                        }
+                    });
                 },
             );
         }

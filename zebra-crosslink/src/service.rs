@@ -234,7 +234,6 @@ mod tests {
         let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
         let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
 
-
         TFLServiceHandle {
             internal,
             call: TFLServiceCalls {

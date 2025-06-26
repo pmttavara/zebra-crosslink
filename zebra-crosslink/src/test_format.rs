@@ -261,16 +261,10 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
             None
         }
 
-        TFInstr::SET_PARAMS => {
-            Some(
-                TestInstr::SetParams(
-                    ZcashCrosslinkParameters {
-                        bc_confirmation_depth_sigma: instr.val[0],
-                        finalization_gap_bound: instr.val[1],
-                    }
-                )
-            )
-        }
+        TFInstr::SET_PARAMS => Some(TestInstr::SetParams(ZcashCrosslinkParameters {
+            bc_confirmation_depth_sigma: instr.val[0],
+            finalization_gap_bound: instr.val[1],
+        })),
 
         _ => {
             warn!("Unrecognized instruction {}", instr.kind);
@@ -291,15 +285,13 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
     println!("Starting test");
 
     loop {
-        if let Ok(ReadStateResponse::Tip(Some(_))) =
-            (call.read_state)(ReadStateRequest::Tip).await
+        if let Ok(ReadStateResponse::Tip(Some(_))) = (call.read_state)(ReadStateRequest::Tip).await
         {
             break;
         } else {
             // warn!("Failed to read tip");
         }
     }
-
 
     let (bytes, tf) = match TF::read_from_file(&path) {
         Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics

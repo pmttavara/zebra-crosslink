@@ -34,8 +34,8 @@ use chain::*;
 pub mod mal_system;
 use mal_system::*;
 
-use tokio::sync::Mutex as TokioMutex;
 use std::sync::Mutex;
+use tokio::sync::Mutex as TokioMutex;
 pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
@@ -313,25 +313,36 @@ async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u6
     internal.bft_msg_flags |= bft_msg_flags;
 }
 
-async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &MalPublicKey) -> Option<BftBlock> {
+async fn propose_new_bft_block(
+    tfl_handle: &TFLServiceHandle,
+    my_public_key: &MalPublicKey,
+) -> Option<BftBlock> {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
-    let (tip_height, tip_hash) = if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
-        if val.is_none() { return None; }
-        val.unwrap()
-    } else {
-        return None;
-    };
+    let (tip_height, tip_hash) =
+        if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
+            if val.is_none() {
+                return None;
+            }
+            val.unwrap()
+        } else {
+            return None;
+        };
 
     use std::ops::Sub;
     use zebra_chain::block::HeightDiff as BlockHeightDiff;
 
-    let finality_candidate_height = tip_height.sub(BlockHeightDiff::from(params.bc_confirmation_depth_sigma as i64));
+    let finality_candidate_height = tip_height.sub(BlockHeightDiff::from(
+        params.bc_confirmation_depth_sigma as i64,
+    ));
 
     let finality_candidate_height = if let Some(h) = finality_candidate_height {
         h
     } else {
-        info!("not enough blocks to enforce finality; tip height: {}", tip_height.0);
+        info!(
+            "not enough blocks to enforce finality; tip height: {}",
+            tip_height.0
+        );
         return None;
     };
 
@@ -339,17 +350,27 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
         let internal = tfl_handle.internal.lock().await;
         (
             internal.latest_final_block,
-            internal.bft_blocks.last().map_or(Blake3Hash([0u8; 32]), |b| b.blake3_hash())
+            internal
+                .bft_blocks
+                .last()
+                .map_or(Blake3Hash([0u8; 32]), |b| b.blake3_hash()),
         )
     };
-    let is_improved_final = latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
+    let is_improved_final =
+        latest_final_block.is_none() || finality_candidate_height > latest_final_block.unwrap().0;
 
-    if ! is_improved_final {
-        info!("candidate block can't be final: height {}, final height: {:?}", finality_candidate_height.0, latest_final_block);
+    if !is_improved_final {
+        info!(
+            "candidate block can't be final: height {}, final height: {:?}",
+            finality_candidate_height.0, latest_final_block
+        );
         return None;
     }
 
-    let resp = (call.read_state)(ReadStateRequest::BlockHeader(finality_candidate_height.into())).await;
+    let resp = (call.read_state)(ReadStateRequest::BlockHeader(
+        finality_candidate_height.into(),
+    ))
+    .await;
 
     let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
         hash
@@ -368,7 +389,9 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
 
     let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
         // TODO: do we want these in chain order or "walk-back order"
-        hdrs.into_iter().map(|ch| Arc::unwrap_or_clone(ch.header)).collect()
+        hdrs.into_iter()
+            .map(|ch| Arc::unwrap_or_clone(ch.header))
+            .collect()
     } else {
         // Error or unexpected response type:
         panic!("TODO: improve error handling.");
@@ -376,13 +399,28 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
 
     let mut internal = tfl_handle.internal.lock().await;
 
-    match BftBlock::try_from(params, internal.bft_blocks.len() as u32 + 1, internal.fat_pointer_to_tip.clone(), 0, headers) {
-        Ok(v) => { return Some(v); },
-        Err(e) => { warn!("Unable to create BftBlock to propose, Error={:?}", e,); return None; }
+    match BftBlock::try_from(
+        params,
+        internal.bft_blocks.len() as u32 + 1,
+        internal.fat_pointer_to_tip.clone(),
+        0,
+        headers,
+    ) {
+        Ok(v) => {
+            return Some(v);
+        }
+        Err(e) => {
+            warn!("Unable to create BftBlock to propose, Error={:?}", e,);
+            return None;
+        }
     };
 }
 
-async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new_block: &BftBlock, fat_pointer: &FatPointerToBftBlock) -> bool {
+async fn new_decided_bft_block_from_malachite(
+    tfl_handle: &TFLServiceHandle,
+    new_block: &BftBlock,
+    fat_pointer: &FatPointerToBftBlock,
+) -> bool {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -395,24 +433,23 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
         // HACK: ensure there are enough blocks to overwrite this at the correct index
         for i in internal.bft_blocks.len()..=insert_i {
             let parent_i = i.saturating_sub(1); // just a simple chain
-            internal.bft_blocks.push(
-                BftBlock {
-                    version: 0,
-                    height: i as u32,
-                    previous_block_fat_ptr: FatPointerToBftBlock {
-                        vote_for_block_without_finalizer_public_key: [0u8; 76-32],
-                        signatures: Vec::new(),
-                    },
-                    finalization_candidate_height: 0,
-                    headers: Vec::new(),
-                }
-            );
+            internal.bft_blocks.push(BftBlock {
+                version: 0,
+                height: i as u32,
+                previous_block_fat_ptr: FatPointerToBftBlock {
+                    vote_for_block_without_finalizer_public_key: [0u8; 76 - 32],
+                    signatures: Vec::new(),
+                },
+                finalization_candidate_height: 0,
+                headers: Vec::new(),
+            });
         }
 
         if insert_i > 0 {
             assert_eq!(
-                internal.bft_blocks[insert_i-1].blake3_hash(),
-                new_block.previous_block_fat_ptr.points_at_block_hash());
+                internal.bft_blocks[insert_i - 1].blake3_hash(),
+                new_block.previous_block_fat_ptr.points_at_block_hash()
+            );
         }
         assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
         assert!(internal.bft_blocks[insert_i].headers.is_empty());
@@ -422,26 +459,45 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
         internal.fat_pointer_to_tip = fat_pointer.clone();
         internal.latest_final_block = Some((new_final_height, new_final_hash));
     } else {
-        warn!("Didn't have hash available for confirmation: {}", new_final_hash);
+        warn!(
+            "Didn't have hash available for confirmation: {}",
+            new_final_hash
+        );
         return false;
     }
 
-    assert_eq!(tfl_handle.internal.lock().await.bft_blocks.last().unwrap().blake3_hash(), new_block.blake3_hash());
+    assert_eq!(
+        tfl_handle
+            .internal
+            .lock()
+            .await
+            .bft_blocks
+            .last()
+            .unwrap()
+            .blake3_hash(),
+        new_block.blake3_hash()
+    );
     true
 }
 
-async fn get_historical_bft_block_at_height(tfl_handle: &TFLServiceHandle, at_height: u64) -> Option<(BftBlock, FatPointerToBftBlock)> {
+async fn get_historical_bft_block_at_height(
+    tfl_handle: &TFLServiceHandle,
+    at_height: u64,
+) -> Option<(BftBlock, FatPointerToBftBlock)> {
     let mut internal = tfl_handle.internal.lock().await;
-    if at_height == 0 || at_height as usize - 1 >= internal.bft_blocks.len() { return None; }
-    let block = internal.bft_blocks[at_height as usize -1].clone();
+    if at_height == 0 || at_height as usize - 1 >= internal.bft_blocks.len() {
+        return None;
+    }
+    let block = internal.bft_blocks[at_height as usize - 1].clone();
     let fp = if at_height as usize == internal.bft_blocks.len() {
         internal.fat_pointer_to_tip.clone()
     } else {
-        internal.bft_blocks[at_height as usize].previous_block_fat_ptr.clone()
+        internal.bft_blocks[at_height as usize]
+            .previous_block_fat_ptr
+            .clone()
     };
     Some((block, fp))
 }
-
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
@@ -522,7 +578,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     eprintln!("...");
                 }
 
-
                 std::process::abort();
             }
         }));
@@ -559,7 +614,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let codec = MalProtobufCodec;
 
     let init_bft_height = MalHeight::new(1);
-
 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
@@ -612,7 +666,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     info!(?bft_config);
 
-    let mut malachite_system = start_malachite(internal_handle.clone(), 1, initial_validator_set.validators, my_private_key, bft_config).await;
+    let mut malachite_system = start_malachite(
+        internal_handle.clone(),
+        1,
+        initial_validator_set.validators,
+        my_private_key,
+        bft_config,
+    )
+    .await;
 
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();

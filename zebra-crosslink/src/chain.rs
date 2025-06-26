@@ -12,7 +12,9 @@ use thiserror::Error;
 use tracing::error;
 use zebra_chain::block::Header as BcBlockHeader;
 
-use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcashExt, ZcashSerialize};
+use zebra_chain::serialization::{
+    ReadZcashExt, SerializationError, ZcashDeserialize, ZcashSerialize,
+};
 
 use crate::mal_system::FatPointerToBftBlock;
 
@@ -56,7 +58,7 @@ use crate::mal_system::FatPointerToBftBlock;
 /// # References
 ///
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, Serialize, Deserialize)]
 pub struct BftBlock {
     /// The Version Number
     pub version: u32,
@@ -249,4 +251,3 @@ impl ZcashDeserialize for Blake3Hash {
         Ok(Blake3Hash(reader.read_32_bytes()?))
     }
 }
-
