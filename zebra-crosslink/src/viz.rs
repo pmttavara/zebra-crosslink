@@ -247,209 +247,209 @@ pub struct VizState {
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
-pub mod serialization {
-    use super::*;
-    use chrono::Utc;
-    use serde::{Deserialize, Serialize};
-    use std::fs;
-    use zebra_chain::{
-        block::merkle::Root,
-        block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight},
-        fmt::HexDebug,
-        work::equihash::Solution,
-    };
+// pub mod serialization {
+//     use super::*;
+//     use chrono::Utc;
+//     use serde::{Deserialize, Serialize};
+//     use std::fs;
+//     use zebra_chain::{
+//         block::merkle::Root,
+//         block::{Block, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight},
+//         fmt::HexDebug,
+//         work::equihash::Solution,
+//     };
 
-    #[derive(Serialize, Deserialize)]
-    struct MinimalBlockExport {
-        difficulty: u32,
-        txs_n: u32,
-        previous_block_hash: [u8; 32],
-    }
+//     #[derive(Serialize, Deserialize)]
+//     struct MinimalBlockExport {
+//         difficulty: u32,
+//         txs_n: u32,
+//         previous_block_hash: [u8; 32],
+//     }
 
-    #[derive(Serialize, Deserialize)]
-    struct MinimalVizStateExport {
-        latest_final_block: Option<(u32, [u8; 32])>,
-        bc_tip: Option<(u32, [u8; 32])>,
-        height_hashes: Vec<(u32, [u8; 32])>,
-        blocks: Vec<Option<MinimalBlockExport>>,
-        bft_blocks: Vec<BftBlock>,
-    }
+//     #[derive(Serialize, Deserialize)]
+//     struct MinimalVizStateExport {
+//         latest_final_block: Option<(u32, [u8; 32])>,
+//         bc_tip: Option<(u32, [u8; 32])>,
+//         height_hashes: Vec<(u32, [u8; 32])>,
+//         blocks: Vec<Option<MinimalBlockExport>>,
+//         bft_blocks: Vec<BftBlock>,
+//     }
 
-    impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
-        fn from(data: (&VizState, &VizCtx, &ZcashCrosslinkParameters)) -> Self {
-            let (state, ctx, params) = data;
-            let nodes = &ctx.nodes;
+//     impl From<(&VizState, &VizCtx, &ZcashCrosslinkParameters)> for MinimalVizStateExport {
+//         fn from(data: (&VizState, &VizCtx, &ZcashCrosslinkParameters)) -> Self {
+//             let (state, ctx, params) = data;
+//             let nodes = &ctx.nodes;
 
-            fn u32_from_compact_difficulty(difficulty: CompactDifficulty) -> u32 {
-                u32::from_be_bytes(difficulty.bytes_in_display_order())
-            }
+//             fn u32_from_compact_difficulty(difficulty: CompactDifficulty) -> u32 {
+//                 u32::from_be_bytes(difficulty.bytes_in_display_order())
+//             }
 
-            let mut height_hashes: Vec<(u32, [u8; 32])> = state
-                .height_hashes
-                .iter()
-                .map(|h| (h.0 .0, h.1 .0))
-                .collect();
-            let mut blocks: Vec<Option<MinimalBlockExport>> = state
-                .blocks
-                .iter()
-                .map(|opt| {
-                    opt.as_ref().map(|b| MinimalBlockExport {
-                        difficulty: u32_from_compact_difficulty(b.header.difficulty_threshold),
-                        txs_n: b.transactions.len() as u32,
-                        previous_block_hash: b.header.previous_block_hash.0,
-                    })
-                })
-                .collect();
+//             let mut height_hashes: Vec<(u32, [u8; 32])> = state
+//                 .height_hashes
+//                 .iter()
+//                 .map(|h| (h.0 .0, h.1 .0))
+//                 .collect();
+//             let mut blocks: Vec<Option<MinimalBlockExport>> = state
+//                 .blocks
+//                 .iter()
+//                 .map(|opt| {
+//                     opt.as_ref().map(|b| MinimalBlockExport {
+//                         difficulty: u32_from_compact_difficulty(b.header.difficulty_threshold),
+//                         txs_n: b.transactions.len() as u32,
+//                         previous_block_hash: b.header.previous_block_hash.0,
+//                     })
+//                 })
+//                 .collect();
 
-            let mut bft_blocks = state.bft_blocks.clone();
+//             let mut bft_blocks = state.bft_blocks.clone();
 
-            for (i, node) in nodes.iter().enumerate() {
-                match node.kind {
-                    NodeKind::BC => {
-                        height_hashes.push((
-                            node.height,
-                            node.hash().expect("PoW nodes should have hashes"),
-                        ));
-                        blocks.push(Some(MinimalBlockExport {
-                            difficulty: u32_from_compact_difficulty(
-                                node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| d),
-                            ),
-                            txs_n: node.txs_n,
-                            previous_block_hash: if let Some(parent) = ctx.get_node(node.parent) {
-                                assert!(parent.height + 1 == node.height);
-                                parent.hash().expect("PoW nodes should have hashes")
-                            } else {
-                                let mut hash = [0u8; 32];
-                                // for (k, v) in &ctx.missing_bc_parents {
-                                //     if *v == Some(i) {
-                                //         hash = *k;
-                                //     }
-                                // }
-                                hash
-                            },
-                        }));
-                    }
+//             for (i, node) in nodes.iter().enumerate() {
+//                 match node.kind {
+//                     NodeKind::BC => {
+//                         height_hashes.push((
+//                             node.height,
+//                             node.hash().expect("PoW nodes should have hashes"),
+//                         ));
+//                         blocks.push(Some(MinimalBlockExport {
+//                             difficulty: u32_from_compact_difficulty(
+//                                 node.difficulty.map_or(INVALID_COMPACT_DIFFICULTY, |d| d),
+//                             ),
+//                             txs_n: node.txs_n,
+//                             previous_block_hash: if let Some(parent) = ctx.get_node(node.parent) {
+//                                 assert!(parent.height + 1 == node.height);
+//                                 parent.hash().expect("PoW nodes should have hashes")
+//                             } else {
+//                                 let mut hash = [0u8; 32];
+//                                 // for (k, v) in &ctx.missing_bc_parents {
+//                                 //     if *v == Some(i) {
+//                                 //         hash = *k;
+//                                 //     }
+//                                 // }
+//                                 hash
+//                             },
+//                         }));
+//                     }
 
-                    NodeKind::BFT => {
-                        let parent_id = if let Some(parent) = ctx.get_node(node.parent) {
-                            assert!(parent.height + 1 == node.height);
-                            parent.id().expect("BFT nodes should have ids")
-                        } else {
-                            0
-                        };
+//                     NodeKind::BFT => {
+//                         let parent_id = if let Some(parent) = ctx.get_node(node.parent) {
+//                             assert!(parent.height + 1 == node.height);
+//                             parent.id().expect("BFT nodes should have ids")
+//                         } else {
+//                             0
+//                         };
 
-                        bft_blocks.push(node.header.as_bft().unwrap().clone());
-                    }
-                }
-            }
+//                         bft_blocks.push(node.header.as_bft().unwrap().clone());
+//                     }
+//                 }
+//             }
 
-            Self {
-                latest_final_block: state.latest_final_block.map(|(h, hash)| (h.0, hash.0)),
-                bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
-                height_hashes,
-                blocks,
-                bft_blocks,
-            }
-        }
-    }
+//             Self {
+//                 latest_final_block: state.latest_final_block.map(|(h, hash)| (h.0, hash.0)),
+//                 bc_tip: state.bc_tip.map(|(h, hash)| (h.0, hash.0)),
+//                 height_hashes,
+//                 blocks,
+//                 bft_blocks,
+//             }
+//         }
+//     }
 
-    impl From<MinimalVizStateExport> for VizGlobals {
-        fn from(export: MinimalVizStateExport) -> Self {
-            let state = Arc::new(VizState {
-                latest_final_block: export
-                    .latest_final_block
-                    .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
-                bc_tip: export
-                    .bc_tip
-                    .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
-                height_hashes: export
-                    .height_hashes
-                    .into_iter()
-                    .map(|h| (BlockHeight(h.0), BlockHash(h.1)))
-                    .collect(),
-                blocks: export
-                    .blocks
-                    .into_iter()
-                    .map(|opt| {
-                        opt.map(|b| {
-                            Arc::new(Block {
-                                header: Arc::new(BlockHeader {
-                                    version: 0,
-                                    previous_block_hash: BlockHash(b.previous_block_hash),
-                                    merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
-                                    commitment_bytes: HexDebug([0u8; 32]),
-                                    time: Utc::now(),
-                                    difficulty_threshold:
-                                        CompactDifficulty::from_bytes_in_display_order(
-                                            &b.difficulty.to_be_bytes(),
-                                        )
-                                        .expect("valid difficulty"),
-                                    nonce: HexDebug([0u8; 32]),
-                                    solution: Solution::for_proposal(),
-                                }),
-                                // dummy transactions, just so we have txs_n
-                                transactions: {
-                                    let tx = Arc::new(Transaction::V1 {
-                                        lock_time: LockTime::Height(BlockHeight(0)),
-                                        inputs: Vec::new(),
-                                        outputs: Vec::new(),
-                                    });
-                                    vec![tx; b.txs_n as usize]
-                                },
-                            })
-                        })
-                    })
-                    .collect(),
-                internal_proposed_bft_string: Some("From Export".into()),
-                bft_msg_flags: 0,
-                bft_blocks: export.bft_blocks,
-            });
+//     impl From<MinimalVizStateExport> for VizGlobals {
+//         fn from(export: MinimalVizStateExport) -> Self {
+//             let state = Arc::new(VizState {
+//                 latest_final_block: export
+//                     .latest_final_block
+//                     .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
+//                 bc_tip: export
+//                     .bc_tip
+//                     .map(|(h, hash)| (BlockHeight(h), BlockHash(hash))),
+//                 height_hashes: export
+//                     .height_hashes
+//                     .into_iter()
+//                     .map(|h| (BlockHeight(h.0), BlockHash(h.1)))
+//                     .collect(),
+//                 blocks: export
+//                     .blocks
+//                     .into_iter()
+//                     .map(|opt| {
+//                         opt.map(|b| {
+//                             Arc::new(Block {
+//                                 header: Arc::new(BlockHeader {
+//                                     version: 0,
+//                                     previous_block_hash: BlockHash(b.previous_block_hash),
+//                                     merkle_root: Root::from_bytes_in_display_order(&[0u8; 32]),
+//                                     commitment_bytes: HexDebug([0u8; 32]),
+//                                     time: Utc::now(),
+//                                     difficulty_threshold:
+//                                         CompactDifficulty::from_bytes_in_display_order(
+//                                             &b.difficulty.to_be_bytes(),
+//                                         )
+//                                         .expect("valid difficulty"),
+//                                     nonce: HexDebug([0u8; 32]),
+//                                     solution: Solution::for_proposal(),
+//                                 }),
+//                                 // dummy transactions, just so we have txs_n
+//                                 transactions: {
+//                                     let tx = Arc::new(Transaction::V1 {
+//                                         lock_time: LockTime::Height(BlockHeight(0)),
+//                                         inputs: Vec::new(),
+//                                         outputs: Vec::new(),
+//                                     });
+//                                     vec![tx; b.txs_n as usize]
+//                                 },
+//                             })
+//                         })
+//                     })
+//                     .collect(),
+//                 internal_proposed_bft_string: Some("From Export".into()),
+//                 bft_msg_flags: 0,
+//                 bft_blocks: export.bft_blocks,
+//             });
 
-            VizGlobals {
-                params: &PROTOTYPE_PARAMETERS,
-                state,
-                bc_req_h: (0, 0),
-                consumed: true,
-                proposed_bft_string: None,
-            }
-        }
-    }
+//             VizGlobals {
+//                 params: &PROTOTYPE_PARAMETERS,
+//                 state,
+//                 bc_req_h: (0, 0),
+//                 consumed: true,
+//                 proposed_bft_string: None,
+//             }
+//         }
+//     }
 
-    /// Read a global state struct from the data in a file
-    pub fn read_from_file(path: &str) -> VizGlobals {
-        let raw = fs::read_to_string(path).expect(&format!("{} exists", path));
-        let export: MinimalVizStateExport = serde_json::from_str(&raw).expect("valid export JSON");
-        let globals: VizGlobals = export.into();
-        globals
-    }
+//     /// Read a global state struct from the data in a file
+//     pub fn read_from_file(path: &str) -> VizGlobals {
+//         let raw = fs::read_to_string(path).expect(&format!("{} exists", path));
+//         let export: MinimalVizStateExport = serde_json::from_str(&raw).expect("valid export JSON");
+//         let globals: VizGlobals = export.into();
+//         globals
+//     }
 
-    /// Read a global state struct from the data in a file and apply it to the current global state
-    pub fn init_from_file(path: &str) {
-        let globals = read_from_file(path);
-        *VIZ_G.lock().unwrap() = Some(globals);
-    }
+//     /// Read a global state struct from the data in a file and apply it to the current global state
+//     pub fn init_from_file(path: &str) {
+//         let globals = read_from_file(path);
+//         *VIZ_G.lock().unwrap() = Some(globals);
+//     }
 
-    /// Write the current visualizer state to a file
-    pub(crate) fn write_to_file_internal(
-        path: &str,
-        state: &VizState,
-        ctx: &VizCtx,
-        params: &ZcashCrosslinkParameters,
-    ) {
-        use serde_json::to_string_pretty;
-        use std::fs;
+//     /// Write the current visualizer state to a file
+//     pub(crate) fn write_to_file_internal(
+//         path: &str,
+//         state: &VizState,
+//         ctx: &VizCtx,
+//         params: &ZcashCrosslinkParameters,
+//     ) {
+//         use serde_json::to_string_pretty;
+//         use std::fs;
 
-        let viz_export = MinimalVizStateExport::from((&*state, ctx, params));
-        // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
-        let json = to_string_pretty(&viz_export).expect("serialization success");
-        fs::write(path, json).expect("write success");
-    }
+//         let viz_export = MinimalVizStateExport::from((&*state, ctx, params));
+//         // eprintln!("Dumping state to file \"{}\", {:?}", path, state);
+//         let json = to_string_pretty(&viz_export).expect("serialization success");
+//         fs::write(path, json).expect("write success");
+//     }
 
-    /// Write the current visualizer state to a file
-    pub fn write_to_file(path: &str, state: &VizState, params: &ZcashCrosslinkParameters) {
-        write_to_file_internal(path, state, &VizCtx::default(), params)
-    }
-}
+//     /// Write the current visualizer state to a file
+//     pub fn write_to_file(path: &str, state: &VizState, params: &ZcashCrosslinkParameters) {
+//         write_to_file_internal(path, state, &VizCtx::default(), params)
+//     }
+// }
 
 /// Self-debug info
 struct VizDbg {
@@ -686,29 +686,33 @@ pub async fn service_viz_requests(
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
             internal.bft_msg_flags = 0;
+            let mut bft_blocks = internal.bft_blocks.clone();
+
+            // TODO: is this still necessary?
+            // TODO: O(<n)
+            // for i in 0..bft_blocks.len() {
+            //     let block = &mut bft_blocks[i];
+            //     if block.finalization_candidate_height == 0 && !block.headers.is_empty()
+            //     {
+            //         // TODO: block.finalized()
+            //         if let Some(BlockHeight(h)) =
+            //             block_height_from_hash(&call, block.headers[0].hash()).await
+            //         {
+            //             block.finalization_candidate_height = h;
+            //             //
+            //             // let mut internal = tfl_handle.internal.lock().await;
+            //             // internal.bft_blocks[i]
+            //             //     .finalization_candidate_height = h;
+            //         }
+            //     }
+            // }
+
             (
                 bft_msg_flags,
-                internal.bft_blocks.clone(),
+                bft_blocks,
                 internal.proposed_bft_string.clone(),
             )
         };
-
-        // TODO: O(<n)
-        for i in 0..bft_blocks.len() {
-            let block = &mut bft_blocks[i];
-            if block.finalization_candidate_height == 0 && !block.headers.is_empty()
-            {
-                // TODO: block.finalized()
-                if let Some(BlockHeight(h)) =
-                    block_height_from_hash(&call, block.headers[0].hash()).await
-                {
-                    block.finalization_candidate_height = h;
-                    let mut internal = tfl_handle.internal.lock().await;
-                    internal.bft_blocks[i]
-                        .finalization_candidate_height = h;
-                }
-            }
-        }
 
         let mut height_hashes = Vec::with_capacity(hashes.len());
         for i in 0..hashes.len() {
@@ -2028,14 +2032,16 @@ pub async fn viz_main(
                 let hash = blocks[i].blake3_hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
-                    let bft_parent = if bft_block.previous_block_hash == Blake3Hash([0u8; 32]) {
+                    let bft_parent = if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::new_empty() {
                         if i != 0 {
                             error!("block at height {} does not have a previous_block_hash", i+1);
+                            assert!(false);
                         }
                         None
-                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.previous_block_hash) {
+                    } else if let Some(bft_parent) = ctx.find_bft_node_by_hash(&bft_block.previous_block_fat_ptr.points_at_block_hash()) {
                         Some(bft_parent)
                     } else {
+                        assert!(false, "couldn't find parent at hash {}", &bft_block.previous_block_fat_ptr.points_at_block_hash());
                         None
                     };
 
@@ -2152,12 +2158,12 @@ pub async fn viz_main(
         }
 
         if is_key_down(KeyCode::LeftControl) && is_key_pressed(KeyCode::E) {
-            serialization::write_to_file_internal(
-                "./zebra-crosslink/viz_state.json",
-                &g.state,
-                &ctx,
-                g.params,
-            );
+            // serialization::write_to_file_internal(
+            //     "./zebra-crosslink/viz_state.json",
+            //     &g.state,
+            //     &ctx,
+            //     g.params,
+            // );
         }
 
         ctx.fix_screen_o = BBox::clamp(
@@ -2313,7 +2319,7 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_hash: Blake3Hash([0u8; 32]),
+                            previous_block_fat_ptr: FatPointerToBftBlock::new_empty(),
                             finalization_candidate_height: 0,
                             headers: loop {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -2582,7 +2588,7 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_hash: Blake3Hash([0u8; 32]),
+                            previous_block_fat_ptr: FatPointerToBftBlock::new_empty(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
                         };

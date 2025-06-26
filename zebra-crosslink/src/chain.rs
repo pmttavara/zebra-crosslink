@@ -14,6 +14,8 @@ use zebra_chain::block::Header as BcBlockHeader;
 
 use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcashExt, ZcashSerialize};
 
+use crate::mal_system::FatPointerToBftBlock;
+
 /// The BFT block content for Crosslink
 ///
 /// # Constructing [BftBlock]s
@@ -54,7 +56,7 @@ use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcash
 /// # References
 ///
 /// [^1]: [Zcash Trailing Finality Layer §3.3.3 Structural Additions](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#structural-additions)
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, Serialize, Deserialize)]
 pub struct BftBlock {
     /// The Version Number
     pub version: u32,
@@ -62,7 +64,7 @@ pub struct BftBlock {
     // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
     /// Hash of the previous BFT Block.
-    pub previous_block_hash: Blake3Hash,
+    pub previous_block_fat_ptr: FatPointerToBftBlock,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
     /// The PoW Headers
@@ -75,7 +77,7 @@ impl ZcashSerialize for BftBlock {
     fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
         writer.write_u32::<LittleEndian>(self.version)?;
         writer.write_u32::<LittleEndian>(self.height)?;
-        self.previous_block_hash.zcash_serialize(&mut writer)?;
+        self.previous_block_fat_ptr.zcash_serialize(&mut writer);
         writer.write_u32::<LittleEndian>(self.finalization_candidate_height)?;
         writer.write_u32::<LittleEndian>(self.headers.len().try_into().unwrap())?;
         for header in &self.headers {
@@ -89,7 +91,7 @@ impl ZcashDeserialize for BftBlock {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
-        let previous_block_hash = Blake3Hash::zcash_deserialize(&mut reader)?;
+        let previous_block_fat_ptr = FatPointerToBftBlock::zcash_deserialize(&mut reader)?;
         let finalization_candidate_height = reader.read_u32::<LittleEndian>()?;
         let header_count = reader.read_u32::<LittleEndian>()?;
         if header_count > 2048 {
@@ -106,7 +108,7 @@ impl ZcashDeserialize for BftBlock {
         Ok(BftBlock {
             version,
             height,
-            previous_block_hash,
+            previous_block_fat_ptr,
             finalization_candidate_height,
             headers: array,
         })
@@ -125,7 +127,7 @@ impl BftBlock {
     pub fn try_from(
         params: &ZcashCrosslinkParameters,
         height: u32,
-        previous_block_hash: Blake3Hash,
+        previous_block_fat_ptr: FatPointerToBftBlock,
         finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftBlock> {
@@ -140,7 +142,7 @@ impl BftBlock {
         Ok(BftBlock {
             version: 0,
             height,
-            previous_block_hash,
+            previous_block_fat_ptr,
             finalization_candidate_height,
             headers,
         })
@@ -150,6 +152,12 @@ impl BftBlock {
     /// ([BftBlock::hash]).
     pub fn blake3_hash(&self) -> Blake3Hash {
         self.into()
+    }
+
+    /// Just the hash of the previous block, which identifies it but does not provide any
+    /// guarantees. Consider using the [`previous_block_fat_ptr`] instead
+    pub fn previous_block_hash(&self) -> Blake3Hash {
+        self.previous_block_fat_ptr.points_at_block_hash()
     }
 }
 
@@ -207,10 +215,19 @@ pub const PROTOTYPE_PARAMETERS: ZcashCrosslinkParameters = ZcashCrosslinkParamet
 };
 
 /// A BLAKE3 hash.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Serialize, Deserialize)]
 pub struct Blake3Hash(pub [u8; 32]);
 
 impl std::fmt::Display for Blake3Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for &b in self.0.iter() {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for Blake3Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for &b in self.0.iter() {
             write!(f, "{:02x}", b)?;

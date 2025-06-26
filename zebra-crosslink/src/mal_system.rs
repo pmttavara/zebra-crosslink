@@ -10,6 +10,7 @@ use zerocopy::IntoBytes;
 use crate::malctx::malctx_schema_proto::CommitCertificate;
 
 use super::*;
+use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ReadZcashExt, ZcashSerialize};
 
 /*
 
@@ -107,6 +108,8 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
     let mut bft_msg_flags = 0;
     let mut at_this_height_previously_seen_proposals: Vec<Option<Box<MalProposedValue<MalContext>>>> = Vec::new();
 
+    let mut fat_pointer_to_tip = FatPointerToBftBlock::new_empty();
+
     let mut decided_certificates_by_height = HashMap::new();
 
     loop {
@@ -198,7 +201,19 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                     };
                     other_type
                 } else {
-                    if let Some(block) = propose_new_bft_block(&tfl_handle, &my_public_key, lock.height).await {
+                    if let Some(last_block) = tfl_handle.internal.lock().await.bft_blocks.last() {
+                        debug_assert_eq!(
+                            fat_pointer_to_tip.points_at_block_hash(),
+                            last_block.blake3_hash());
+                    }
+
+                    if let Some(block) = propose_new_bft_block(&tfl_handle, &my_public_key, fat_pointer_to_tip.clone(), lock.height).await {
+                        info!("Proposing block with hash: {}", block.blake3_hash());
+                        if let Some(last_block) = tfl_handle.internal.lock().await.bft_blocks.last() {
+                            debug_assert_eq!(
+                                block.previous_block_fat_ptr.points_at_block_hash(),
+                                last_block.blake3_hash());
+                        }
                         let other_type: MalLocallyProposedValue<MalContext> = MalLocallyProposedValue {
                             height: height,
                             round: MalRound::new(round as u32),
@@ -362,17 +377,26 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                 };
                 info!("Fat pointer to tip is now: {}", fat_pointer);
                 assert!(fat_pointer.validate_signatures());
+                assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
+                fat_pointer_to_tip = fat_pointer;
+
 
                 let decided_value = at_this_height_previously_seen_proposals[lock.round as usize].take().unwrap();
                 assert_eq!(decided_value.value.id(), certificate.value_id);
 
                 assert!(decided_certificates_by_height.insert(lock.height, certificate).is_none());
 
-                use zebra_chain::serialization::ZcashDeserialize;
                 assert!(pending_block_to_push_to_core.is_none());
                 pending_block_to_push_to_core = Some(
                     BftBlock::zcash_deserialize(&*decided_value.value.value_bytes).expect("infallible"),
                 );
+                assert_eq!(pending_block_to_push_to_core.as_ref().unwrap().blake3_hash(),
+                    fat_pointer_to_tip.clone().points_at_block_hash());
+                if let Some(last_block) = tfl_handle.internal.lock().await.bft_blocks.last() {
+                    debug_assert_eq!(
+                        pending_block_to_push_to_core.as_ref().unwrap().previous_block_fat_ptr.points_at_block_hash(),
+                        last_block.blake3_hash());
+                }
                 // TODO wait for another round to canonicalize the votes.
 
                 // TODO form completed block using the vote extensions and insert it into the push to crosslink slot variable, this way we can block while the block is invalid.
@@ -467,6 +491,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
                         // Re-assemble the proposal from its parts
                         let value : MalProposedValue::<MalContext> = {
                             let block = parts.data_bytes.zcash_deserialize_into::<BftBlock>().unwrap();
+                            info!("Received block proposal with hash: {}", block.blake3_hash());
                             let new_final_hash = block.headers.first().expect("at least 1 header").hash();
 
                             let validity = if let Some(new_final_height) = block_height_from_hash(&tfl_handle.call, new_final_hash).await {
@@ -515,7 +540,7 @@ async fn malachite_system_main_loop(tfl_handle: TFLServiceHandle, weak_self: Wea
 
 
 /// A bundle of signed votes for a block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, serde::Serialize, serde::Deserialize)]
 pub struct FatPointerToBftBlock {
     pub vote_for_block_without_finalizer_public_key: [u8; 76-32],
     pub signatures: Vec<FatPointerSignature>,
@@ -550,6 +575,13 @@ impl std::fmt::Display for FatPointerToBftBlock {
 }
 
 impl FatPointerToBftBlock {
+    pub fn new_empty() -> FatPointerToBftBlock {
+        FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key: [0u8; 76-32],
+            signatures: Vec::new(),
+        }
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
@@ -563,7 +595,7 @@ impl FatPointerToBftBlock {
         if bytes.len() < 76-32 + 2 { return None; }
         let vote_for_block_without_finalizer_public_key = bytes[0..76-32].try_into().unwrap();
         let len = u16::from_le_bytes(bytes[76-32..2].try_into().unwrap()) as usize;
-        
+
         if 76-32 + 2 + len * (32+64) > bytes.len() { return None; }
         let rem = &bytes[76-32 + 2..];
         let signatures = rem.chunks_exact(32+64)
@@ -600,9 +632,42 @@ impl FatPointerToBftBlock {
     }
 }
 
+use std::io;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+
+impl ZcashSerialize for FatPointerToBftBlock {
+    fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        for signature in &self.signatures {
+            writer.write_all(&signature.to_bytes());
+        }
+        Ok(())
+    }
+}
+
+impl ZcashDeserialize for FatPointerToBftBlock {
+    fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
+        let mut vote_for_block_without_finalizer_public_key = [0u8; 76-32];
+        reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
+
+        let len = reader.read_u16::<LittleEndian>()?;
+        let mut signatures: Vec<FatPointerSignature> = Vec::with_capacity(len.into());
+        for _ in 0..len {
+            let mut signature_bytes = [0u8; 32+64];
+            reader.read_exact(&mut signature_bytes)?;
+            signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
+        }
+
+        Ok(FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key,
+            signatures,
+        })
+    }
+}
 
 /// A vote signature for a block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]//, serde::Serialize, serde::Deserialize)]
 pub struct FatPointerSignature {
     pub public_key: [u8; 32],
     pub vote_signature: [u8; 64],

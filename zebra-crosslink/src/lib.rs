@@ -312,7 +312,7 @@ async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u6
     internal.bft_msg_flags |= bft_msg_flags;
 }
 
-async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &MalPublicKey, block_height: u64) -> Option<BftBlock> {
+async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &MalPublicKey, fat_pointer_to_tip: FatPointerToBftBlock, block_height: u64) -> Option<BftBlock> {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
     let (tip_height, tip_hash) = if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
@@ -373,7 +373,7 @@ async fn propose_new_bft_block(tfl_handle: &TFLServiceHandle, my_public_key: &Ma
         panic!("TODO: improve error handling.");
     };
 
-    match BftBlock::try_from(params, block_height as u32, latest_bft_block_hash, 0, headers) {
+    match BftBlock::try_from(params, block_height as u32, fat_pointer_to_tip, 0, headers) {
         Ok(v) => { return Some(v); },
         Err(e) => { warn!("Unable to create BftBlock to propose, Error={:?}", e,); return None; }
     };
@@ -396,15 +396,25 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
                 BftBlock {
                     version: 0,
                     height: i as u32,
-                    previous_block_hash: Blake3Hash([0u8; 32]),
+                    previous_block_fat_ptr: FatPointerToBftBlock {
+                        vote_for_block_without_finalizer_public_key: [0u8; 76-32],
+                        signatures: Vec::new(),
+                    },
                     finalization_candidate_height: 0,
                     headers: Vec::new(),
                 }
             );
         }
 
-        assert!(insert_i == 0 || new_block.previous_block_hash != Blake3Hash([0u8; 32]));
+        if insert_i > 0 {
+            assert_eq!(
+                internal.bft_blocks[insert_i-1].blake3_hash(),
+                new_block.previous_block_fat_ptr.points_at_block_hash());
+        }
+        assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
         assert!(internal.bft_blocks[insert_i].headers.is_empty());
+        assert!(!new_block.headers.is_empty());
+        // info!("Inserting bft block at {} with hash {}", insert_i, new_block.blake3_hash());
         internal.bft_blocks[insert_i] = new_block.clone();
         internal.latest_final_block = Some((new_final_height, new_final_hash));
     } else {
@@ -412,6 +422,7 @@ async fn new_decided_bft_block_from_malachite(tfl_handle: &TFLServiceHandle, new
         return false;
     }
 
+    assert_eq!(tfl_handle.internal.lock().await.bft_blocks.last().unwrap().blake3_hash(), new_block.blake3_hash());
     true
 }
 
@@ -536,6 +547,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     // let mut bft_config = config::load_config(std::path::Path::new("C:\\Users\\azmre\\.malachite\\config\\config.toml"), None)
     //     .expect("Failed to load configuration file");
     let mut bft_config: BFTConfig = Default::default(); // TODO: read from file?
+
+    bft_config.logging.log_level = crate::mconfig::LogLevel::Error;
 
     for peer in config.malachite_peers.iter() {
         bft_config
