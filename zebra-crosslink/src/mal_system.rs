@@ -20,7 +20,7 @@ DONE 1. Make sure multiplayer works.
 DONE 2. Remove streaming and massively simplify how payloads are communicated. And also refactor the MalValue to just be an array of bytes.
 DONE 3. Sledgehammer in malachite to allow the vote extension scheme that we want.
 DONE 4. Define the FAT pointer type that contains a blake3hash and signatures.
-5. Make sure that syncing within malachite works.
+DONE 5. Make sure that syncing within malachite works.
 DONE 6.a. Merge BFTPayload and BFTBlock into one single structure.
 6.b remove fields zooko wants removed.
 7. Lock in the formats and bake out some tests.
