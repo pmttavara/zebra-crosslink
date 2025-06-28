@@ -33,17 +33,12 @@ DONE 6.a. Merge BFTPayload and BFTBlock into one single structure.
 
 pub struct RunningMalachite {
     pub should_terminate: bool,
-    pub engine_handle: EngineHandle,
 
     pub height: u64,
     pub round: u32,
     pub validator_set: Vec<MalValidator>,
 }
-impl Drop for RunningMalachite {
-    fn drop(&mut self) {
-        self.engine_handle.actor.stop(None);
-    }
-}
+
 
 pub async fn start_malachite(
     tfl_handle: TFLServiceHandle,
@@ -51,6 +46,16 @@ pub async fn start_malachite(
     validators_at_height: Vec<MalValidator>,
     my_private_key: MalPrivateKey,
     bft_config: BFTConfig,
+) -> Arc<TokioMutex<RunningMalachite>> {
+    start_malachite_with_start_delay(tfl_handle, at_height, validators_at_height, my_private_key, bft_config, Duration::from_secs(0)).await
+}
+pub async fn start_malachite_with_start_delay(
+    tfl_handle: TFLServiceHandle,
+    at_height: u64,
+    validators_at_height: Vec<MalValidator>,
+    my_private_key: MalPrivateKey,
+    bft_config: BFTConfig,
+    start_delay: Duration,
 ) -> Arc<TokioMutex<RunningMalachite>> {
     let ctx = MalContext {};
     let codec = MalProtobufCodec;
@@ -64,41 +69,43 @@ pub async fn start_malachite(
             tempfile::Builder::new()
                 .prefix(&format!(
                     "aah_very_annoying_that_the_wal_is_required_id_is_{}",
-                    rand::random::<u32>()
+                    rand::rngs::OsRng.next_u64()
                 ))
                 .tempdir()
                 .unwrap(),
         );
     }
 
-    let (channels, engine_handle) = malachitebft_app_channel::start_engine(
-        ctx,
-        codec,
-        bft_node_handle,
-        bft_config,
-        Some(MalHeight::new(at_height)),
-        MalValidatorSet {
-            validators: validators_at_height.clone(),
-        },
-    )
-    .await
-    .unwrap();
-
     let arc_handle = Arc::new(TokioMutex::new(RunningMalachite {
         should_terminate: false,
-        engine_handle,
 
         height: at_height,
         round: 0,
-        validator_set: validators_at_height,
+        validator_set: validators_at_height.clone(),
     }));
 
     let weak_self = Arc::downgrade(&arc_handle);
     tokio::spawn(async move {
+
+        tokio::time::sleep(start_delay).await;
+        let (channels, engine_handle) = malachitebft_app_channel::start_engine(
+            ctx,
+            codec,
+            bft_node_handle,
+            bft_config,
+            Some(MalHeight::new(at_height)),
+            MalValidatorSet {
+                validators: validators_at_height,
+            },
+        )
+        .await
+        .unwrap();
+
         match AssertUnwindSafe(malachite_system_main_loop(
             tfl_handle,
             weak_self,
             channels,
+            engine_handle,
             my_private_key,
         ))
         .catch_unwind()
@@ -114,10 +121,28 @@ pub async fn start_malachite(
     arc_handle
 }
 
+async fn malachite_system_terminate_engine(
+    mut engine_handle: EngineHandle,
+    mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>>,
+    mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>>,
+) {
+    engine_handle.actor.stop(None);
+    if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
+        reply.send(
+            post_pending_block_to_push_to_core_reply_data
+                .take()
+                .unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+
 async fn malachite_system_main_loop(
     tfl_handle: TFLServiceHandle,
     weak_self: Weak<TokioMutex<RunningMalachite>>,
     mut channels: Channels<MalContext>,
+    mut engine_handle: EngineHandle,
     my_private_key: MalPrivateKey,
 ) {
     let codec = MalProtobufCodec;
@@ -125,9 +150,7 @@ async fn malachite_system_main_loop(
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
     let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock)> = None;
-    let mut post_pending_block_to_push_to_core_reply: Option<
-        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
-    > = None;
+    let mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>> = None;
     let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
 
     let mut bft_msg_flags = 0;
@@ -141,6 +164,7 @@ async fn malachite_system_main_loop(
         let running_malachite = if let Some(arc) = weak_self.upgrade() {
             arc
         } else {
+            malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
             return;
         };
 
@@ -151,7 +175,7 @@ async fn malachite_system_main_loop(
 
                 let mut lock = running_malachite.lock().await;
                 if lock.should_terminate {
-                    lock.engine_handle.actor.stop(None);
+                    malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
                     return;
                 }
                 continue;
@@ -176,7 +200,7 @@ async fn malachite_system_main_loop(
 
         let mut lock = running_malachite.lock().await;
         if lock.should_terminate {
-            lock.engine_handle.actor.stop(None);
+            malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
             return;
         }
 
@@ -313,17 +337,12 @@ async fn malachite_system_main_loop(
                     // See L15/L18 of the Tendermint algorithm.
                     let pol_round = MalRound::Nil;
 
-                    // NOTE(Sam): I have inlined the code from the example so that we
-                    // can actually see the functionality. I am not sure what the purpose
-                    // of this circus is. Why not just send the value with a simple signature?
-                    // I am sure there is a good reason.
-
                     // Include metadata about the proposal
                     let data_bytes = proposal.value.value_bytes;
 
-                    let mut hasher = blake3::Hasher::new(); // TODO(azmr): blake3/remove?
-                    hasher.update(proposal.height.as_u64().to_be_bytes().as_slice()); // TODO: le?
-                    hasher.update(proposal.round.as_i64().to_be_bytes().as_slice());
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(proposal.height.as_u64().to_le_bytes().as_slice());
+                    hasher.update(proposal.round.as_i64().to_le_bytes().as_slice());
                     hasher.update(&data_bytes);
                     let hash: [u8; 32] = hasher.finalize().into();
                     let signature = my_signing_provider.sign(&hash);
@@ -571,101 +590,81 @@ async fn malachite_system_main_loop(
                     let peer_id = from;
                     let msg = part;
 
-                    if let Some(parts) = msg.content.as_data().cloned() {
-                        let proposal_round = parts.round.as_i64();
-                        // Check if the proposal is outdated or from the future...
-                        if parts.height.as_u64() != lock.height
-                            || proposal_round < lock.round as i64
-                            || proposal_round > lock.round as i64 + 1
-                        {
-                            info!(
-                                height = %lock.height,
-                                round = %lock.round,
-                                part.height = %parts.height,
-                                part.round = %parts.round,
-                                part.sequence = %sequence,
-                                "Received outdated or future proposal part, ignoring"
-                            );
-                        } else {
-                            // signature verification
-                            {
-                                let mut hasher = blake3::Hasher::new(); // TODO(azmr): remove?
-                                hasher.update(parts.height.as_u64().to_be_bytes().as_slice()); // TODO: le?
-                                hasher.update(parts.round.as_i64().to_be_bytes().as_slice());
-                                hasher.update(&parts.data_bytes);
-                                let hash: [u8; 32] = hasher.finalize().into();
+                    if msg.content.as_data().is_none() { reply.send(None).unwrap(); break; }
+                    let parts = msg.content.as_data().unwrap();
+                    let proposal_round = parts.round.as_i64();
 
-                                // TEMP get the proposers key
-                                let mut proposer_public_key = None;
-                                for peer in tfl_handle.config.malachite_peers.iter() {
-                                    let (_, _, public_key) =
-                                        rng_private_public_key_from_address(&peer);
-                                    if public_key == parts.proposer {
-                                        proposer_public_key = Some(public_key);
-                                        break;
-                                    }
-                                }
-
-                                // Verify the signature
-                                assert!(my_signing_provider.verify(
-                                    &hash,
-                                    &parts.signature,
-                                    &proposer_public_key.expect("proposer not found")
-                                ));
-                            }
-
-                            // Re-assemble the proposal from its parts
-                            let value: MalProposedValue<MalContext> = {
-                                let block = parts
-                                    .data_bytes
-                                    .zcash_deserialize_into::<BftBlock>()
-                                    .unwrap();
-                                info!("Received block proposal with hash: {}", block.blake3_hash());
-                                let new_final_hash =
-                                    block.headers.first().expect("at least 1 header").hash();
-
-                                let validity = if let Some(new_final_height) =
-                                    block_height_from_hash(&tfl_handle.call, new_final_hash).await
-                                {
-                                    MalValidity::Valid
-                                } else {
-                                    error!(
-                                        "Voting against proposal. I do not know of PoW hash {}",
-                                        new_final_hash
-                                    );
-                                    MalValidity::Invalid
-                                };
-
-                                let value = MalValue::new_block(block);
-                                MalProposedValue {
-                                    height: parts.height,
-                                    round: parts.round,
-                                    valid_round: parts.pol_round,
-                                    proposer: MalPublicKey2(parts.proposer),
-                                    value,
-                                    validity,
-                                }
-                            };
-
-                            info!(
-                                "Storing undecided proposal {} {}",
-                                value.height, value.round
-                            );
-                            assert_eq!(value.height.as_u64(), lock.height);
-                            let proposal_round = value.round.as_u32().unwrap() as usize;
-                            while at_this_height_previously_seen_proposals.len()
-                                < proposal_round as usize + 1
-                            {
-                                at_this_height_previously_seen_proposals.push(None);
-                            }
-                            at_this_height_previously_seen_proposals[proposal_round as usize] =
-                                Some(Box::new(value.clone()));
-
-                            if reply.send(Some(value)).is_err() {
-                                error!("Failed to send ReceivedProposalPart reply");
-                            }
-                        }
+                    info!(
+                        height = %lock.height,
+                        round = %lock.round,
+                        part.height = %parts.height,
+                        part.round = %parts.round,
+                        part.sequence = %sequence,
+                        "Received proposal from the network..."
+                    );
+                    
+                    // Check if the proposal is outdated or from the future...
+                    if parts.height.as_u64() != lock.height || proposal_round < lock.round as i64 || proposal_round > lock.round as i64 + 1
+                    {
+                        warn!("Outdated or future proposal, ignoring");
+                        reply.send(None).unwrap(); break;
                     }
+                    
+                    if lock.validator_set.iter().position(|v| v.public_key == parts.proposer).is_none() {
+                        warn!("Invalid proposer, ignoring");
+                        reply.send(None).unwrap(); break;
+                    }
+
+                    // signature verification
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(parts.height.as_u64().to_le_bytes().as_slice());
+                    hasher.update(parts.round.as_i64().to_le_bytes().as_slice());
+                    hasher.update(&parts.data_bytes);
+                    let hash: [u8; 32] = hasher.finalize().into();
+
+                    // Verify the signature
+                    if my_signing_provider.verify(
+                        &hash,
+                        &parts.signature,
+                        &parts.proposer
+                    ) == false {
+                        warn!("Invalid signature, ignoring");
+                        reply.send(None).unwrap(); break;
+                    }
+
+                    // Re-assemble the proposal from its parts
+                    let block = parts
+                        .data_bytes
+                        .zcash_deserialize_into::<BftBlock>()
+                        .unwrap();
+                    info!("Received block proposal with hash: {}", block.blake3_hash());
+
+                    let validity = if validate_bft_block_from_malachite(&tfl_handle, &block).await { MalValidity::Valid } else { MalValidity::Invalid };
+
+                    let value: MalProposedValue<MalContext> = MalProposedValue {
+                        height: parts.height,
+                        round: parts.round,
+                        valid_round: parts.pol_round,
+                        proposer: MalPublicKey2(parts.proposer),
+                        value: MalValue::new_block(block),
+                        validity,
+                    };
+
+                    info!(
+                        "Storing undecided proposal {} {}",
+                        value.height, value.round
+                    );
+                    assert_eq!(value.height.as_u64(), lock.height);
+                    let proposal_round = value.round.as_u32().unwrap() as usize;
+                    while at_this_height_previously_seen_proposals.len()
+                        < proposal_round as usize + 1
+                    {
+                        at_this_height_previously_seen_proposals.push(None);
+                    }
+                    at_this_height_previously_seen_proposals[proposal_round as usize] =
+                        Some(Box::new(value.clone()));
+
+                    reply.send(Some(value)).unwrap();
                 }
                 _ => panic!("AppMsg variant not handled: {:?}", app_msg),
             }

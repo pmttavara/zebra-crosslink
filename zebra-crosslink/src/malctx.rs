@@ -39,7 +39,7 @@ pub use ed25519_zebra::VerificationKeyBytes as MalPublicKey;
 use prost::Message;
 
 use malachitebft_app::engine::util::streaming::{StreamContent, StreamId, StreamMessage};
-use malachitebft_codec::Codec;
+pub use malachitebft_codec::Codec;
 use malachitebft_core_consensus::SignedConsensusMsg;
 use malachitebft_core_types::{PolkaCertificate, VoteSet};
 use malachitebft_sync::PeerId;

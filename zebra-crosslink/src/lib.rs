@@ -4,7 +4,6 @@
 #![allow(unexpected_cfgs, unused, missing_docs)]
 
 use color_eyre::install;
-use malachitebft_codec::Codec;
 
 use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
@@ -115,6 +114,8 @@ pub(crate) struct TFLServiceInternal {
     bft_blocks: Vec<BftBlock>,
     fat_pointer_to_tip: FatPointerToBftBlock,
     proposed_bft_string: Option<String>,
+
+    malachite_watchdog: Instant,
 }
 
 /// The finality status of a block
@@ -283,15 +284,21 @@ async fn tfl_reorg_final_block_height_hash(
 }
 
 async fn tfl_final_block_height_hash(
-    internal_handle: TFLServiceHandle,
+    internal_handle: &TFLServiceHandle,
+) -> Option<(BlockHeight, BlockHash)> {
+    let mut internal = internal_handle.internal.lock().await;
+    tfl_final_block_height_hash_pre_locked(internal_handle, &mut internal).await
+}
+
+async fn tfl_final_block_height_hash_pre_locked(
+    internal_handle: &TFLServiceHandle,
+    internal: &mut TFLServiceInternal,
 ) -> Option<(BlockHeight, BlockHash)> {
     #[allow(unused_mut)]
-    let mut internal = internal_handle.internal.lock().await;
 
     if internal.latest_final_block.is_some() {
         internal.latest_final_block
     } else {
-        drop(internal);
         tfl_reorg_final_block_height_hash(&internal_handle.call).await
     }
 }
@@ -424,59 +431,63 @@ async fn new_decided_bft_block_from_malachite(
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
+    if validate_bft_block_from_malachite(&tfl_handle, new_block).await == false { return false; }
+
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
-    if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
-        // assert_eq!(new_final_height.0, new_block.finalization_candidate_height);
-        let mut internal = tfl_handle.internal.lock().await;
-        let insert_i = new_block.height as usize - 1;
+    let new_final_height = block_height_from_hash(&call, new_final_hash).await.unwrap();
+    // assert_eq!(new_final_height.0, new_block.finalization_candidate_height);
+    let mut internal = tfl_handle.internal.lock().await;
+    let insert_i = new_block.height as usize - 1;
 
-        // HACK: ensure there are enough blocks to overwrite this at the correct index
-        for i in internal.bft_blocks.len()..=insert_i {
-            let parent_i = i.saturating_sub(1); // just a simple chain
-            internal.bft_blocks.push(BftBlock {
-                version: 0,
-                height: i as u32,
-                previous_block_fat_ptr: FatPointerToBftBlock {
-                    vote_for_block_without_finalizer_public_key: [0u8; 76 - 32],
-                    signatures: Vec::new(),
-                },
-                finalization_candidate_height: 0,
-                headers: Vec::new(),
-            });
-        }
+    // HACK: ensure there are enough blocks to overwrite this at the correct index
+    for i in internal.bft_blocks.len()..=insert_i {
+        let parent_i = i.saturating_sub(1); // just a simple chain
+        internal.bft_blocks.push(BftBlock {
+            version: 0,
+            height: i as u32,
+            previous_block_fat_ptr: FatPointerToBftBlock {
+                vote_for_block_without_finalizer_public_key: [0u8; 76 - 32],
+                signatures: Vec::new(),
+            },
+            finalization_candidate_height: 0,
+            headers: Vec::new(),
+        });
+    }
 
-        if insert_i > 0 {
-            assert_eq!(
-                internal.bft_blocks[insert_i - 1].blake3_hash(),
-                new_block.previous_block_fat_ptr.points_at_block_hash()
-            );
-        }
-        assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
-        assert!(internal.bft_blocks[insert_i].headers.is_empty());
-        assert!(!new_block.headers.is_empty());
-        // info!("Inserting bft block at {} with hash {}", insert_i, new_block.blake3_hash());
-        internal.bft_blocks[insert_i] = new_block.clone();
-        internal.fat_pointer_to_tip = fat_pointer.clone();
-        internal.latest_final_block = Some((new_final_height, new_final_hash));
+    if insert_i > 0 {
+        assert_eq!(
+            internal.bft_blocks[insert_i - 1].blake3_hash(),
+            new_block.previous_block_fat_ptr.points_at_block_hash()
+        );
+    }
+    assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
+    assert!(internal.bft_blocks[insert_i].headers.is_empty());
+    assert!(!new_block.headers.is_empty());
+    // info!("Inserting bft block at {} with hash {}", insert_i, new_block.blake3_hash());
+    internal.bft_blocks[insert_i] = new_block.clone();
+    internal.fat_pointer_to_tip = fat_pointer.clone();
+    internal.latest_final_block = Some((new_final_height, new_final_hash));
+    // internal.malachite_watchdog = Instant::now(); // NOTE(Sam): We don't reset the watchdog in order to be always testing it for now.
+    true
+}
+
+async fn validate_bft_block_from_malachite(
+    tfl_handle: &TFLServiceHandle,
+    new_block: &BftBlock,
+) -> bool {
+    let call = tfl_handle.call.clone();
+    let params = &PROTOTYPE_PARAMETERS;
+
+    let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
+    let new_final_pow_height = if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+        new_final_height.0
     } else {
         warn!(
             "Didn't have hash available for confirmation: {}",
             new_final_hash
         );
         return false;
-    }
-
-    assert_eq!(
-        tfl_handle
-            .internal
-            .lock()
-            .await
-            .bft_blocks
-            .last()
-            .unwrap()
-            .blake3_hash(),
-        new_block.blake3_hash()
-    );
+    };
     true
 }
 
@@ -669,9 +680,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut malachite_system = start_malachite(
         internal_handle.clone(),
         1,
-        initial_validator_set.validators,
+        initial_validator_set.validators.clone(),
         my_private_key,
-        bft_config,
+        bft_config.clone(),
     )
     .await;
 
@@ -679,6 +690,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut last_diagnostic_print = Instant::now();
     let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
     let mut current_bc_final: Option<(BlockHeight, BlockHash)> = None;
+
+
+    {
+        let mut internal = internal_handle.internal.lock().await;
+        internal.malachite_watchdog = Instant::now();
+    }
 
     loop {
         // Calculate this prior to message handling so that handlers can use it:
@@ -715,6 +732,21 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
         #[allow(unused_mut)]
         let mut internal = internal_handle.internal.lock().await;
+
+        if internal.malachite_watchdog.elapsed().as_secs() > 120 {
+            error!("Malachite Watchdog triggered, restarting subsystem...");
+            let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);
+            malachite_system = start_malachite_with_start_delay(
+                internal_handle.clone(),
+                internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
+                initial_validator_set.validators.clone(),
+                my_private_key,
+                bft_config.clone(),
+                start_delay,
+            )
+            .await;
+            internal.malachite_watchdog = Instant::now() + start_delay;
+        }
 
         if new_bc_final != current_bc_final {
             // info!("final changed to {:?}", new_bc_final);
@@ -890,7 +922,7 @@ async fn tfl_service_incoming_request(
         )),
 
         TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            if let Some((_, hash)) = tfl_final_block_height_hash(internal_handle.clone()).await {
+            if let Some((_, hash)) = tfl_final_block_height_hash(&internal_handle).await {
                 Some(hash)
             } else {
                 None
@@ -912,7 +944,7 @@ async fn tfl_service_incoming_request(
             Ok(TFLServiceResponse::BlockFinalityStatus({
                 let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
                 let (final_height, final_hash) =
-                    match tfl_final_block_height_hash(internal_handle.clone()).await {
+                    match tfl_final_block_height_hash(&internal_handle).await {
                         Some(v) => v,
                         None => {
                             return Err(TFLServiceError::Misc(
@@ -1003,7 +1035,7 @@ async fn tfl_service_incoming_request(
                 (call.read_state)(ReadStateRequest::Transaction(hash)).await
             {
                 let (final_height, _final_hash) =
-                    match tfl_final_block_height_hash(internal_handle.clone()).await {
+                    match tfl_final_block_height_hash(&internal_handle).await {
                         Some(v) => v,
                         None => {
                             return Err(TFLServiceError::Misc(

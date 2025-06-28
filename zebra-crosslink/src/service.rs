@@ -167,6 +167,7 @@ pub fn spawn_new_tfl_service(
         bft_blocks: Vec::new(),
         fat_pointer_to_tip: FatPointerToBftBlock::null(),
         proposed_bft_string: None,
+        malachite_watchdog: tokio::time::Instant::now(),
     }));
 
     let internal2 = Arc::clone(&internal);
@@ -227,6 +228,7 @@ mod tests {
             fat_pointer_to_tip: FatPointerToBftBlock::null(),
             bft_msg_flags: 0,
             proposed_bft_string: None,
+            malachite_watchdog: tokio::time::Instant::now(),
         }));
 
         let read_state_service: ReadStateServiceProcedure =
