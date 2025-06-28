@@ -271,8 +271,8 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
 
         TFInstr::LOAD_POS => {
-            todo!("LOAD_POS");
-            None
+            let block = BftBlock::zcash_deserialize(instr.data_slice(&bytes)).ok()?;
+            Some(TestInstr::LoadPoS(block))
         }
 
         TFInstr::SET_PARAMS => Some(TestInstr::SetParams(ZcashCrosslinkParameters {
