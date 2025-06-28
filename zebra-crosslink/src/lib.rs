@@ -36,7 +36,14 @@ use mal_system::*;
 
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
-pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+
+#[derive(Clone, Debug)]
+/// Load from disc or genereate in-memory
+pub enum TestInstrSrc {
+    Path(std::path::PathBuf),
+    Bytes(Vec<u8>)
+}
+pub static TEST_INSTR_SRC: Mutex<Option<TestInstrSrc>> = Mutex::new(None);
 pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 
@@ -516,7 +523,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         });
     }
 
-    if let Some(path) = TEST_INSTR_PATH.lock().unwrap().clone() {
+    if let Some(src) = TEST_INSTR_SRC.lock().unwrap().clone() {
         // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
         std::panic::set_hook(Box::new(|panic_info| {
             #[allow(clippy::print_stderr)]
@@ -582,7 +589,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             }
         }));
 
-        tokio::task::spawn(test_format::instr_reader(internal_handle.clone(), path));
+        tokio::task::spawn(test_format::instr_reader(internal_handle.clone(), src));
     }
 
     let public_ip_string = config
