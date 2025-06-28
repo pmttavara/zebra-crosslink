@@ -295,7 +295,6 @@ async fn tfl_final_block_height_hash_pre_locked(
     internal: &mut TFLServiceInternal,
 ) -> Option<(BlockHeight, BlockHash)> {
     #[allow(unused_mut)]
-
     if internal.latest_final_block.is_some() {
         internal.latest_final_block
     } else {
@@ -431,7 +430,9 @@ async fn new_decided_bft_block_from_malachite(
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
-    if validate_bft_block_from_malachite(&tfl_handle, new_block).await == false { return false; }
+    if validate_bft_block_from_malachite(&tfl_handle, new_block).await == false {
+        return false;
+    }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
     let new_final_height = block_height_from_hash(&call, new_final_hash).await.unwrap();
@@ -479,15 +480,16 @@ async fn validate_bft_block_from_malachite(
     let params = &PROTOTYPE_PARAMETERS;
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
-    let new_final_pow_height = if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
-        new_final_height.0
-    } else {
-        warn!(
-            "Didn't have hash available for confirmation: {}",
-            new_final_hash
-        );
-        return false;
-    };
+    let new_final_pow_height =
+        if let Some(new_final_height) = block_height_from_hash(&call, new_final_hash).await {
+            new_final_height.0
+        } else {
+            warn!(
+                "Didn't have hash available for confirmation: {}",
+                new_final_hash
+            );
+            return false;
+        };
     true
 }
 
@@ -690,7 +692,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut last_diagnostic_print = Instant::now();
     let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
     let mut current_bc_final: Option<(BlockHeight, BlockHash)> = None;
-
 
     {
         let mut internal = internal_handle.internal.lock().await;

@@ -39,7 +39,6 @@ pub struct RunningMalachite {
     pub validator_set: Vec<MalValidator>,
 }
 
-
 pub async fn start_malachite(
     tfl_handle: TFLServiceHandle,
     at_height: u64,
@@ -47,7 +46,15 @@ pub async fn start_malachite(
     my_private_key: MalPrivateKey,
     bft_config: BFTConfig,
 ) -> Arc<TokioMutex<RunningMalachite>> {
-    start_malachite_with_start_delay(tfl_handle, at_height, validators_at_height, my_private_key, bft_config, Duration::from_secs(0)).await
+    start_malachite_with_start_delay(
+        tfl_handle,
+        at_height,
+        validators_at_height,
+        my_private_key,
+        bft_config,
+        Duration::from_secs(0),
+    )
+    .await
 }
 pub async fn start_malachite_with_start_delay(
     tfl_handle: TFLServiceHandle,
@@ -86,7 +93,6 @@ pub async fn start_malachite_with_start_delay(
 
     let weak_self = Arc::downgrade(&arc_handle);
     tokio::spawn(async move {
-
         tokio::time::sleep(start_delay).await;
         let (channels, engine_handle) = malachitebft_app_channel::start_engine(
             ctx,
@@ -123,20 +129,22 @@ pub async fn start_malachite_with_start_delay(
 
 async fn malachite_system_terminate_engine(
     mut engine_handle: EngineHandle,
-    mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>>,
+    mut post_pending_block_to_push_to_core_reply: Option<
+        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+    >,
     mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>>,
 ) {
     engine_handle.actor.stop(None);
     if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
-        reply.send(
-            post_pending_block_to_push_to_core_reply_data
-                .take()
-                .unwrap(),
-        )
-        .unwrap();
+        reply
+            .send(
+                post_pending_block_to_push_to_core_reply_data
+                    .take()
+                    .unwrap(),
+            )
+            .unwrap();
     }
 }
-
 
 async fn malachite_system_main_loop(
     tfl_handle: TFLServiceHandle,
@@ -150,7 +158,9 @@ async fn malachite_system_main_loop(
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
     let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock)> = None;
-    let mut post_pending_block_to_push_to_core_reply: Option<tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>> = None;
+    let mut post_pending_block_to_push_to_core_reply: Option<
+        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+    > = None;
     let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
 
     let mut bft_msg_flags = 0;
@@ -164,7 +174,12 @@ async fn malachite_system_main_loop(
         let running_malachite = if let Some(arc) = weak_self.upgrade() {
             arc
         } else {
-            malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
+            malachite_system_terminate_engine(
+                engine_handle,
+                post_pending_block_to_push_to_core_reply,
+                post_pending_block_to_push_to_core_reply_data,
+            )
+            .await;
             return;
         };
 
@@ -175,7 +190,12 @@ async fn malachite_system_main_loop(
 
                 let mut lock = running_malachite.lock().await;
                 if lock.should_terminate {
-                    malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
+                    malachite_system_terminate_engine(
+                        engine_handle,
+                        post_pending_block_to_push_to_core_reply,
+                        post_pending_block_to_push_to_core_reply_data,
+                    )
+                    .await;
                     return;
                 }
                 continue;
@@ -200,7 +220,12 @@ async fn malachite_system_main_loop(
 
         let mut lock = running_malachite.lock().await;
         if lock.should_terminate {
-            malachite_system_terminate_engine(engine_handle, post_pending_block_to_push_to_core_reply, post_pending_block_to_push_to_core_reply_data).await;
+            malachite_system_terminate_engine(
+                engine_handle,
+                post_pending_block_to_push_to_core_reply,
+                post_pending_block_to_push_to_core_reply_data,
+            )
+            .await;
             return;
         }
 
@@ -590,7 +615,10 @@ async fn malachite_system_main_loop(
                     let peer_id = from;
                     let msg = part;
 
-                    if msg.content.as_data().is_none() { reply.send(None).unwrap(); break; }
+                    if msg.content.as_data().is_none() {
+                        reply.send(None).unwrap();
+                        break;
+                    }
                     let parts = msg.content.as_data().unwrap();
                     let proposal_round = parts.round.as_i64();
 
@@ -602,17 +630,26 @@ async fn malachite_system_main_loop(
                         part.sequence = %sequence,
                         "Received proposal from the network..."
                     );
-                    
+
                     // Check if the proposal is outdated or from the future...
-                    if parts.height.as_u64() != lock.height || proposal_round < lock.round as i64 || proposal_round > lock.round as i64 + 1
+                    if parts.height.as_u64() != lock.height
+                        || proposal_round < lock.round as i64
+                        || proposal_round > lock.round as i64 + 1
                     {
                         warn!("Outdated or future proposal, ignoring");
-                        reply.send(None).unwrap(); break;
+                        reply.send(None).unwrap();
+                        break;
                     }
-                    
-                    if lock.validator_set.iter().position(|v| v.public_key == parts.proposer).is_none() {
+
+                    if lock
+                        .validator_set
+                        .iter()
+                        .position(|v| v.public_key == parts.proposer)
+                        .is_none()
+                    {
                         warn!("Invalid proposer, ignoring");
-                        reply.send(None).unwrap(); break;
+                        reply.send(None).unwrap();
+                        break;
                     }
 
                     // signature verification
@@ -623,13 +660,11 @@ async fn malachite_system_main_loop(
                     let hash: [u8; 32] = hasher.finalize().into();
 
                     // Verify the signature
-                    if my_signing_provider.verify(
-                        &hash,
-                        &parts.signature,
-                        &parts.proposer
-                    ) == false {
+                    if my_signing_provider.verify(&hash, &parts.signature, &parts.proposer) == false
+                    {
                         warn!("Invalid signature, ignoring");
-                        reply.send(None).unwrap(); break;
+                        reply.send(None).unwrap();
+                        break;
                     }
 
                     // Re-assemble the proposal from its parts
@@ -639,7 +674,11 @@ async fn malachite_system_main_loop(
                         .unwrap();
                     info!("Received block proposal with hash: {}", block.blake3_hash());
 
-                    let validity = if validate_bft_block_from_malachite(&tfl_handle, &block).await { MalValidity::Valid } else { MalValidity::Invalid };
+                    let validity = if validate_bft_block_from_malachite(&tfl_handle, &block).await {
+                        MalValidity::Valid
+                    } else {
+                        MalValidity::Invalid
+                    };
 
                     let value: MalProposedValue<MalContext> = MalProposedValue {
                         height: parts.height,
