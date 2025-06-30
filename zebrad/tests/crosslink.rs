@@ -31,23 +31,54 @@ fn read_from_file() {
     test_start(TestInstrSrc::Path("../crosslink-test-data/blocks.zeccltf".into()));
 }
 
+const REGTEST_BLOCK_BYTES: [&[u8]; 7] = [
+    include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_5.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
+];
+
+
 #[test]
 fn from_array() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    let regtest_block_bytes = [
-        include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_5.bin"),
-        include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
-    ];
-
-    for i in 0..regtest_block_bytes.len() {
-        tf.push_instr(TFInstr::LOAD_POW, regtest_block_bytes[i]);
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
     }
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn from_array2() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+
+    let bad_block = [1u8; 128];
+    tf.push_instr(TFInstr::LOAD_POW, &bad_block);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+
+#[test]
+fn from_array3() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
