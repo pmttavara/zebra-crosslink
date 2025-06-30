@@ -251,3 +251,27 @@ impl ZcashDeserialize for Blake3Hash {
         Ok(Blake3Hash(reader.read_32_bytes()?))
     }
 }
+
+
+#[derive(Clone, Debug)]
+pub(crate) struct BftBlockAndFatPointerToIt {
+    pub block: BftBlock,
+    pub fat_ptr: FatPointerToBftBlock,
+}
+
+impl ZcashDeserialize for BftBlockAndFatPointerToIt {
+    fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
+        Ok(BftBlockAndFatPointerToIt {
+                block: BftBlock::zcash_deserialize(&mut reader)?,
+                fat_ptr: FatPointerToBftBlock::zcash_deserialize(&mut reader)?,
+        })
+    }
+}
+
+impl ZcashSerialize for BftBlockAndFatPointerToIt {
+    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), std::io::Error> {
+        self.block.zcash_serialize(&mut writer);
+        self.fat_ptr.zcash_serialize(&mut writer);
+        Ok(())
+    }
+}

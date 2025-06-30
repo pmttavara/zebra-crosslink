@@ -494,6 +494,24 @@ async fn validate_bft_block_from_malachite(
     true
 }
 
+fn fat_pointer_to_block_at_height(
+    bft_blocks: &[BftBlock],
+    fat_pointer_to_tip: &FatPointerToBftBlock,
+    at_height: u64,
+) -> Option<FatPointerToBftBlock> {
+    if at_height == 0 || at_height as usize - 1 >= bft_blocks.len() {
+        return None;
+    }
+
+    if at_height as usize == bft_blocks.len() {
+        Some(fat_pointer_to_tip.clone())
+    } else {
+        Some(bft_blocks[at_height as usize]
+            .previous_block_fat_ptr
+            .clone())
+    }
+}
+
 async fn get_historical_bft_block_at_height(
     tfl_handle: &TFLServiceHandle,
     at_height: u64,
@@ -503,14 +521,7 @@ async fn get_historical_bft_block_at_height(
         return None;
     }
     let block = internal.bft_blocks[at_height as usize - 1].clone();
-    let fp = if at_height as usize == internal.bft_blocks.len() {
-        internal.fat_pointer_to_tip.clone()
-    } else {
-        internal.bft_blocks[at_height as usize]
-            .previous_block_fat_ptr
-            .clone()
-    };
-    Some((block, fp))
+    Some((block, fat_pointer_to_block_at_height(&internal.bft_blocks, &internal.fat_pointer_to_tip, at_height).unwrap()))
 }
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);

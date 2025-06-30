@@ -285,8 +285,8 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
 
         TFInstr::LOAD_POS => {
-            let block = BftBlock::zcash_deserialize(instr.data_slice(bytes)).ok()?;
-            Some(TestInstr::LoadPoS(block))
+            let block_and_fat_ptr = BftBlockAndFatPointerToIt::zcash_deserialize(instr.data_slice(bytes)).ok()?;
+            Some(TestInstr::LoadPoS((block_and_fat_ptr.block, block_and_fat_ptr.fat_ptr)))
         }
 
         TFInstr::SET_PARAMS => Some(TestInstr::SetParams(ZcashCrosslinkParameters {
@@ -306,7 +306,7 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
 
 pub(crate) enum TestInstr {
     LoadPoW(Block),
-    LoadPoS(BftBlock),
+    LoadPoS((BftBlock, FatPointerToBftBlock)),
     SetParams(ZcashCrosslinkParameters),
     ExpectPoWHeight(u32),
     ExpectPoSHeight(u64),
@@ -358,8 +358,13 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
                 (call.force_feed_pow)(Arc::new(block)).await;
             }
 
-            Some(TestInstr::LoadPoS(_)) => {
-                todo!("LOAD_POS");
+            Some(TestInstr::LoadPoS((block, fat_ptr))) => {
+                let path = format!("../crosslink-test-data/test_pos_block_{}.bin", instr_i);
+                info!("writing binary at {}", path);
+                let mut file = std::fs::File::create(&path).expect("valid file");
+                file.write_all(instr.data_slice(&bytes));
+
+                (call.force_feed_pos)(Arc::new(block), fat_ptr).await;
             }
 
             Some(TestInstr::SetParams(_)) => {
