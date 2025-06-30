@@ -63,8 +63,8 @@ static TF_INSTR_KIND_STRS: [&str; TFInstr::COUNT as usize] = {
     strs[TFInstr::LOAD_POW as usize] = "LOAD_POW";
     strs[TFInstr::LOAD_POS as usize] = "LOAD_POS";
     strs[TFInstr::SET_PARAMS as usize] = "SET_PARAMS";
-    strs[TFInstr::EXPECT_POW_HEIGHT as usize] = "EXPECT_POW_HEIGHT";
-    strs[TFInstr::EXPECT_POS_HEIGHT as usize] = "EXPECT_POS_HEIGHT";
+    strs[TFInstr::EXPECT_POW_CHAIN_LENGTH as usize] = "EXPECT_POW_CHAIN_LENGTH";
+    strs[TFInstr::EXPECT_POS_CHAIN_LENGTH as usize] = "EXPECT_POS_CHAIN_LENGTH";
 
     const_assert!(TFInstr::COUNT == 5);
     strs
@@ -77,8 +77,8 @@ impl TFInstr {
     pub const LOAD_POW: TFInstrKind = 0;
     pub const LOAD_POS: TFInstrKind = 1;
     pub const SET_PARAMS: TFInstrKind = 2;
-    pub const EXPECT_POW_HEIGHT: TFInstrKind = 3;
-    pub const EXPECT_POS_HEIGHT: TFInstrKind = 4;
+    pub const EXPECT_POW_CHAIN_LENGTH: TFInstrKind = 3;
+    pub const EXPECT_POS_CHAIN_LENGTH: TFInstrKind = 4;
     pub const COUNT: TFInstrKind = 5;
 
     pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
@@ -294,8 +294,8 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
             finalization_gap_bound: instr.val[1],
         })),
 
-        TFInstr::EXPECT_POW_HEIGHT => Some(TestInstr::ExpectPoWHeight(instr.val[0] as u32)),
-        TFInstr::EXPECT_POW_HEIGHT => Some(TestInstr::ExpectPoSHeight(instr.val[0])),
+        TFInstr::EXPECT_POW_CHAIN_LENGTH => Some(TestInstr::ExpectPoWChainLength(instr.val[0] as u32)),
+        TFInstr::EXPECT_POW_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
 
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
@@ -308,23 +308,26 @@ pub(crate) enum TestInstr {
     LoadPoW(Block),
     LoadPoS(BftBlock),
     SetParams(ZcashCrosslinkParameters),
-    ExpectPoWHeight(u32),
-    ExpectPoSHeight(u64),
+    ExpectPoWChainLength(u32),
+    ExpectPoSChainLength(u64),
 }
 
 pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestInstrSrc) {
     use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
     let call = internal_handle.call.clone();
-    println!("Starting test");
-
+    println!("waiting for tip before starting the test...");
+    let before_time = Instant::now();
     loop {
         if let Ok(ReadStateResponse::Tip(Some(_))) = (call.read_state)(ReadStateRequest::Tip).await
         {
             break;
         } else {
             // warn!("Failed to read tip");
+            if before_time.elapsed().as_secs() > 30 { panic!("Timeout waiting for test to start."); }
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
+    println!("Starting test!");
 
     let bytes = match src {
         TestInstrSrc::Path(path) => match std::fs::read(&path) {
@@ -367,14 +370,13 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
                 todo!("Params");
             }
 
-            Some(TestInstr::ExpectPoWHeight(h)) => {
-                if let ReadStateResponse::Tip(Some((height, hash))) = (call.read_state)(ReadStateRequest::Tip).await.expect("can read tip")
-                {
-                    assert_eq!(height.0, h);
+            Some(TestInstr::ExpectPoWChainLength(h)) => {
+                if let ReadStateResponse::Tip(Some((height, hash))) = (call.read_state)(ReadStateRequest::Tip).await.expect("can read tip") {
+                    assert_eq!(height.0 + 1, h);
                 }
             }
 
-            Some(TestInstr::ExpectPoSHeight(h)) => {
+            Some(TestInstr::ExpectPoSChainLength(h)) => {
                 todo!();
             }
 
@@ -383,7 +385,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
     }
 
     println!("Test done, shutting down");
-    // zebrad::application::APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    #[cfg(feature = "viz_gui")]
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    
     TEST_SHUTDOWN_FN.lock().unwrap()();
 }

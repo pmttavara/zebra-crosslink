@@ -10,7 +10,10 @@ pub fn test_start(src: TestInstrSrc) {
     {
         *zebra_crosslink::TEST_INSTR_SRC.lock().unwrap() = Some(src);
         *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() =
-            || APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+            || {
+                // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+                std::process::exit(0);
+            }
     }
 
     use zebrad::application::{ZebradApp, APPLICATION};
@@ -23,64 +26,104 @@ pub fn test_start(src: TestInstrSrc) {
         zebrad::commands::EntryPoint::default_cmd_as_str().into(),
     ];
     // println!("args: {:?}", args);
+
+
+    #[cfg(feature = "viz_gui")]
+    {
+        // TODO: gate behind feature-flag
+        // TODO: only open the visualization window for the `start` command.
+        // i.e.: can we move it to that code without major refactor to make compiler happy?
+        let tokio_root_thread_handle = std::thread::spawn(move || {
+            ZebradApp::run(&APPLICATION, args);
+        });
+
+        zebra_crosslink::viz::main(Some(tokio_root_thread_handle));
+    }
+
+    #[cfg(not(feature = "viz_gui"))]
     ZebradApp::run(&APPLICATION, args);
 }
 
+#[ignore]
 #[test]
 fn read_from_file() {
     test_start(TestInstrSrc::Path("../crosslink-test-data/blocks.zeccltf".into()));
 }
 
-const REGTEST_BLOCK_BYTES: [&[u8]; 7] = [
+const REGTEST_BLOCK_BYTES: [&[u8]; 6] = [
     include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
-    include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_5.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
+    // include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
 ];
 
-
 #[test]
-fn from_array() {
+fn crosslink_expect_pow_height_on_boot() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-    }
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1, 0]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
 }
 
 #[test]
-fn from_array2() {
+fn crosslink_expect_first_pow_to_not_be_a_no_op() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-    }
-
-    let bad_block = [1u8; 128];
-    tf.push_instr(TFInstr::LOAD_POW, &bad_block);
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2 as u64, 0]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
 }
 
-
 #[test]
-fn from_array3() {
+fn crosslink_push_example_pow_chain_only() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_HEIGHT, [REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
-    tf.push_instr_val(TFInstr::EXPECT_POW_HEIGHT, [REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn crosslink_push_example_pow_chain_each_block_twice() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
+    }
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
+    }
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    }
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));

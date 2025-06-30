@@ -592,6 +592,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     eprintln!("...");
                 }
 
+                #[cfg(not(feature = "viz_gui"))]
                 std::process::abort();
             }
         }));
@@ -680,14 +681,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     info!(?bft_config);
 
-    let mut malachite_system = start_malachite(
-        internal_handle.clone(),
-        1,
-        initial_validator_set.validators.clone(),
-        my_private_key,
-        bft_config.clone(),
-    )
-    .await;
+    let mut malachite_system = None;
+    
+    if TEST_INSTR_SRC.lock().unwrap().is_none() {
+        malachite_system = Some(
+            start_malachite(
+                internal_handle.clone(),
+                1,
+                initial_validator_set.validators.clone(),
+                my_private_key,
+                bft_config.clone(),
+            ).await
+        );
+    }
 
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();
@@ -735,18 +741,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         #[allow(unused_mut)]
         let mut internal = internal_handle.internal.lock().await;
 
-        if internal.malachite_watchdog.elapsed().as_secs() > 120 {
+        if malachite_system.is_some() && internal.malachite_watchdog.elapsed().as_secs() > 120 {
             error!("Malachite Watchdog triggered, restarting subsystem...");
             let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);
-            malachite_system = start_malachite_with_start_delay(
-                internal_handle.clone(),
-                internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
-                initial_validator_set.validators.clone(),
-                my_private_key,
-                bft_config.clone(),
-                start_delay,
-            )
-            .await;
+            malachite_system = Some(
+                start_malachite_with_start_delay(
+                    internal_handle.clone(),
+                    internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
+                    initial_validator_set.validators.clone(),
+                    my_private_key,
+                    bft_config.clone(),
+                    start_delay,
+                ).await
+            );
             internal.malachite_watchdog = Instant::now() + start_delay;
         }
 

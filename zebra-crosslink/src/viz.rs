@@ -720,7 +720,7 @@ pub async fn service_viz_requests(
         }
 
         let new_state = VizState {
-            latest_final_block: tfl_final_block_height_hash(tfl_handle.clone()).await,
+            latest_final_block: tfl_final_block_height_hash(&tfl_handle).await,
             bc_tip,
             height_hashes,
             blocks,
@@ -3320,11 +3320,11 @@ pub async fn viz_main(
                                         todo!("Actually set params");
                                     }
 
-                                    Some(TestInstr::ExpectPoWHeight(_)) => {
+                                    Some(TestInstr::ExpectPoWChainLength(_)) => {
                                         todo!();
                                     }
 
-                                    Some(TestInstr::ExpectPoSHeight(_)) => {
+                                    Some(TestInstr::ExpectPoSChainLength(_)) => {
                                         todo!();
                                     }
 
