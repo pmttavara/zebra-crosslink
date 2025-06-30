@@ -186,39 +186,43 @@ impl TF {
         (v + align) & !align
     }
 
+    pub(crate) fn write<W: std::io::Write> (&self, writer: &mut W) {
+        let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
+        let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
+        let hdr = TFHdr {
+            magic: "ZECCLTF0".as_bytes().try_into().unwrap(),
+            instrs_o: instrs_o as u64,
+            instrs_n: self.instrs.len() as u32,
+            instr_size: size_of::<TFInstr>() as u32,
+        };
+        writer.write_all(hdr.as_bytes()).expect("writing shouldn't fail");
+        writer.write_all(&self.data).expect("writing shouldn't fail");
+
+        if instrs_o > instrs_o_unaligned {
+            const ALIGN_0S: [u8; align_of::<TFInstr>()] = [0u8; align_of::<TFInstr>()];
+            let align_size = instrs_o - instrs_o_unaligned;
+            let align_bytes = &ALIGN_0S[..align_size];
+            writer.write_all(align_bytes);
+        }
+        writer.write_all(self.instrs.as_bytes())
+            .expect("writing shouldn't fail");
+    }
+
     pub(crate) fn write_to_file(&self, path: &std::path::Path) {
         if let Ok(mut file) = std::fs::File::create(path) {
-            let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
-            let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
-            let hdr = TFHdr {
-                magic: "ZECCLTF0".as_bytes().try_into().unwrap(),
-                instrs_o: instrs_o as u64,
-                instrs_n: self.instrs.len() as u32,
-                instr_size: size_of::<TFInstr>() as u32,
-            };
-            file.write_all(hdr.as_bytes())
-                .expect("writing shouldn't fail");
-            file.write_all(&self.data).expect("writing shouldn't fail");
-
-            if instrs_o > instrs_o_unaligned {
-                const ALIGN_0S: [u8; align_of::<TFInstr>()] = [0u8; align_of::<TFInstr>()];
-                let align_size = instrs_o - instrs_o_unaligned;
-                let align_bytes = &ALIGN_0S[..align_size];
-                file.write_all(align_bytes);
-            }
-            file.write_all(self.instrs.as_bytes())
-                .expect("writing shouldn't fail");
+            self.write(&mut file)
         }
+    }
+
+    pub(crate) fn write_to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.write(&mut bytes);
+        bytes
     }
 
     // Simple version, all in one go... for large files we'll want to break this up; get hdr &
     // get/stream instrs, then read data as needed
-    pub(crate) fn read_from_file(path: &std::path::Path) -> Result<(Vec<u8>, Self), String> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.to_string()),
-        };
-
+    pub(crate) fn read_from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let tf_hdr = match TFHdr::ref_from_prefix(&bytes[0..]) {
             Ok((hdr, _)) => hdr,
             Err(err) => return Err(err.to_string()),
@@ -242,8 +246,18 @@ impl TF {
             data: data.to_vec(),
         };
 
-        Ok((bytes, tf))
+        Ok(tf)
     }
+
+    pub(crate) fn read_from_file(path: &std::path::Path) -> Result<(Vec<u8>, Self), String> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(err.to_string()),
+        };
+
+        Self::read_from_bytes(&bytes).map(|tf| (bytes, tf))
+    }
+
 }
 
 use crate::*;
@@ -257,8 +271,8 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
 
         TFInstr::LOAD_POS => {
-            todo!("LOAD_POS");
-            None
+            let block = BftBlock::zcash_deserialize(instr.data_slice(&bytes)).ok()?;
+            Some(TestInstr::LoadPoS(block))
         }
 
         TFInstr::SET_PARAMS => Some(TestInstr::SetParams(ZcashCrosslinkParameters {
@@ -279,7 +293,7 @@ pub(crate) enum TestInstr {
     SetParams(ZcashCrosslinkParameters),
 }
 
-pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::path::PathBuf) {
+pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestInstrSrc) {
     use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
     let call = internal_handle.call.clone();
     println!("Starting test");
@@ -293,9 +307,18 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, path: std::p
         }
     }
 
-    let (bytes, tf) = match TF::read_from_file(&path) {
-        Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics
-        Ok((bytes, tf)) => (bytes, tf),
+    let bytes = match src {
+        TestInstrSrc::Path(path) => match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics
+        }
+
+        TestInstrSrc::Bytes(bytes) => bytes,
+    };
+
+    let tf = match TF::read_from_bytes(&bytes) {
+        Ok(tf) => tf,
+        Err(err) => panic!("Invalid test data: {}", err), // TODO: specifics
     };
 
     for instr_i in 0..tf.instrs.len() {
