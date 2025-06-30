@@ -77,8 +77,10 @@ fn from_array3() {
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
     }
+    tf.push_instr_val(TFInstr::EXPECT_POW_HEIGHT, [REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
     tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_HEIGHT, [REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));

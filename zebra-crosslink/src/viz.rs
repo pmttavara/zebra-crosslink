@@ -3320,6 +3320,14 @@ pub async fn viz_main(
                                         todo!("Actually set params");
                                     }
 
+                                    Some(TestInstr::ExpectPoWHeight(_)) => {
+                                        todo!();
+                                    }
+
+                                    Some(TestInstr::ExpectPoSHeight(_)) => {
+                                        todo!();
+                                    }
+
                                     None => {}
                                 }
                             }

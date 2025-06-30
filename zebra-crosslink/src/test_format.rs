@@ -63,8 +63,10 @@ static TF_INSTR_KIND_STRS: [&str; TFInstr::COUNT as usize] = {
     strs[TFInstr::LOAD_POW as usize] = "LOAD_POW";
     strs[TFInstr::LOAD_POS as usize] = "LOAD_POS";
     strs[TFInstr::SET_PARAMS as usize] = "SET_PARAMS";
+    strs[TFInstr::EXPECT_POW_HEIGHT as usize] = "EXPECT_POW_HEIGHT";
+    strs[TFInstr::EXPECT_POS_HEIGHT as usize] = "EXPECT_POS_HEIGHT";
 
-    const_assert!(TFInstr::COUNT == 3);
+    const_assert!(TFInstr::COUNT == 5);
     strs
 };
 
@@ -75,7 +77,9 @@ impl TFInstr {
     pub const LOAD_POW: TFInstrKind = 0;
     pub const LOAD_POS: TFInstrKind = 1;
     pub const SET_PARAMS: TFInstrKind = 2;
-    pub const COUNT: TFInstrKind = 3;
+    pub const EXPECT_POW_HEIGHT: TFInstrKind = 3;
+    pub const EXPECT_POS_HEIGHT: TFInstrKind = 4;
+    pub const COUNT: TFInstrKind = 5;
 
     pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
         let kind = kind as usize;
@@ -160,6 +164,10 @@ impl TF {
 
     pub fn push_instr(&mut self, kind: TFInstrKind, data: &[u8]) {
         self.push_instr_ex(kind, 0, data, [0; 2])
+    }
+
+    pub fn push_instr_val(&mut self, kind: TFInstrKind, val: [u64; 2]) {
+        self.push_instr_ex(kind, 0, &[0;0], val)
     }
 
     pub fn push_instr_serialize_ex<Z: ZcashSerialize>(
@@ -269,7 +277,7 @@ impl TF {
 use crate::*;
 
 pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
-    const_assert!(TFInstr::COUNT == 3);
+    const_assert!(TFInstr::COUNT == 5);
     match instr.kind {
         TFInstr::LOAD_POW => {
             let block = Block::zcash_deserialize(instr.data_slice(bytes)).ok()?;
@@ -286,6 +294,9 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
             finalization_gap_bound: instr.val[1],
         })),
 
+        TFInstr::EXPECT_POW_HEIGHT => Some(TestInstr::ExpectPoWHeight(instr.val[0] as u32)),
+        TFInstr::EXPECT_POW_HEIGHT => Some(TestInstr::ExpectPoSHeight(instr.val[0])),
+
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
             None
@@ -297,6 +308,8 @@ pub(crate) enum TestInstr {
     LoadPoW(Block),
     LoadPoS(BftBlock),
     SetParams(ZcashCrosslinkParameters),
+    ExpectPoWHeight(u32),
+    ExpectPoSHeight(u64),
 }
 
 pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestInstrSrc) {
@@ -335,7 +348,6 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
             instr.kind
         );
 
-        const_assert!(TFInstr::COUNT == 3);
         match tf_read_instr(&bytes, instr) {
             Some(TestInstr::LoadPoW(block)) => {
                 // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
@@ -355,7 +367,18 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
                 todo!("Params");
             }
 
-            _ => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
+            Some(TestInstr::ExpectPoWHeight(h)) => {
+                if let ReadStateResponse::Tip(Some((height, hash))) = (call.read_state)(ReadStateRequest::Tip).await.expect("can read tip")
+                {
+                    assert_eq!(height.0, h);
+                }
+            }
+
+            Some(TestInstr::ExpectPoSHeight(h)) => {
+                todo!();
+            }
+
+            None => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
         }
     }
 
