@@ -359,10 +359,10 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
             }
 
             Some(TestInstr::LoadPoS((block, fat_ptr))) => {
-                let path = format!("../crosslink-test-data/test_pos_block_{}.bin", instr_i);
-                info!("writing binary at {}", path);
-                let mut file = std::fs::File::create(&path).expect("valid file");
-                file.write_all(instr.data_slice(&bytes));
+                // let path = format!("../crosslink-test-data/test_pos_block_{}.bin", instr_i);
+                // info!("writing binary at {}", path);
+                // let mut file = std::fs::File::create(&path).expect("valid file");
+                // file.write_all(instr.data_slice(&bytes)).expect("write success");
 
                 (call.force_feed_pos)(Arc::new(block), fat_ptr).await;
             }

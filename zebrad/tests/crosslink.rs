@@ -41,6 +41,10 @@ const REGTEST_BLOCK_BYTES: [&[u8]; 7] = [
     include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
 ];
 
+const REGTEST_POS_BLOCK_BYTES: [&[u8]; 1] = [
+    include_bytes!("../../crosslink-test-data/test_pos_block_5.bin"),
+];
+
 
 #[test]
 fn from_array() {
@@ -81,6 +85,19 @@ fn from_array3() {
 
     tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
     tf.push_instr_val(TFInstr::EXPECT_POW_HEIGHT, [REGTEST_BLOCK_BYTES.len() as u64, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn from_array4() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
