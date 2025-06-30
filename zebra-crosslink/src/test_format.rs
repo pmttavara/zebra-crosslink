@@ -6,9 +6,15 @@ use zerocopy_derive::*;
 
 use super::ZcashCrosslinkParameters;
 
+/// Load from disc or genereate in-memory
+#[derive(Clone, Debug)]
+pub enum TestInstrSrc {
+    Path(std::path::PathBuf),
+    Bytes(Vec<u8>)
+}
 #[repr(C)]
 #[derive(Immutable, KnownLayout, IntoBytes, FromBytes)]
-pub(crate) struct TFHdr {
+pub struct TFHdr {
     pub magic: [u8; 8],
     pub instrs_o: u64,
     pub instrs_n: u32,
@@ -17,17 +23,17 @@ pub(crate) struct TFHdr {
 
 #[repr(C)]
 #[derive(Clone, Copy, Immutable, IntoBytes, FromBytes)]
-pub(crate) struct TFSlice {
+pub struct TFSlice {
     pub o: u64,
     pub size: u64,
 }
 
 impl TFSlice {
-    pub(crate) fn as_val(self) -> [u64; 2] {
+    pub fn as_val(self) -> [u64; 2] {
         [self.o, self.size]
     }
 
-    pub(crate) fn as_byte_slice_in(self, bytes: &[u8]) -> &[u8] {
+    pub fn as_byte_slice_in(self, bytes: &[u8]) -> &[u8] {
         &bytes[self.o as usize..(self.o + self.size) as usize]
     }
 }
@@ -45,7 +51,7 @@ type TFInstrKind = u32;
 
 #[repr(C)]
 #[derive(Clone, Copy, Immutable, IntoBytes, FromBytes)]
-pub(crate) struct TFInstr {
+pub struct TFInstr {
     pub kind: TFInstrKind,
     pub flags: u32,
     pub data: TFSlice,
@@ -85,13 +91,13 @@ impl TFInstr {
     }
 }
 
-pub(crate) struct TF {
+pub struct TF {
     pub instrs: Vec<TFInstr>,
     pub data: Vec<u8>,
 }
 
 impl TF {
-    pub(crate) fn new(params: &ZcashCrosslinkParameters) -> TF {
+    pub fn new(params: &ZcashCrosslinkParameters) -> TF {
         let mut tf = TF {
             instrs: Vec::new(),
             data: Vec::new(),
@@ -116,7 +122,7 @@ impl TF {
         tf
     }
 
-    pub(crate) fn push_serialize<Z: ZcashSerialize>(&mut self, z: &Z) -> TFSlice {
+    pub fn push_serialize<Z: ZcashSerialize>(&mut self, z: &Z) -> TFSlice {
         let bgn = (size_of::<TFHdr>() + self.data.len()) as u64;
         z.zcash_serialize(&mut self.data);
         let end = (size_of::<TFHdr>() + self.data.len()) as u64;
@@ -127,7 +133,7 @@ impl TF {
         }
     }
 
-    pub(crate) fn push_data(&mut self, bytes: &[u8]) -> TFSlice {
+    pub fn push_data(&mut self, bytes: &[u8]) -> TFSlice {
         let result = TFSlice {
             o: (size_of::<TFHdr>() + self.data.len()) as u64,
             size: bytes.len() as u64,
@@ -136,7 +142,7 @@ impl TF {
         result
     }
 
-    pub(crate) fn push_instr_ex(
+    pub fn push_instr_ex(
         &mut self,
         kind: TFInstrKind,
         flags: u32,
@@ -152,11 +158,11 @@ impl TF {
         });
     }
 
-    pub(crate) fn push_instr(&mut self, kind: TFInstrKind, data: &[u8]) {
+    pub fn push_instr(&mut self, kind: TFInstrKind, data: &[u8]) {
         self.push_instr_ex(kind, 0, data, [0; 2])
     }
 
-    pub(crate) fn push_instr_serialize_ex<Z: ZcashSerialize>(
+    pub fn push_instr_serialize_ex<Z: ZcashSerialize>(
         &mut self,
         kind: TFInstrKind,
         flags: u32,
@@ -172,7 +178,7 @@ impl TF {
         });
     }
 
-    pub(crate) fn push_instr_serialize<Z: ZcashSerialize>(&mut self, kind: TFInstrKind, data: &Z) {
+    pub fn push_instr_serialize<Z: ZcashSerialize>(&mut self, kind: TFInstrKind, data: &Z) {
         self.push_instr_serialize_ex(kind, 0, data, [0; 2])
     }
 
@@ -186,7 +192,7 @@ impl TF {
         (v + align) & !align
     }
 
-    pub(crate) fn write<W: std::io::Write> (&self, writer: &mut W) {
+    pub fn write<W: std::io::Write> (&self, writer: &mut W) {
         let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
         let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
         let hdr = TFHdr {
@@ -208,13 +214,13 @@ impl TF {
             .expect("writing shouldn't fail");
     }
 
-    pub(crate) fn write_to_file(&self, path: &std::path::Path) {
+    pub fn write_to_file(&self, path: &std::path::Path) {
         if let Ok(mut file) = std::fs::File::create(path) {
             self.write(&mut file)
         }
     }
 
-    pub(crate) fn write_to_bytes(&self) -> Vec<u8> {
+    pub fn write_to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         self.write(&mut bytes);
         bytes
@@ -222,7 +228,7 @@ impl TF {
 
     // Simple version, all in one go... for large files we'll want to break this up; get hdr &
     // get/stream instrs, then read data as needed
-    pub(crate) fn read_from_bytes(bytes: &[u8]) -> Result<Self, String> {
+    pub fn read_from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let tf_hdr = match TFHdr::ref_from_prefix(&bytes[0..]) {
             Ok((hdr, _)) => hdr,
             Err(err) => return Err(err.to_string()),
@@ -249,7 +255,7 @@ impl TF {
         Ok(tf)
     }
 
-    pub(crate) fn read_from_file(path: &std::path::Path) -> Result<(Vec<u8>, Self), String> {
+    pub fn read_from_file(path: &std::path::Path) -> Result<(Vec<u8>, Self), String> {
         let bytes = match std::fs::read(path) {
             Ok(bytes) => bytes,
             Err(err) => return Err(err.to_string()),
@@ -266,12 +272,12 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
     const_assert!(TFInstr::COUNT == 3);
     match instr.kind {
         TFInstr::LOAD_POW => {
-            let block = Block::zcash_deserialize(instr.data_slice(&bytes)).ok()?;
+            let block = Block::zcash_deserialize(instr.data_slice(bytes)).ok()?;
             Some(TestInstr::LoadPoW(block))
         }
 
         TFInstr::LOAD_POS => {
-            let block = BftBlock::zcash_deserialize(instr.data_slice(&bytes)).ok()?;
+            let block = BftBlock::zcash_deserialize(instr.data_slice(bytes)).ok()?;
             Some(TestInstr::LoadPoS(block))
         }
 
@@ -281,7 +287,7 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         })),
 
         _ => {
-            warn!("Unrecognized instruction {}", instr.kind);
+            panic!("Unrecognized instruction {}", instr.kind);
             None
         }
     }
@@ -332,6 +338,11 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
         const_assert!(TFInstr::COUNT == 3);
         match tf_read_instr(&bytes, instr) {
             Some(TestInstr::LoadPoW(block)) => {
+                // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
+                // info!("writing binary at {}", path);
+                // let mut file = std::fs::File::create(&path).expect("valid file");
+                // file.write_all(instr.data_slice(&bytes));
+
                 (call.force_feed_pow)(Arc::new(block)).await;
             }
 
@@ -344,11 +355,12 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
                 todo!("Params");
             }
 
-            _ => warn!("Unrecognized instruction {}", instr.kind),
+            _ => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
         }
     }
 
     println!("Test done, shutting down");
     // zebrad::application::APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+    tokio::time::sleep(Duration::from_secs(1)).await;
     TEST_SHUTDOWN_FN.lock().unwrap()();
 }

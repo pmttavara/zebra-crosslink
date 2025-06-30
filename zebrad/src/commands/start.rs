@@ -335,16 +335,16 @@ impl StartCmd {
                             // Turns BoxError into Result<VerifyChainError, BoxError>,
                             // by downcasting from Any to VerifyChainError.
                             Err(box_error) => {
-                                // let error = box_error
-                                //     .downcast::<RouterError>()
-                                //     .map(|boxed_chain_error| *boxed_chain_error);
+                                let error = box_error
+                                    .downcast::<zebra_consensus::RouterError>()
+                                    .map(|boxed_chain_error| *boxed_chain_error);
 
-                                // tracing::info!(
-                                //     ?error,
-                                //     ?block_hash,
-                                //     ?height,
-                                //     "submit block failed verification"
-                                // );
+                                tracing::error!(
+                                    ?error,
+                                    ?block_hash,
+                                    ?height,
+                                    "submit block failed verification"
+                                );
 
                                 // error
                             }

@@ -2,13 +2,13 @@
 
 #![cfg(test)]
 use zebrad::prelude::Application;
+use zebra_crosslink::chain::*;
+use zebra_crosslink::test_format::*;
 
-/// Unified codepath for test-format-based tests.
-/// Starts full application with globals set ready for internal instrs thread.
-pub fn test_file(path: &str) {
+pub fn test_start(src: TestInstrSrc) {
     // init globals
     {
-        *zebra_crosslink::TEST_INSTR_PATH.lock().unwrap() = Some(path.into());
+        *zebra_crosslink::TEST_INSTR_SRC.lock().unwrap() = Some(src);
         *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() =
             || APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
     }
@@ -28,5 +28,27 @@ pub fn test_file(path: &str) {
 
 #[test]
 fn read_from_file() {
-    test_file("../crosslink-test-data/blocks.zeccltf");
+    test_start(TestInstrSrc::Path("../crosslink-test-data/blocks.zeccltf".into()));
+}
+
+#[test]
+fn from_array() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    let regtest_block_bytes = [
+        include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_5.bin"),
+        include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
+    ];
+
+    for i in 0..regtest_block_bytes.len() {
+        tf.push_instr(TFInstr::LOAD_POW, regtest_block_bytes[i]);
+    }
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
 }

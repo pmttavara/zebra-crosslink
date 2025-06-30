@@ -36,13 +36,7 @@ use mal_system::*;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
 
-#[derive(Clone, Debug)]
-/// Load from disc or genereate in-memory
-pub enum TestInstrSrc {
-    Path(std::path::PathBuf),
-    Bytes(Vec<u8>)
-}
-pub static TEST_INSTR_SRC: Mutex<Option<TestInstrSrc>> = Mutex::new(None);
+pub static TEST_INSTR_SRC: Mutex<Option<test_format::TestInstrSrc>> = Mutex::new(None);
 pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 
