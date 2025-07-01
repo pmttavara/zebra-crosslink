@@ -79,6 +79,7 @@ impl TFInstr {
     pub const SET_PARAMS: TFInstrKind = 2;
     pub const EXPECT_POW_CHAIN_LENGTH: TFInstrKind = 3;
     pub const EXPECT_POS_CHAIN_LENGTH: TFInstrKind = 4;
+    // TODO: set roster via PoW
     pub const COUNT: TFInstrKind = 5;
 
     pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
