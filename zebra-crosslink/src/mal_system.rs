@@ -513,34 +513,7 @@ async fn malachite_system_main_loop(
                     assert_eq!(lock.round as i64, certificate.round.as_i64());
                     bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
-                    let fat_pointer = {
-                        let vote_template = MalVote {
-                            validator_address: MalPublicKey2([0_u8; 32].into()),
-                            value: NilOrVal::Val(certificate.value_id),
-                            height: certificate.height,
-                            typ: VoteType::Precommit,
-                            round: certificate.round,
-                        };
-                        let vote_for_block_without_finalizer_public_key: [u8; 76 - 32] =
-                            vote_template.to_bytes()[32..].try_into().unwrap();
-
-                        FatPointerToBftBlock {
-                            vote_for_block_without_finalizer_public_key,
-                            signatures: certificate
-                                .commit_signatures
-                                .iter()
-                                .map(|commit_signature| {
-                                    let public_key: MalPublicKey2 = commit_signature.address;
-                                    let signature: [u8; 64] = commit_signature.signature;
-
-                                    FatPointerSignature {
-                                        public_key: public_key.0.into(),
-                                        vote_signature: signature,
-                                    }
-                                })
-                                .collect(),
-                        }
-                    };
+                    let fat_pointer = FatPointerToBftBlock::from(&certificate);
                     info!("Fat pointer to tip is now: {}", fat_pointer);
                     assert!(fat_pointer.validate_signatures());
                     assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
@@ -748,6 +721,37 @@ impl std::fmt::Display for FatPointerToBftBlock {
         }
         write!(f, "]}}")?;
         Ok(())
+    }
+}
+
+impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
+    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock {
+        let vote_template = MalVote {
+            validator_address: MalPublicKey2([0_u8; 32].into()),
+            value: NilOrVal::Val(certificate.value_id), // previous_block_hash
+            height: certificate.height,
+            typ: VoteType::Precommit,
+            round: certificate.round,
+        };
+        let vote_for_block_without_finalizer_public_key: [u8; 76 - 32] =
+            vote_template.to_bytes()[32..].try_into().unwrap();
+
+        FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key,
+            signatures: certificate
+                .commit_signatures
+                .iter()
+                .map(|commit_signature| {
+                    let public_key: MalPublicKey2 = commit_signature.address;
+                    let signature: [u8; 64] = commit_signature.signature;
+
+                    FatPointerSignature {
+                        public_key: public_key.0.into(),
+                        vote_signature: signature,
+                    }
+                })
+            .collect(),
+        }
     }
 }
 
