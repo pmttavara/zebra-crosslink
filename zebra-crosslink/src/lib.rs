@@ -463,7 +463,7 @@ async fn new_decided_bft_block_from_malachite(
         );
     }
     assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
-    assert!(internal.bft_blocks[insert_i].headers.is_empty());
+    assert!(internal.bft_blocks[insert_i].headers.is_empty(), "{:?}", internal.bft_blocks[insert_i]);
     assert!(!new_block.headers.is_empty());
     // info!("Inserting bft block at {} with hash {}", insert_i, new_block.blake3_hash());
     internal.bft_blocks[insert_i] = new_block.clone();
@@ -693,7 +693,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     info!(?bft_config);
 
     let mut malachite_system = None;
-    
+
     if TEST_INSTR_SRC.lock().unwrap().is_none() {
         malachite_system = Some(
             start_malachite(

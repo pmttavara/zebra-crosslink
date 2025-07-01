@@ -295,7 +295,7 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         })),
 
         TFInstr::EXPECT_POW_CHAIN_LENGTH => Some(TestInstr::ExpectPoWChainLength(instr.val[0] as u32)),
-        TFInstr::EXPECT_POW_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
+        TFInstr::EXPECT_POS_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
 
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
@@ -382,7 +382,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
             }
 
             Some(TestInstr::ExpectPoSChainLength(h)) => {
-                todo!();
+                assert_eq!(h as usize, internal_handle.internal.lock().await.bft_blocks.len());
             }
 
             None => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
@@ -392,6 +392,6 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
     tokio::time::sleep(Duration::from_secs(120)).await;
-    
+
     TEST_SHUTDOWN_FN.lock().unwrap()();
 }

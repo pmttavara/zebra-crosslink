@@ -66,6 +66,15 @@ const REGTEST_POS_BLOCK_BYTES: [&[u8]; 1] = [
 
 
 #[test]
+fn crosslink_expect_pos_height_on_boot() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
 fn crosslink_expect_pow_height_on_boot() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
@@ -135,13 +144,40 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
 }
 
 #[test]
-fn crosslink_from_array4() {
+fn crosslink_expect_pos_not_pushed_if_pow_blocks_not_present() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn crosslink_expect_pos_height_after_push() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
     }
     tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [1, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+#[test]
+fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [1, 0]);
 
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
