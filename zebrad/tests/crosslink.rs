@@ -1,9 +1,13 @@
 //! Test-format-based tests
 
 #![cfg(test)]
+
+use std::time::Duration;
+
 use zebrad::prelude::Application;
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
+use zebra_chain::serialization::*;
 
 pub fn test_start(src: TestInstrSrc) {
     // init globals
@@ -182,3 +186,39 @@ fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
     let bytes = tf.write_to_bytes();
     test_start(TestInstrSrc::Bytes(bytes));
 }
+
+#[test]
+fn crosslink_reject_pos_with_signature_on_different_data() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..REGTEST_BLOCK_BYTES.len() {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+
+    // modify block data so that the signatures are incorrect
+    // NOTE: modifying the last as there is no `previous_block_hash` that this invalidates
+    let mut bft_block_and_fat_ptr = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
+    // let mut last_pow_hdr =
+    bft_block_and_fat_ptr.block.headers.last_mut().unwrap().time += Duration::from_secs(1);
+    let new_bytes = bft_block_and_fat_ptr.zcash_serialize_to_vec().unwrap();
+
+    assert!(&new_bytes != REGTEST_POS_BLOCK_BYTES[0], "test invalidated if the serialization has not been changed");
+
+    tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+
+    let bytes = tf.write_to_bytes();
+    test_start(TestInstrSrc::Bytes(bytes));
+}
+
+// TODO:
+// - reject signatures from outside the roster
+// - reject pos block with < 2/3rds roster stake
+// - reject pos block with signatures from the previous, but not current roster
+// > require correctly-signed incorrect data:
+//   - reject pos block with > sigma headers
+//   - reject pos block with < sigma headers
+//   - reject pos block where headers don't form subchain (hdrs[i].hash() != hdrs[i+1].previous_block_hash)
+//   - repeat all signature tests but for the *next* pos block's fat pointer back
+// - reject pos block that does have the correct fat pointer *hash* to prev block
+// ...

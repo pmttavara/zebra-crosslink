@@ -253,9 +253,12 @@ impl ZcashDeserialize for Blake3Hash {
 }
 
 
+/// A BFT block and the fat pointer that shows it has been signed
 #[derive(Clone, Debug)]
-pub(crate) struct BftBlockAndFatPointerToIt {
+pub struct BftBlockAndFatPointerToIt {
+    /// A BFT block
     pub block: BftBlock,
+    /// The fat pointer to block, showing it has been signed
     pub fat_ptr: FatPointerToBftBlock,
 }
 
