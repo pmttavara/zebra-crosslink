@@ -36,7 +36,12 @@ use mal_system::*;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
 
-pub static TEST_INSTR_SRC: Mutex<Option<test_format::TestInstrSrc>> = Mutex::new(None);
+pub static TEST_INSTR_I: Mutex<usize> = Mutex::new(0);
+pub static TEST_MODE: Mutex<bool> = Mutex::new(false);
+pub static TEST_FAILED: Mutex<i32> = Mutex::new(0);
+pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
+pub static TEST_INSTR_BYTES: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+pub static TEST_INSTRS: Mutex<Vec<test_format::TFInstr>> = Mutex::new(Vec::new());
 pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 pub static TEST_NAME: Mutex<&'static str> = Mutex::new("‰‰TEST_NAME_NOT_SET‰‰");
@@ -542,11 +547,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         });
     }
 
-    if let Some(src) = TEST_INSTR_SRC.lock().unwrap().clone() {
+    if *TEST_MODE.lock().unwrap() {
         // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
         std::panic::set_hook(Box::new(|panic_info| {
             #[allow(clippy::print_stderr)]
             {
+                *TEST_FAILED.lock().unwrap() = -1;
+
                 use std::backtrace::{self, *};
                 let bt = Backtrace::force_capture();
 
@@ -604,12 +611,30 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     eprintln!("...");
                 }
 
+
+                eprintln!("\n\nInstruction sequence:");
+                let failed_instr_i = *TEST_INSTR_I.lock().unwrap();
+                let instrs_lock = TEST_INSTRS.lock().unwrap();
+                let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
+                let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
+                let bytes = bytes_lock.as_ref();
+                for instr_i in 0..instrs.len() {
+                    let col = if instr_i < failed_instr_i {
+                        "\x1b[92m" // green
+                    } else if instr_i == failed_instr_i {
+                        "\x1b[91m" // red
+                    } else {
+                        "\x1b[37m" // grey
+                    };
+                    eprintln!("  {}{}\x1b[0;0m", col, &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i]));
+                }
+
                 #[cfg(not(feature = "viz_gui"))]
                 std::process::abort();
             }
         }));
 
-        tokio::task::spawn(test_format::instr_reader(internal_handle.clone(), src));
+        tokio::task::spawn(test_format::instr_reader(internal_handle.clone()));
     }
 
     let public_ip_string = config
@@ -694,8 +719,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     info!(?bft_config);
 
     let mut malachite_system = None;
-    
-    if TEST_INSTR_SRC.lock().unwrap().is_none() {
+    if !*TEST_MODE.lock().unwrap() {
         malachite_system = Some(
             start_malachite(
                 internal_handle.clone(),
