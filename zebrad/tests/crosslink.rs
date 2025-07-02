@@ -22,14 +22,14 @@ macro_rules! function_name {
 
 pub fn set_test_name(name: &'static str) { *zebra_crosslink::TEST_NAME.lock().unwrap() = name; }
 
-pub fn test_start(src: TestInstrSrc) {
+pub fn test_start() {
     // init globals
     {
-        *zebra_crosslink::TEST_INSTR_SRC.lock().unwrap() = Some(src);
+        *zebra_crosslink::TEST_MODE.lock().unwrap() = true;
         *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() =
             || {
                 // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
-                std::process::exit(0);
+                std::process::exit(*zebra_crosslink::TEST_FAILED.lock().unwrap());
             }
     }
 
@@ -61,13 +61,23 @@ pub fn test_start(src: TestInstrSrc) {
     ZebradApp::run(&APPLICATION, args);
 }
 
+pub fn test_bytes(bytes: Vec<u8>) {
+    *zebra_crosslink::TEST_INSTR_BYTES.lock().unwrap() = bytes;
+    test_start();
+}
+
+pub fn test_path(path: std::path::PathBuf) {
+    *zebra_crosslink::TEST_INSTR_PATH.lock().unwrap() = Some(path);
+    test_start();
+}
+
 #[ignore]
 #[test]
 fn read_from_file() {
-    test_start(TestInstrSrc::Path("../crosslink-test-data/blocks.zeccltf".into()));
+    test_path("../crosslink-test-data/blocks.zeccltf".into());
 }
 
-const REGTEST_BLOCK_BYTES: [&[u8]; 23] = [
+const REGTEST_BLOCK_BYTES: &[&[u8]] = &[
     include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
@@ -93,7 +103,7 @@ const REGTEST_BLOCK_BYTES: [&[u8]; 23] = [
     include_bytes!("../../crosslink-test-data/test_pow_block_29.bin"),
 ];
 
-const REGTEST_POS_BLOCK_BYTES: [&[u8]; 7] = [
+const REGTEST_POS_BLOCK_BYTES: &[&[u8]] = &[
     include_bytes!("../../crosslink-test-data/test_pos_block_5.bin"),
     include_bytes!("../../crosslink-test-data/test_pos_block_8.bin"),
     include_bytes!("../../crosslink-test-data/test_pos_block_11.bin"),
@@ -103,7 +113,6 @@ const REGTEST_POS_BLOCK_BYTES: [&[u8]; 7] = [
     include_bytes!("../../crosslink-test-data/test_pos_block_27.bin"),
 ];
 
-
 #[test]
 fn crosslink_expect_pos_height_on_boot() {
     set_test_name(function_name!());
@@ -111,7 +120,7 @@ fn crosslink_expect_pos_height_on_boot() {
 
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 fn crosslink_expect_pow_height_on_boot() {
@@ -120,7 +129,7 @@ fn crosslink_expect_pow_height_on_boot() {
 
     tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -131,7 +140,7 @@ fn crosslink_expect_first_pow_to_not_be_a_no_op() {
     tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
     tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2_u64, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -145,7 +154,7 @@ fn crosslink_push_example_pow_chain_only() {
     }
     tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -160,7 +169,7 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
     }
     tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -179,7 +188,7 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
         tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
     }
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -190,7 +199,7 @@ fn crosslink_expect_pos_not_pushed_if_pow_blocks_not_present() {
     tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -206,7 +215,7 @@ fn crosslink_expect_pos_height_after_push() {
         tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1+i) as u64, 0]);
     }
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -223,7 +232,7 @@ fn crosslink_expect_pos_out_of_order() {
     tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[1]);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [2, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -238,7 +247,7 @@ fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
     tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [1, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 #[test]
@@ -262,7 +271,7 @@ fn crosslink_reject_pos_with_signature_on_different_data() {
     tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
 
-    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+    test_bytes(tf.write_to_bytes());
 }
 
 // TODO:

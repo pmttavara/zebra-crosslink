@@ -6,12 +6,6 @@ use zerocopy_derive::*;
 
 use super::ZcashCrosslinkParameters;
 
-/// Load from disc or genereate in-memory
-#[derive(Clone, Debug)]
-pub enum TestInstrSrc {
-    Path(std::path::PathBuf),
-    Bytes(Vec<u8>)
-}
 #[repr(C)]
 #[derive(Immutable, KnownLayout, IntoBytes, FromBytes)]
 pub struct TFHdr {
@@ -90,6 +84,23 @@ impl TFInstr {
             "<unknown>"
         }
     }
+
+    pub fn string_from_instr(bytes: &[u8], instr: &TFInstr) -> String {
+        let mut str = Self::str_from_kind(instr.kind).to_string();
+        str += " (";
+
+        match tf_read_instr(&bytes, instr) {
+            Some(TestInstr::LoadPoW(block)) => str += &block.hash().to_string(),
+            Some(TestInstr::LoadPoS((block, fat_ptr))) => str += &block.blake3_hash().to_string(),
+            Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
+            Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
+            Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
+            None => {},
+        }
+
+        str + ")"
+    }
+
 
     pub fn data_slice<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
         self.data.as_byte_slice_in(bytes)
@@ -313,7 +324,7 @@ pub(crate) enum TestInstr {
     ExpectPoSChainLength(u64),
 }
 
-pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestInstrSrc) {
+pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
     use zebra_chain::serialization::{ZcashDeserialize, ZcashSerialize};
     let call = internal_handle.call.clone();
     println!("waiting for tip before starting the test...");
@@ -330,19 +341,21 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
     }
     println!("Starting test!");
 
-    let bytes = match src {
-        TestInstrSrc::Path(path) => match std::fs::read(&path) {
+    if let Some(path) = TEST_INSTR_PATH.lock().unwrap().clone() {
+        *TEST_INSTR_BYTES.lock().unwrap() = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) => panic!("Invalid test file: {:?}: {}", path, err), // TODO: specifics
-        }
+        };
+    }
 
-        TestInstrSrc::Bytes(bytes) => bytes,
-    };
+    let bytes = TEST_INSTR_BYTES.lock().unwrap().clone();
 
     let tf = match TF::read_from_bytes(&bytes) {
         Ok(tf) => tf,
         Err(err) => panic!("Invalid test data: {}", err), // TODO: specifics
     };
+
+    *TEST_INSTRS.lock().unwrap() = tf.instrs.clone();
 
     for instr_i in 0..tf.instrs.len() {
         let instr = &tf.instrs[instr_i];
@@ -388,6 +401,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle, src: TestIns
 
             None => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
         }
+
+        *TEST_INSTR_I.lock().unwrap() = instr_i+1; // accounts for end
     }
 
     println!("Test done, shutting down");
