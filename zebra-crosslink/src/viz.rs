@@ -1452,7 +1452,7 @@ impl VizCtx {
 impl Default for VizCtx {
     fn default() -> Self {
         VizCtx {
-            fix_screen_o: Vec2::_0,
+            fix_screen_o: Vec2::new(0.0, -300.0),
             screen_o: Vec2::_0,
             screen_vel: Vec2::_0,
             mouse_drag: MouseDrag::Nil,
@@ -1868,7 +1868,7 @@ pub async fn viz_main(
     let mut rng = rand::rngs::StdRng::seed_from_u64(0);
     let mut new_h_rng: Option<(i32, i32)> = None;
 
-    let mut tray_is_open = true;
+    let mut tray_is_open = false;
     let mut tray_x = 0.;
 
     let mut dbg = VizDbg {
@@ -1879,7 +1879,7 @@ pub async fn viz_main(
         test_bbox: false,
         show_accel_areas: false,
         show_bft_ui: false,
-        show_top_info: true,
+        show_top_info: false,
         show_mouse_info: false,
         show_profiler: true,
         show_bft_msgs: true,
@@ -2754,7 +2754,7 @@ pub async fn viz_main(
             let a_link_ref = tfl_nominee_from_node(&ctx, ctx.get_node(node_ref).unwrap());
             if a_link_ref != drag_node_ref {
                 if let Some(link) = ctx.node(a_link_ref) {
-                    target_pt.y = link.pt.y;
+                    target_pt.y = link.pt.y - font_size*3.0 / 3.0;
                     y_counterpart = a_link_ref;
                     y_is_set = true;
                 }
@@ -3506,8 +3506,15 @@ pub fn main(tokio_root_thread_handle: Option<JoinHandle<()>>) {
     let png_bytes = include_bytes!("../../book/theme/favicon.png");
     let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
 
+    let test_name : &'static str = *TEST_NAME.lock().unwrap();
+    let window_title = if test_name == "‰‰TEST_NAME_NOT_SET‰‰" {
+        "Zebra Blocks".to_owned()
+    } else {
+        format!("TEST: {}", test_name)
+    };
+
     let config = window::Conf {
-        window_title: "Zcash blocks".to_owned(),
+        window_title,
         fullscreen: false,
         window_width: 1200,
         window_height: 800,

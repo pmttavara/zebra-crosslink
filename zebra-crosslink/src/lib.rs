@@ -39,6 +39,7 @@ use tokio::sync::Mutex as TokioMutex;
 pub static TEST_INSTR_SRC: Mutex<Option<test_format::TestInstrSrc>> = Mutex::new(None);
 pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
+pub static TEST_NAME: Mutex<&'static str> = Mutex::new("‰TEST_NAME_NOT_SET‰");
 
 pub mod service;
 /// Configuration for the state service.

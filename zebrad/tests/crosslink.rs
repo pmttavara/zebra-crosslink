@@ -5,6 +5,19 @@ use zebrad::prelude::Application;
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
 
+macro_rules! function_name {
+    () => {{
+        fn f() {}
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        let name = type_name_of(f);
+        name.strip_suffix("::f").unwrap().split("::").last().unwrap()
+    }}
+}
+
+pub fn set_test_name(name: &'static str) { *zebra_crosslink::TEST_NAME.lock().unwrap() = name; }
+
 pub fn test_start(src: TestInstrSrc) {
     // init globals
     {
@@ -67,6 +80,7 @@ const REGTEST_POS_BLOCK_BYTES: [&[u8]; 1] = [
 
 #[test]
 fn crosslink_expect_pow_height_on_boot() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1, 0]);
@@ -77,6 +91,7 @@ fn crosslink_expect_pow_height_on_boot() {
 
 #[test]
 fn crosslink_expect_first_pow_to_not_be_a_no_op() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
@@ -88,6 +103,7 @@ fn crosslink_expect_first_pow_to_not_be_a_no_op() {
 
 #[test]
 fn crosslink_push_example_pow_chain_only() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
@@ -102,6 +118,7 @@ fn crosslink_push_example_pow_chain_only() {
 
 #[test]
 fn crosslink_push_example_pow_chain_each_block_twice() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
@@ -117,6 +134,7 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
 
 #[test]
 fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
@@ -136,6 +154,7 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
 
 #[test]
 fn crosslink_from_array4() {
+    set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
