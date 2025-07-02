@@ -432,14 +432,25 @@ async fn new_decided_bft_block_from_malachite(
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
-    if validate_bft_block_from_malachite(&tfl_handle, new_block).await == false {
+    let mut internal = tfl_handle.internal.lock().await;
+
+    if fat_pointer.points_at_block_hash() != new_block.blake3_hash() {
+        warn!("Fat Pointer hash does not match block hash.");
+        return false;
+    }
+    // TODO: check public keys on the fat pointer against the roster
+    if fat_pointer.validate_signatures() == false {
+        warn!("Signatures are not valid. Rejecting block.");
+        return false;
+    }
+
+    if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await == false {
         return false;
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
     let new_final_height = block_height_from_hash(&call, new_final_hash).await.unwrap();
     // assert_eq!(new_final_height.0, new_block.finalization_candidate_height);
-    let mut internal = tfl_handle.internal.lock().await;
     let insert_i = new_block.height as usize - 1;
 
     // HACK: ensure there are enough blocks to overwrite this at the correct index
@@ -478,8 +489,25 @@ async fn validate_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
 ) -> bool {
+    let mut internal = tfl_handle.internal.lock().await;
+    validate_bft_block_from_malachite_already_locked(tfl_handle, &mut internal, new_block).await
+}
+async fn validate_bft_block_from_malachite_already_locked(
+    tfl_handle: &TFLServiceHandle,
+    internal: &mut TFLServiceInternal,
+    new_block: &BftBlock,
+) -> bool {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
+
+    if new_block.previous_block_fat_ptr.points_at_block_hash() != internal.fat_pointer_to_tip.points_at_block_hash() {
+        warn!(
+            "Block has invalid previous block fat pointer hash: was {} but should be {}",
+            new_block.previous_block_fat_ptr.points_at_block_hash(),
+            internal.fat_pointer_to_tip.points_at_block_hash(),
+        );
+        return false;
+    }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
     let new_final_pow_height =

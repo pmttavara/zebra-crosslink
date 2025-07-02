@@ -226,7 +226,6 @@ fn crosslink_expect_pos_out_of_order() {
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
 
-#[ignore]
 #[test]
 fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
     set_test_name(function_name!());
@@ -242,7 +241,6 @@ fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
 
-#[ignore]
 #[test]
 fn crosslink_reject_pos_with_signature_on_different_data() {
     set_test_name(function_name!());
