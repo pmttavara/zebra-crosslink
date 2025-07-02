@@ -123,6 +123,7 @@ fn crosslink_expect_pos_height_on_boot() {
     test_bytes(tf.write_to_bytes());
 }
 
+#[test]
 fn crosslink_expect_pow_height_on_boot() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
