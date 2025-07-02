@@ -95,12 +95,11 @@ impl TFInstr {
             Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
             Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
-            None => {},
+            None => {}
         }
 
         str + ")"
     }
-
 
     pub fn data_slice<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
         self.data.as_byte_slice_in(bytes)
@@ -158,13 +157,7 @@ impl TF {
         result
     }
 
-    pub fn push_instr_ex(
-        &mut self,
-        kind: TFInstrKind,
-        flags: u32,
-        data: &[u8],
-        val: [u64; 2],
-    ) {
+    pub fn push_instr_ex(&mut self, kind: TFInstrKind, flags: u32, data: &[u8], val: [u64; 2]) {
         let data = self.push_data(data);
         self.instrs.push(TFInstr {
             kind,
@@ -179,7 +172,7 @@ impl TF {
     }
 
     pub fn push_instr_val(&mut self, kind: TFInstrKind, val: [u64; 2]) {
-        self.push_instr_ex(kind, 0, &[0;0], val)
+        self.push_instr_ex(kind, 0, &[0; 0], val)
     }
 
     pub fn push_instr_serialize_ex<Z: ZcashSerialize>(
@@ -212,7 +205,7 @@ impl TF {
         (v + align) & !align
     }
 
-    pub fn write<W: std::io::Write> (&self, writer: &mut W) {
+    pub fn write<W: std::io::Write>(&self, writer: &mut W) {
         let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
         let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
         let hdr = TFHdr {
@@ -221,8 +214,12 @@ impl TF {
             instrs_n: self.instrs.len() as u32,
             instr_size: size_of::<TFInstr>() as u32,
         };
-        writer.write_all(hdr.as_bytes()).expect("writing shouldn't fail");
-        writer.write_all(&self.data).expect("writing shouldn't fail");
+        writer
+            .write_all(hdr.as_bytes())
+            .expect("writing shouldn't fail");
+        writer
+            .write_all(&self.data)
+            .expect("writing shouldn't fail");
 
         if instrs_o > instrs_o_unaligned {
             const ALIGN_0S: [u8; align_of::<TFInstr>()] = [0u8; align_of::<TFInstr>()];
@@ -230,7 +227,8 @@ impl TF {
             let align_bytes = &ALIGN_0S[..align_size];
             writer.write_all(align_bytes);
         }
-        writer.write_all(self.instrs.as_bytes())
+        writer
+            .write_all(self.instrs.as_bytes())
             .expect("writing shouldn't fail");
     }
 
@@ -283,7 +281,6 @@ impl TF {
 
         Self::read_from_bytes(&bytes).map(|tf| (bytes, tf))
     }
-
 }
 
 use crate::*;
@@ -297,8 +294,12 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
 
         TFInstr::LOAD_POS => {
-            let block_and_fat_ptr = BftBlockAndFatPointerToIt::zcash_deserialize(instr.data_slice(bytes)).ok()?;
-            Some(TestInstr::LoadPoS((block_and_fat_ptr.block, block_and_fat_ptr.fat_ptr)))
+            let block_and_fat_ptr =
+                BftBlockAndFatPointerToIt::zcash_deserialize(instr.data_slice(bytes)).ok()?;
+            Some(TestInstr::LoadPoS((
+                block_and_fat_ptr.block,
+                block_and_fat_ptr.fat_ptr,
+            )))
         }
 
         TFInstr::SET_PARAMS => Some(TestInstr::SetParams(ZcashCrosslinkParameters {
@@ -306,7 +307,9 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
             finalization_gap_bound: instr.val[1],
         })),
 
-        TFInstr::EXPECT_POW_CHAIN_LENGTH => Some(TestInstr::ExpectPoWChainLength(instr.val[0] as u32)),
+        TFInstr::EXPECT_POW_CHAIN_LENGTH => {
+            Some(TestInstr::ExpectPoWChainLength(instr.val[0] as u32))
+        }
         TFInstr::EXPECT_POS_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
 
         _ => {
@@ -335,7 +338,9 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
             break;
         } else {
             // warn!("Failed to read tip");
-            if before_time.elapsed().as_secs() > 30 { panic!("Timeout waiting for test to start."); }
+            if before_time.elapsed().as_secs() > 30 {
+                panic!("Timeout waiting for test to start.");
+            }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
@@ -390,19 +395,26 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
             }
 
             Some(TestInstr::ExpectPoWChainLength(h)) => {
-                if let ReadStateResponse::Tip(Some((height, hash))) = (call.read_state)(ReadStateRequest::Tip).await.expect("can read tip") {
+                if let ReadStateResponse::Tip(Some((height, hash))) =
+                    (call.read_state)(ReadStateRequest::Tip)
+                        .await
+                        .expect("can read tip")
+                {
                     assert_eq!(height.0 + 1, h);
                 }
             }
 
             Some(TestInstr::ExpectPoSChainLength(h)) => {
-                assert_eq!(h as usize, internal_handle.internal.lock().await.bft_blocks.len());
+                assert_eq!(
+                    h as usize,
+                    internal_handle.internal.lock().await.bft_blocks.len()
+                );
             }
 
             None => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
         }
 
-        *TEST_INSTR_I.lock().unwrap() = instr_i+1; // accounts for end
+        *TEST_INSTR_I.lock().unwrap() = instr_i + 1; // accounts for end
     }
 
     println!("Test done, shutting down");

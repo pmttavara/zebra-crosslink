@@ -449,7 +449,9 @@ async fn new_decided_bft_block_from_malachite(
         return false;
     }
 
-    if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await == false {
+    if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
+        == false
+    {
         return false;
     }
 
@@ -480,7 +482,11 @@ async fn new_decided_bft_block_from_malachite(
         );
     }
     assert!(insert_i == 0 || new_block.previous_block_hash() != Blake3Hash([0u8; 32]));
-    assert!(internal.bft_blocks[insert_i].headers.is_empty(), "{:?}", internal.bft_blocks[insert_i]);
+    assert!(
+        internal.bft_blocks[insert_i].headers.is_empty(),
+        "{:?}",
+        internal.bft_blocks[insert_i]
+    );
     assert!(!new_block.headers.is_empty());
     // info!("Inserting bft block at {} with hash {}", insert_i, new_block.blake3_hash());
     internal.bft_blocks[insert_i] = new_block.clone();
@@ -505,7 +511,9 @@ async fn validate_bft_block_from_malachite_already_locked(
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
-    if new_block.previous_block_fat_ptr.points_at_block_hash() != internal.fat_pointer_to_tip.points_at_block_hash() {
+    if new_block.previous_block_fat_ptr.points_at_block_hash()
+        != internal.fat_pointer_to_tip.points_at_block_hash()
+    {
         warn!(
             "Block has invalid previous block fat pointer hash: was {} but should be {}",
             new_block.previous_block_fat_ptr.points_at_block_hash(),
@@ -540,9 +548,11 @@ fn fat_pointer_to_block_at_height(
     if at_height as usize == bft_blocks.len() {
         Some(fat_pointer_to_tip.clone())
     } else {
-        Some(bft_blocks[at_height as usize]
-            .previous_block_fat_ptr
-            .clone())
+        Some(
+            bft_blocks[at_height as usize]
+                .previous_block_fat_ptr
+                .clone(),
+        )
     }
 }
 
@@ -555,7 +565,15 @@ async fn get_historical_bft_block_at_height(
         return None;
     }
     let block = internal.bft_blocks[at_height as usize - 1].clone();
-    Some((block, fat_pointer_to_block_at_height(&internal.bft_blocks, &internal.fat_pointer_to_tip, at_height).unwrap()))
+    Some((
+        block,
+        fat_pointer_to_block_at_height(
+            &internal.bft_blocks,
+            &internal.fat_pointer_to_tip,
+            at_height,
+        )
+        .unwrap(),
+    ))
 }
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
@@ -636,12 +654,16 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         break;
                     };
 
-                    eprintln!("  {}{}    {}", if i < 20 { " " } else { "" }, proc, file_loc);
+                    eprintln!(
+                        "  {}{}    {}",
+                        if i < 20 { " " } else { "" },
+                        proc,
+                        file_loc
+                    );
                 }
                 if i == n {
                     eprintln!("...");
                 }
-
 
                 eprintln!("\n\nInstruction sequence:");
                 let failed_instr_i = *TEST_INSTR_I.lock().unwrap();
@@ -657,7 +679,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     } else {
                         "\x1b[37m" // grey
                     };
-                    eprintln!("  {}{}\x1b[0;0m", col, &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i]));
+                    eprintln!(
+                        "  {}{}\x1b[0;0m",
+                        col,
+                        &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
+                    );
                 }
 
                 #[cfg(not(feature = "viz_gui"))]
@@ -758,7 +784,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 initial_validator_set.validators.clone(),
                 my_private_key,
                 bft_config.clone(),
-            ).await
+            )
+            .await,
         );
     }
 
@@ -819,7 +846,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     my_private_key,
                     bft_config.clone(),
                     start_delay,
-                ).await
+                )
+                .await,
             );
             internal.malachite_watchdog = Instant::now() + start_delay;
         }

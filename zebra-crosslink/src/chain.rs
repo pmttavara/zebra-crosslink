@@ -252,7 +252,6 @@ impl ZcashDeserialize for Blake3Hash {
     }
 }
 
-
 /// A BFT block and the fat pointer that shows it has been signed
 #[derive(Clone, Debug)]
 pub struct BftBlockAndFatPointerToIt {
@@ -265,8 +264,8 @@ pub struct BftBlockAndFatPointerToIt {
 impl ZcashDeserialize for BftBlockAndFatPointerToIt {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         Ok(BftBlockAndFatPointerToIt {
-                block: BftBlock::zcash_deserialize(&mut reader)?,
-                fat_ptr: FatPointerToBftBlock::zcash_deserialize(&mut reader)?,
+            block: BftBlock::zcash_deserialize(&mut reader)?,
+            fat_ptr: FatPointerToBftBlock::zcash_deserialize(&mut reader)?,
         })
     }
 }

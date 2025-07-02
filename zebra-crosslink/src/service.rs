@@ -132,8 +132,11 @@ pub(crate) type ForceFeedPoWBlockProcedure = Arc<
 
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
-pub(crate) type ForceFeedPoSBlockProcedure =
-    Arc<dyn Fn(Arc<BftBlock>, FatPointerToBftBlock) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+pub(crate) type ForceFeedPoSBlockProcedure = Arc<
+    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
 /// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
@@ -178,7 +181,9 @@ pub fn spawn_new_tfl_service(
     let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
         let handle = handle_mtx2.lock().unwrap().clone().unwrap();
         Box::pin(async move {
-            if crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await {
+            if crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
+                .await
+            {
                 info!("Successfully force-fed BFT block");
             } else {
                 error!("Failed to force-feed BFT block");
@@ -245,7 +250,8 @@ mod tests {
         let read_state_service: ReadStateServiceProcedure =
             Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
         let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
-        let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(|_block, _fat_pointer| Box::pin(async { () }));
+        let force_feed_pos: ForceFeedPoSBlockProcedure =
+            Arc::new(|_block, _fat_pointer| Box::pin(async { () }));
 
         TFLServiceHandle {
             internal,

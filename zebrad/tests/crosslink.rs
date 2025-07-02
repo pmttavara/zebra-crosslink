@@ -4,10 +4,10 @@
 
 use std::time::Duration;
 
-use zebrad::prelude::Application;
+use zebra_chain::serialization::*;
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
-use zebra_chain::serialization::*;
+use zebrad::prelude::Application;
 
 macro_rules! function_name {
     () => {{
@@ -16,21 +16,26 @@ macro_rules! function_name {
             std::any::type_name::<T>()
         }
         let name = type_name_of(f);
-        name.strip_suffix("::f").unwrap().split("::").last().unwrap()
-    }}
+        name.strip_suffix("::f")
+            .unwrap()
+            .split("::")
+            .last()
+            .unwrap()
+    }};
 }
 
-pub fn set_test_name(name: &'static str) { *zebra_crosslink::TEST_NAME.lock().unwrap() = name; }
+pub fn set_test_name(name: &'static str) {
+    *zebra_crosslink::TEST_NAME.lock().unwrap() = name;
+}
 
 pub fn test_start() {
     // init globals
     {
         *zebra_crosslink::TEST_MODE.lock().unwrap() = true;
-        *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() =
-            || {
-                // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
-                std::process::exit(*zebra_crosslink::TEST_FAILED.lock().unwrap());
-            }
+        *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() = || {
+            // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
+            std::process::exit(*zebra_crosslink::TEST_FAILED.lock().unwrap());
+        }
     }
 
     use zebrad::application::{ZebradApp, APPLICATION};
@@ -43,7 +48,6 @@ pub fn test_start() {
         zebrad::commands::EntryPoint::default_cmd_as_str().into(),
     ];
     // println!("args: {:?}", args);
-
 
     #[cfg(feature = "viz_gui")]
     {
@@ -151,9 +155,15 @@ fn crosslink_push_example_pow_chain_only() {
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
+        tf.push_instr_val(
+            TFInstr::EXPECT_POW_CHAIN_LENGTH,
+            [(2 + i - (i >= 3) as usize) as u64, 0],
+        );
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(
+        TFInstr::EXPECT_POW_CHAIN_LENGTH,
+        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
+    );
 
     test_bytes(tf.write_to_bytes());
 }
@@ -166,9 +176,15 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
+        tf.push_instr_val(
+            TFInstr::EXPECT_POW_CHAIN_LENGTH,
+            [(2 + i - (i >= 3) as usize) as u64, 0],
+        );
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(
+        TFInstr::EXPECT_POW_CHAIN_LENGTH,
+        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
+    );
 
     test_bytes(tf.write_to_bytes());
 }
@@ -180,13 +196,22 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
+        tf.push_instr_val(
+            TFInstr::EXPECT_POW_CHAIN_LENGTH,
+            [(2 + i - (i >= 3) as usize) as u64, 0],
+        );
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(
+        TFInstr::EXPECT_POW_CHAIN_LENGTH,
+        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
+    );
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+        tf.push_instr_val(
+            TFInstr::EXPECT_POW_CHAIN_LENGTH,
+            [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
+        );
     }
 
     test_bytes(tf.write_to_bytes());
@@ -213,7 +238,7 @@ fn crosslink_expect_pos_height_after_push() {
     }
     for i in 0..REGTEST_POS_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1+i) as u64, 0]);
+        tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1 + i) as u64, 0]);
     }
 
     test_bytes(tf.write_to_bytes());
@@ -262,12 +287,16 @@ fn crosslink_reject_pos_with_signature_on_different_data() {
 
     // modify block data so that the signatures are incorrect
     // NOTE: modifying the last as there is no `previous_block_hash` that this invalidates
-    let mut bft_block_and_fat_ptr = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
+    let mut bft_block_and_fat_ptr =
+        BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
     // let mut last_pow_hdr =
     bft_block_and_fat_ptr.block.headers.last_mut().unwrap().time += Duration::from_secs(1);
     let new_bytes = bft_block_and_fat_ptr.zcash_serialize_to_vec().unwrap();
 
-    assert!(&new_bytes != REGTEST_POS_BLOCK_BYTES[0], "test invalidated if the serialization has not been changed");
+    assert!(
+        &new_bytes != REGTEST_POS_BLOCK_BYTES[0],
+        "test invalidated if the serialization has not been changed"
+    );
 
     tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);

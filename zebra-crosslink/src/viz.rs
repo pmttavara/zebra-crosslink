@@ -2034,7 +2034,11 @@ pub async fn viz_main(
                 let hash = blocks[i].blake3_hash();
                 if ctx.find_bft_node_by_hash(&hash).is_none() {
                     let bft_block = blocks[i].clone();
-                    if let Some(fat_ptr) = fat_pointer_to_block_at_height(blocks, &g.state.fat_pointer_to_bft_tip, (i+1) as u64) {
+                    if let Some(fat_ptr) = fat_pointer_to_block_at_height(
+                        blocks,
+                        &g.state.fat_pointer_to_bft_tip,
+                        (i + 1) as u64,
+                    ) {
                         let bft_parent =
                             if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::null() {
                                 if i != 0 {
@@ -2077,7 +2081,10 @@ pub async fn viz_main(
                             None,
                         );
                     } else {
-                        error!("no matching fat pointer for BFT block {}", bft_block.blake3_hash());
+                        error!(
+                            "no matching fat pointer for BFT block {}",
+                            bft_block.blake3_hash()
+                        );
                     }
                 }
             }
@@ -2693,10 +2700,12 @@ pub async fn viz_main(
                 if node.kind == NodeKind::BFT {
                     if let Some(bft_block) = node.header.as_bft() {
                         if !bft_block.block.headers.is_empty() {
-                            let hdr_lo = ctx
-                                .find_bc_node_by_hash(&bft_block.block.headers.first().unwrap().hash());
-                            let hdr_hi =
-                                ctx.find_bc_node_by_hash(&bft_block.block.headers.last().unwrap().hash());
+                            let hdr_lo = ctx.find_bc_node_by_hash(
+                                &bft_block.block.headers.first().unwrap().hash(),
+                            );
+                            let hdr_hi = ctx.find_bc_node_by_hash(
+                                &bft_block.block.headers.last().unwrap().hash(),
+                            );
                             if hdr_lo.is_none() && hdr_hi.is_none() {
                                 if let Some(bc_lo) = ctx.get_node(ctx.bc_lo) {
                                     let max_hdr_h = bft_block.block.finalization_candidate_height
@@ -2754,7 +2763,7 @@ pub async fn viz_main(
             let a_link_ref = tfl_nominee_from_node(&ctx, ctx.get_node(node_ref).unwrap());
             if a_link_ref != drag_node_ref {
                 if let Some(link) = ctx.node(a_link_ref) {
-                    target_pt.y = link.pt.y - font_size*3.0 / 3.0;
+                    target_pt.y = link.pt.y - font_size * 3.0 / 3.0;
                     y_counterpart = a_link_ref;
                     y_is_set = true;
                 }
@@ -3506,7 +3515,7 @@ pub fn main(tokio_root_thread_handle: Option<JoinHandle<()>>) {
     let png_bytes = include_bytes!("../../book/theme/favicon.png");
     let png = image::load_from_memory_with_format(png_bytes, image::ImageFormat::Png).unwrap();
 
-    let test_name : &'static str = *TEST_NAME.lock().unwrap();
+    let test_name: &'static str = *TEST_NAME.lock().unwrap();
     let window_title = if test_name == "‰‰TEST_NAME_NOT_SET‰‰" {
         "Zebra Blocks".to_owned()
     } else {

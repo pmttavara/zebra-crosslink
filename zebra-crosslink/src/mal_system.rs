@@ -750,7 +750,7 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
                         vote_signature: signature,
                     }
                 })
-            .collect(),
+                .collect(),
         }
     }
 }
