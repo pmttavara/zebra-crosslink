@@ -54,7 +54,7 @@ features = [
 [features]
 # In release builds, don't compile debug logging code, to improve performance.
 default = ["release_max_level_info", "progress-bar"]
-viz_gui = []
+viz_gui = ["zebra-crosslink/viz_gui"]
 
 # Default features for official ZF binary release builds
 default-release-binaries = ["default", "sentry"]
@@ -161,7 +161,6 @@ zebra-node-services = { path = "../zebra-node-services", version = "1.0.0-beta.4
 zebra-rpc = { path = "../zebra-rpc", version = "1.0.0-beta.46" }
 zebra-state = { path = "../zebra-state", version = "1.0.0-beta.46" }
 zebra-crosslink = { path = "../zebra-crosslink", version = "1.0.0-beta.46" }
-zebra-crosslink-chain = { path = "../zebra-crosslink-chain" }
 
 # Required for crates.io publishing, but it's only used in tests
 zebra-utils = { path = "../zebra-utils", version = "1.0.0-beta.46", optional = true }

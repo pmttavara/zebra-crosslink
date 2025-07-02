@@ -2,36 +2,18 @@ syntax = "proto3";
 
 package mal_schema;
 
-message Address {
-    bytes value = 1;
-}
-
 message Value {
     optional bytes value = 1;
-    optional bytes extensions = 2;
 }
 
 message ValueId {
     optional bytes value = 1;
 }
 
-enum VoteType {
-   PREVOTE = 0;
-   PRECOMMIT = 1;
-}
-
-message Vote {
-    VoteType vote_type = 1;
-    uint64 height = 2;
-    uint32 round = 3;
-    ValueId value = 4;
-    Address validator_address = 5;
-}
-
 message SignedMessage {
     oneof message {
         Proposal proposal = 1;
-        Vote vote = 2;
+        bytes vote = 2;
     }
     Signature signature = 3;
 }
@@ -41,39 +23,20 @@ message Proposal {
     uint32 round = 2;
     Value value = 3;
     optional uint32 pol_round = 4;
-    Address validator_address = 5;
+    bytes validator_address = 5;
 }
 
 message Signature {
     bytes bytes = 1;
 }
 
-message StreamedProposalPart {
-    oneof part {
-        StreamedProposalInit init = 1;
-        StreamedProposalData data = 2;
-        StreamedProposalFin fin = 3;
-    }
-}
-
-message StreamedProposalInit {
+message StreamedProposal {
     uint64 height = 1;
     uint32 round = 2;
-    Address proposer = 4;
+    bytes proposer = 4;
     optional uint32 pol_round = 5;
-}
-
-message StreamedProposalData {
-    bytes data_bytes = 1;
-}
-
-message StreamedProposalFin {
-    Signature signature = 1;
-}
-
-message Extension {
-    bytes data = 1;
-    Signature signature = 2;
+    bytes data_bytes = 6;
+    Signature signature = 7;
 }
 
 message StreamMessage {

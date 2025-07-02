@@ -12,10 +12,14 @@ use std::task::{Context, Poll};
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
+use tracing::{error, info, warn};
+
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
+use crate::chain::BftBlock;
+use crate::mal_system::FatPointerToBftBlock;
 use crate::{
     tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
 };
@@ -118,6 +122,36 @@ pub(crate) type ReadStateServiceProcedure = Arc<
         + Sync,
 >;
 
+/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
+/// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
+pub(crate) type ForceFeedPoWBlockProcedure = Arc<
+    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
+/// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
+pub(crate) type ForceFeedPoSBlockProcedure = Arc<
+    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
+/// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
+#[derive(Clone)]
+pub struct TFLServiceCalls {
+    pub(crate) read_state: ReadStateServiceProcedure,
+    pub(crate) force_feed_pow: ForceFeedPoWBlockProcedure,
+    pub(crate) force_feed_pos: ForceFeedPoSBlockProcedure,
+}
+impl fmt::Debug for TFLServiceCalls {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TFLServiceCalls")
+    }
+}
+
 /// Spawn a Trailing Finality Service that uses the provided
 /// closures to call out to other services.
 ///
@@ -126,41 +160,55 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
     read_state_service_call: ReadStateServiceProcedure,
+    force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
+    let internal = Arc::new(Mutex::new(TFLServiceInternal {
+        latest_final_block: None,
+        tfl_is_activated: false,
+        stakers: Vec::new(),
+        final_change_tx: broadcast::channel(16).0,
+        bft_msg_flags: 0,
+        bft_blocks: Vec::new(),
+        fat_pointer_to_tip: FatPointerToBftBlock::null(),
+        proposed_bft_string: None,
+        malachite_watchdog: tokio::time::Instant::now(),
+    }));
+
+    let handle_mtx = Arc::new(std::sync::Mutex::new(None));
+
+    let handle_mtx2 = handle_mtx.clone();
+    let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
+        let handle = handle_mtx2.lock().unwrap().clone().unwrap();
+        Box::pin(async move {
+            if crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
+                .await
+            {
+                info!("Successfully force-fed BFT block");
+            } else {
+                error!("Failed to force-feed BFT block");
+            }
+        })
+    });
+
     let handle1 = TFLServiceHandle {
-        internal: Arc::new(Mutex::new(TFLServiceInternal {
-            latest_final_block: None,
-            tfl_is_activated: false,
-            stakers: Vec::new(),
-            final_change_tx: broadcast::channel(16).0,
-            bft_msg_flags: 0,
-            bft_blocks: Vec::new(),
-            proposed_bft_string: None,
-        })),
+        internal,
         call: TFLServiceCalls {
             read_state: read_state_service_call,
+            force_feed_pow: force_feed_pow_call,
+            force_feed_pos,
         },
         config,
     };
+
+    *handle_mtx.lock().unwrap() = Some(handle1.clone());
+
     let handle2 = handle1.clone();
 
     (
         handle1,
         tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
     )
-}
-
-/// `TFLServiceCalls` encapsulates the service calls that this service needs to make to other services.
-/// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
-#[derive(Clone)]
-pub struct TFLServiceCalls {
-    pub(crate) read_state: ReadStateServiceProcedure,
-}
-impl fmt::Debug for TFLServiceCalls {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TFLServiceCalls")
-    }
 }
 
 /// A wrapper around the `TFLServiceInternal` and `TFLServiceCalls` types, used to manage
@@ -193,17 +241,24 @@ mod tests {
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
             bft_blocks: Vec::new(),
+            fat_pointer_to_tip: FatPointerToBftBlock::null(),
             bft_msg_flags: 0,
             proposed_bft_string: None,
+            malachite_watchdog: tokio::time::Instant::now(),
         }));
 
         let read_state_service: ReadStateServiceProcedure =
             Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
+        let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
+        let force_feed_pos: ForceFeedPoSBlockProcedure =
+            Arc::new(|_block, _fat_pointer| Box::pin(async { () }));
 
         TFLServiceHandle {
             internal,
             call: TFLServiceCalls {
                 read_state: read_state_service,
+                force_feed_pow: force_feed_pow,
+                force_feed_pos: force_feed_pos,
             },
             config: crate::config::Config::default(),
         }

@@ -713,12 +713,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "block-buffer"
-version = "0.9.0"
+name = "blake3"
+version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4152116fd6e9dadb291ae18fc1ec3575ed6d84c29642d97890f4b4a3417297e4"
+checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
 dependencies = [
- "generic-array",
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
 ]
 
 [[package]]
@@ -1415,19 +1419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curve25519-dalek-ng"
-version = "4.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c359b7249347e46fb28804470d071c921156ad62b3eef5d34e2ba867533dec8"
-dependencies = [
- "byteorder",
- "digest 0.9.0",
- "rand_core 0.6.4",
- "subtle-ng",
- "zeroize",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1575,15 +1566,6 @@ dependencies = [
 
 [[package]]
 name = "digest"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3dd60d1080a57a05ab032377049e0591415d2b31afd7028356dbf3cc6dcb066"
-dependencies = [
- "generic-array",
-]
-
-[[package]]
-name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
@@ -1681,21 +1663,6 @@ dependencies = [
  "pkcs8",
  "serde",
  "signature",
-]
-
-[[package]]
-name = "ed25519-consensus"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c8465edc8ee7436ffea81d21a019b16676ee3db267aa8d5a8d729581ecf998b"
-dependencies = [
- "curve25519-dalek-ng",
- "hex",
- "rand_core 0.6.4",
- "serde",
- "sha2 0.9.9",
- "thiserror 1.0.69",
- "zeroize",
 ]
 
 [[package]]
@@ -3065,8 +3032,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-app"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "async-trait",
  "derive-where",
@@ -3091,8 +3058,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-app-channel"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bytes",
  "derive-where",
@@ -3107,16 +3074,16 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-codec"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bytes",
 ]
 
 [[package]]
 name = "informalsystems-malachitebft-config"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bytesize",
  "config",
@@ -3128,8 +3095,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-core-consensus"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "async-recursion",
  "derive-where",
@@ -3145,8 +3112,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-core-driver"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "derive-where",
  "informalsystems-malachitebft-core-state-machine",
@@ -3157,8 +3124,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-core-state-machine"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "derive-where",
  "displaydoc",
@@ -3167,8 +3134,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-core-types"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bytes",
  "derive-where",
@@ -3177,8 +3144,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-core-votekeeper"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "derive-where",
  "informalsystems-malachitebft-core-types",
@@ -3187,8 +3154,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-discovery"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "either",
  "informalsystems-malachitebft-metrics",
@@ -3201,8 +3168,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-engine"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -3227,8 +3194,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-metrics"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "informalsystems-malachitebft-core-state-machine",
  "prometheus-client",
@@ -3236,8 +3203,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-network"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bytes",
  "either",
@@ -3257,8 +3224,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-peer"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "bs58",
  "multihash",
@@ -3267,8 +3234,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-proto"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "prost",
  "prost-types",
@@ -3276,22 +3243,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "informalsystems-malachitebft-signing-ed25519"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
-dependencies = [
- "base64 0.22.1",
- "ed25519-consensus",
- "informalsystems-malachitebft-core-types",
- "rand 0.8.5",
- "serde",
- "signature",
-]
-
-[[package]]
 name = "informalsystems-malachitebft-sync"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3311,8 +3265,8 @@ dependencies = [
 
 [[package]]
 name = "informalsystems-malachitebft-wal"
-version = "0.0.1"
-source = "git+https://git@github.com/informalsystems/malachite.git#510e1e8d637e4c60278ab92e9d85fe8055fa2c78"
+version = "0.2.0"
+source = "git+https://github.com/ShieldedLabs/malachite.git?rev=4c2a9560ceb75868af23de388991a1eafc42ec9b#4c2a9560ceb75868af23de388991a1eafc42ec9b"
 dependencies = [
  "advisory-lock",
  "bytes",
@@ -3551,15 +3505,6 @@ dependencies = [
  "group",
  "rand_core 0.6.4",
  "subtle",
-]
-
-[[package]]
-name = "keccak"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
-dependencies = [
- "cpufeatures",
 ]
 
 [[package]]
@@ -6405,19 +6350,6 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.9.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d58a1e1bf39749807d89cf2d98ac2dfa0ff1cb3faa38fbb64dd88ac8013d800"
-dependencies = [
- "block-buffer 0.9.0",
- "cfg-if",
- "cpufeatures",
- "digest 0.9.0",
- "opaque-debug",
-]
-
-[[package]]
-name = "sha2"
 version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
@@ -6436,16 +6368,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest 0.11.0-pre.9",
-]
-
-[[package]]
-name = "sha3"
-version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
-dependencies = [
- "digest 0.10.7",
- "keccak",
 ]
 
 [[package]]
@@ -6712,12 +6634,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "subtle-ng"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "734676eb262c623cec13c3155096e08d1f8f29adce39ba17948b18dad1e54142"
 
 [[package]]
 name = "syn"
@@ -8785,10 +8701,13 @@ name = "zebra-crosslink"
 version = "1.0.0-beta.46"
 dependencies = [
  "async-trait",
+ "blake3",
+ "byteorder",
  "bytes",
  "chrono",
  "color-eyre",
  "derive-where",
+ "ed25519-zebra",
  "eyre",
  "futures",
  "hex",
@@ -8800,7 +8719,6 @@ dependencies = [
  "informalsystems-malachitebft-core-consensus",
  "informalsystems-malachitebft-core-types",
  "informalsystems-malachitebft-proto",
- "informalsystems-malachitebft-signing-ed25519",
  "informalsystems-malachitebft-sync",
  "libp2p-identity",
  "macroquad",
@@ -8814,7 +8732,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "sha3",
  "static_assertions",
  "strum",
  "strum_macros",
@@ -8831,20 +8748,10 @@ dependencies = [
  "tracing-futures",
  "tracing-subscriber",
  "zebra-chain",
- "zebra-crosslink-chain",
  "zebra-state",
  "zebra-test",
-]
-
-[[package]]
-name = "zebra-crosslink-chain"
-version = "0.1.0"
-dependencies = [
- "serde",
- "static_assertions",
- "thiserror 2.0.12",
- "tracing",
- "zebra-chain",
+ "zerocopy 0.8.25",
+ "zerocopy-derive 0.8.25",
 ]
 
 [[package]]
@@ -9197,7 +9104,6 @@ dependencies = [
  "zebra-chain",
  "zebra-consensus",
  "zebra-crosslink",
- "zebra-crosslink-chain",
  "zebra-grpc",
  "zebra-network",
  "zebra-node-services",

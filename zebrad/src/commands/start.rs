@@ -117,10 +117,36 @@ impl StartCmd {
         let is_regtest = config.network.network.is_regtest();
 
         let config = if is_regtest {
+            fn add_to_port(mut addr: std::net::SocketAddr, addend: u16) -> std::net::SocketAddr {
+                addr.set_port(addr.port() + addend);
+                addr
+            }
+            let nextest_slot: u16 = if let Ok(str) = std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
+                if let Ok(slot) = str.parse::<u16>() {
+                    slot
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+
             Arc::new(ZebradConfig {
                 mempool: mempool::Config {
                     debug_enable_at_height: Some(0),
                     ..config.mempool
+                },
+                network: zebra_network::config::Config {
+                    listen_addr: add_to_port(config.network.listen_addr.clone(), nextest_slot * 7),
+                    ..config.network.clone()
+                },
+                rpc: zebra_rpc::config::rpc::Config {
+                    listen_addr: config
+                        .rpc
+                        .listen_addr
+                        .clone()
+                        .map(|addr| add_to_port(addr, nextest_slot * 7)),
+                    ..config.rpc.clone()
                 },
                 ..Arc::unwrap_or_clone(config)
             })
@@ -244,6 +270,16 @@ impl StartCmd {
         // Create a channel to send mined blocks to the gossip task
         let submit_block_channel = SubmitBlockChannel::new();
 
+        let gbt_for_force_feeding_pow = Arc::new(
+            zebra_rpc::methods::types::get_block_template::GetBlockTemplateHandler::new(
+                &config.network.network.clone(),
+                config.mining.clone(),
+                block_verifier_router.clone(),
+                sync_status.clone(),
+                Some(submit_block_channel.sender()),
+            ),
+        );
+
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
             let read_only_state_service = read_only_state_service.clone();
@@ -258,6 +294,61 @@ impl StartCmd {
                             .unwrap()
                             .call(req)
                             .await
+                    })
+                }),
+                Arc::new(move |block| {
+                    let gbt = Arc::clone(&gbt_for_force_feeding_pow);
+                    Box::pin(async move {
+                        let mut block_verifier_router = gbt.block_verifier_router();
+
+                        let height = block
+                            .coinbase_height()
+                            // .ok_or_error(0, "coinbase height not found")?;
+                            .unwrap();
+                        let block_hash = block.hash();
+
+                        let block_verifier_router_response = block_verifier_router
+                            .ready()
+                            .await
+                            // .map_err(|error| ErrorObject::owned(0, error.to_string(), None::<()>))?
+                            .unwrap()
+                            .call(zebra_consensus::Request::Commit(block))
+                            .await;
+
+                        let chain_error = match block_verifier_router_response {
+                            // Currently, this match arm returns `null` (Accepted) for blocks committed
+                            // to any chain, but Accepted is only for blocks in the best chain.
+                            //
+                            // TODO (#5487):
+                            // - Inconclusive: check if the block is on a side-chain
+                            // The difference is important to miners, because they want to mine on the best chain.
+                            Ok(hash) => {
+                                tracing::info!(?hash, ?height, "submit block accepted");
+
+                                gbt.advertise_mined_block(hash, height)
+                                    // .map_error_with_prefix(0, "failed to send mined block")?;
+                                    .unwrap();
+
+                                // return Ok(submit_block::Response::Accepted);
+                            }
+
+                            // Turns BoxError into Result<VerifyChainError, BoxError>,
+                            // by downcasting from Any to VerifyChainError.
+                            Err(box_error) => {
+                                let error = box_error
+                                    .downcast::<zebra_consensus::RouterError>()
+                                    .map(|boxed_chain_error| *boxed_chain_error);
+
+                                tracing::error!(
+                                    ?error,
+                                    ?block_hash,
+                                    ?height,
+                                    "submit block failed verification"
+                                );
+
+                                // error
+                            }
+                        };
                     })
                 }),
                 config.crosslink.clone(),

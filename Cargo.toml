@@ -23,7 +23,6 @@ members = [
         "zebra-scan",
         "zebra-grpc",
         "zebra-crosslink",
-        "zebra-crosslink-chain",
         "tower-batch-control",
         "tower-fallback",
 ]
