@@ -594,18 +594,21 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     } else {
                         break;
                     };
-
                     i += 1;
-                    let file_loc = if proc.ends_with("___rust_try") {
-                        ""
-                    } else if let Some(val) = splits.get(i) {
-                        val.trim()
+
+                    let file_loc = if let Some(val) = splits.get(i) {
+                        let val = val.trim();
+                        if val.starts_with("at ") {
+                            i += 1;
+                            val
+                        } else {
+                            ""
+                        }
                     } else {
                         break;
                     };
 
-                    eprintln!("  {}{} {}", if i < 20 { " " } else { "" }, proc, file_loc);
-                    i += 1;
+                    eprintln!("  {}{}    {}", if i < 20 { " " } else { "" }, proc, file_loc);
                 }
                 if i == n {
                     eprintln!("...");
