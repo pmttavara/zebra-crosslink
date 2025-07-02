@@ -54,18 +54,40 @@ fn read_from_file() {
     test_start(TestInstrSrc::Path("../crosslink-test-data/blocks.zeccltf".into()));
 }
 
-const REGTEST_BLOCK_BYTES: [&[u8]; 6] = [
+const REGTEST_BLOCK_BYTES: [&[u8]; 23] = [
     include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"), // fork
     include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),
-    include_bytes!("../../crosslink-test-data/test_pow_block_5.bin"),
     include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),
-    // include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_7.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_9.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_10.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_12.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_13.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_14.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_15.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_17.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_18.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_19.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_21.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_22.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_23.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_25.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_26.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_28.bin"),
+    include_bytes!("../../crosslink-test-data/test_pow_block_29.bin"),
 ];
 
-const REGTEST_POS_BLOCK_BYTES: [&[u8]; 1] = [
+const REGTEST_POS_BLOCK_BYTES: [&[u8]; 7] = [
     include_bytes!("../../crosslink-test-data/test_pos_block_5.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_8.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_11.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_16.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_20.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_24.bin"),
+    include_bytes!("../../crosslink-test-data/test_pos_block_27.bin"),
 ];
 
 
@@ -91,7 +113,7 @@ fn crosslink_expect_first_pow_to_not_be_a_no_op() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2 as u64, 0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2_u64, 0]);
 
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
@@ -102,9 +124,9 @@ fn crosslink_push_example_pow_chain_only() {
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
@@ -116,9 +138,9 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
@@ -129,13 +151,13 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2+i as u64, 0]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [(2+i - (i >= 3) as usize) as u64, 0]);
     }
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
+        tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1-1+REGTEST_BLOCK_BYTES.len() as u64, 0]);
     }
 
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
@@ -162,6 +184,22 @@ fn crosslink_expect_pos_height_after_push() {
         tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[i]);
         tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1+i) as u64, 0]);
     }
+
+    test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
+}
+
+#[test]
+fn crosslink_expect_pos_out_of_order() {
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    for i in 0..5 {
+        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+    }
+
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[2]);
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[1]);
+    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [2, 0]);
 
     test_start(TestInstrSrc::Bytes(tf.write_to_bytes()));
 }
