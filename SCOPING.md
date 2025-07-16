@@ -1,13 +1,15 @@
-Scoping for Shielded Labs's first deployment of Crosslink
+Scope for Crosslink
 ===
+
+# What is Shielded Labs's first deployment of Crosslink actually required to do?
 
 # Rationale
 
 ## Why add Proof-of-Stake?
 
 * Staking ZEC replaces sell pressure from mining pools with buy pressure from finalizers. Reducing supply and increasing demand can potentially put upward pressure on the price of ZEC. This is good because the price of ZEC is the fuel for the mission and attracts users.
-* Proof-of-Stake adds economic finality, which protects users from being robbed, reduces and unifies [deposit times at centralized exchanges](https://zechub.wiki/using-zcash/custodial-exchanges) and other services and improves the safety and efficiency of bridges.
-* Proof-of-Stake provides finality more efficiently than Proof-of-Work – at a lower cost in terms of both economics and energy usage. This makes Zcash both more secure (provide better security for the same cost) and more sustainable (provide security long-term even as the rate of issuance shrinks).
+* Proof-of-Stake adds assured finality, which protects users from being robbed, improves the safety and efficiency of bridges, and enables centralized exchanges and other services to reduce and unify [deposit times](https://zechub.wiki/using-zcash/custodial-exchanges).
+* Proof-of-Stake provides finality more efficiently than Proof-of-Work – at a lower cost in terms of both economics and energy usage. This makes Zcash both more secure (provide better security for the same cost) and more sustainable (provide security long-term even if the rate of issuance shrinks).
 * Staking allows a larger number of users to participate actively in the network than mining does, and to become direct recipients of newly created ZEC from the blockchain. This increases the size and decentralization of the network of users and stakeholders.
 * About the economic disadvantage of a smaller miner/finalizer/delegator competing with a larger operation:
   * In Proof-of-Work, smaller miners have a substantial economic disadvantage compared to larger mining operations.
