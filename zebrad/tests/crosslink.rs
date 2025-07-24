@@ -4,9 +4,13 @@
 
 use std::time::Duration;
 
+use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
+use zebra_chain::parameters::Network;
 use zebra_chain::serialization::*;
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
+use zebrad::application::CROSSLINK_TEST_CONFIG_OVERRIDE;
+use zebrad::config::ZebradConfig;
 use zebrad::prelude::Application;
 
 macro_rules! function_name {
@@ -31,6 +35,13 @@ pub fn set_test_name(name: &'static str) {
 pub fn test_start() {
     // init globals
     {
+        *CROSSLINK_TEST_CONFIG_OVERRIDE.lock().unwrap() = {
+            let mut base = ZebradConfig::default();
+            base.network.network = Network::new_regtest(ConfiguredActivationHeights::default());
+            base.state.ephemeral = true;
+
+            Some(std::sync::Arc::new(base))
+        };
         *zebra_crosslink::TEST_MODE.lock().unwrap() = true;
         *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() = || {
             // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);

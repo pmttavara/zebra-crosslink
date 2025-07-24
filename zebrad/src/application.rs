@@ -12,6 +12,7 @@ use abscissa_core::{
     terminal::{component::Terminal, stderr, stdout, ColorChoice},
     Application, Component, Configurable, FrameworkError, Shutdown, StandardPaths,
 };
+use lazy_static::lazy_static;
 use semver::{BuildMetadata, Version};
 
 use tokio::sync::watch;
@@ -188,6 +189,9 @@ impl ZebradApp {
     }
 }
 
+pub static CROSSLINK_TEST_CONFIG_OVERRIDE: std::sync::Mutex<Option<Arc<ZebradConfig>>> =
+    std::sync::Mutex::new(None);
+
 impl Application for ZebradApp {
     /// Entrypoint command for this application.
     type Cmd = EntryPoint;
@@ -200,7 +204,12 @@ impl Application for ZebradApp {
 
     /// Accessor for application configuration.
     fn config(&self) -> Arc<ZebradConfig> {
-        self.config.read()
+        CROSSLINK_TEST_CONFIG_OVERRIDE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.config.read())
     }
 
     /// Borrow the application state immutably.
