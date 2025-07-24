@@ -205,7 +205,7 @@ impl TF {
         (v + align) & !align
     }
 
-    pub fn write<W: std::io::Write>(&self, writer: &mut W) {
+    pub fn write<W: std::io::Write>(&self, writer: &mut W) -> bool {
         let instrs_o_unaligned = size_of::<TFHdr>() + self.data.len();
         let instrs_o = Self::align_up(instrs_o_unaligned, align_of::<TFInstr>());
         let hdr = TFHdr {
@@ -230,11 +230,16 @@ impl TF {
         writer
             .write_all(self.instrs.as_bytes())
             .expect("writing shouldn't fail");
+
+        true
     }
 
-    pub fn write_to_file(&self, path: &std::path::Path) {
+    pub fn write_to_file(&self, path: &std::path::Path) -> bool {
         if let Ok(mut file) = std::fs::File::create(path) {
             self.write(&mut file)
+        }
+        else {
+            false
         }
     }
 
@@ -333,7 +338,8 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &Vec<u8>, ins
     for instr_i in 0..instrs.len() {
         let instr = &instrs[instr_i];
         info!(
-            "Loading instruction {} ({})",
+            "Loading instruction {}: {} ({})",
+            instr_i,
             TFInstr::str_from_kind(instr.kind),
             instr.kind
         );

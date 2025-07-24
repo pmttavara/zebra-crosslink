@@ -2,7 +2,10 @@
 
 #![cfg(test)]
 
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
 use zebra_chain::parameters::Network;
@@ -81,7 +84,7 @@ pub fn test_bytes(bytes: Vec<u8>) {
     test_start();
 }
 
-pub fn test_path(path: std::path::PathBuf) {
+pub fn test_path(path: PathBuf) {
     *zebra_crosslink::TEST_INSTR_PATH.lock().unwrap() = Some(path);
     test_start();
 }
@@ -252,6 +255,8 @@ fn crosslink_expect_pos_height_after_push() {
         tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1 + i) as u64, 0]);
     }
 
+    // let write_ok = tf.write_to_file(Path::new("crosslink_expect_pos_height_after_push.zeccltf"));
+    // assert!(write_ok);
     test_bytes(tf.write_to_bytes());
 }
 

@@ -23,6 +23,7 @@ use static_assertions::*;
 use std::{
     cmp::{max, min},
     collections::HashMap,
+    path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
 };
@@ -535,7 +536,7 @@ pub struct VizGlobals {
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
-static G_FORCE_BLOCKS: std::sync::Mutex<Vec<Arc<Block>>> = std::sync::Mutex::new(Vec::new());
+static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -605,11 +606,14 @@ pub async fn service_viz_requests(
         new_g.consumed = false;
 
         {
-            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
-            for block in force_feed_blocks.drain(..) {
-                (call.force_feed_pow)(block);
+            // TODO: is there a reason to not reuse the existing TEST_INSTRS global?
+            let mut lock = G_FORCE_INSTRS.lock();
+            let mut force_instrs: &mut (Vec<u8>, Vec<TFInstr>) = lock.as_mut().unwrap();
+            if !force_instrs.1.is_empty() {
+                test_format::read_instrs(tfl_handle.clone(), &force_instrs.0, &force_instrs.1).await;
             }
+            force_instrs.0 = Vec::new();
+            force_instrs.1 = Vec::new();
         }
 
         #[allow(clippy::never_loop)]
@@ -1855,6 +1859,7 @@ pub async fn viz_main(
     root_ui().push_skin(&skin);
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
+    let mut instr_path_str = "blocks.zeccltf".to_string();
     let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
@@ -3276,90 +3281,39 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    let path: std::path::PathBuf = "blocks.zeccltf".into();
-                    const NODE_LOAD_INSTRS: usize = 0;
-                    const NODE_LOAD_VIZ: usize = 1;
-                    const NODE_LOAD_ZEBRA: usize = 2;
+                    widgets::Editbox::new(hash!(), vec2(12. * ch_w, font_size))
+                        .multiline(false)
+                        .ui(ui, &mut instr_path_str);
+
+                    let path: PathBuf = instr_path_str.clone().into();
+                    const NODE_LOAD_ZEBRA: usize = 0;
+                    const NODE_LOAD_INSTRS: usize = 1;
+                    const NODE_LOAD_VIZ: usize = 2;
                     const NODE_LOAD_STRS: [&str; 3] = {
                         let mut strs = [""; 3];
+                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs[NODE_LOAD_INSTRS] = "edit";
                         strs[NODE_LOAD_VIZ] = "visualizer";
-                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs
                     };
                     widgets::ComboBox::new(hash!(), &NODE_LOAD_STRS)
                         .label("Load to")
                         .ui(ui, &mut config.node_load_kind);
 
+
                     if ui.button(None, "Load from serialization") {
-                        if let Ok((bytes, tf)) = TF::read_from_file(&path) {
-                            // TODO: this needs an API pass
-                            for instr_i in 0..tf.instrs.len() {
-                                let instr = &tf.instrs[instr_i];
-                                info!(
-                                    "Loading instruction {} ({})",
-                                    TFInstr::str_from_kind(instr.kind),
-                                    instr.kind
-                                );
-
-                                match tf_read_instr(&bytes, instr) {
-                                    Some(TestInstr::LoadPoW(block)) => {
-                                        let block: Arc<Block> = Arc::new(block);
-
-                                        // NOTE (perf): block.hash() immediately reserializes the block to
-                                        // hash the canonical form...
-
-                                        let height_hash = (
-                                            block
-                                                .coinbase_height()
-                                                .expect("Block should have a valid height"),
-                                            block.hash(),
-                                        );
-
-                                        info!(
-                                            "Successfully loaded block at height {:?}, hash {}",
-                                            height_hash.0, height_hash.1
-                                        );
-
-                                        match config.node_load_kind {
-                                            NODE_LOAD_VIZ => {
-                                                ctx.push_bc_block(&config, &block, &height_hash)
-                                            }
-                                            NODE_LOAD_ZEBRA => {
-                                                let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-                                                let mut force_feed_blocks: &mut Vec<Arc<Block>> =
-                                                    lock.as_mut();
-                                                force_feed_blocks.push(block);
-                                            }
-                                            _ | NODE_LOAD_INSTRS => {}
-                                        };
-                                    }
-
-                                    Some(TestInstr::LoadPoS(_)) => {
-                                        todo!("LOAD_POS");
-                                    }
-
-                                    Some(TestInstr::SetParams(params)) => {
-                                        debug_assert!(
-                                            instr_i == 0,
-                                            "should only be set at the beginning"
-                                        );
-                                        todo!("Actually set params");
-                                    }
-
-                                    Some(TestInstr::ExpectPoWChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    Some(TestInstr::ExpectPoSChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    None => {}
+                         match TF::read_from_file(&path) {
+                            Ok((bytes, tf)) => {
+                                info!("read {} bytes and {} instructions", bytes.len(), tf.instrs.len());
+                                if config.node_load_kind == NODE_LOAD_ZEBRA {
+                                    let mut lock = G_FORCE_INSTRS.lock();
+                                    **lock.as_mut().unwrap() = (bytes.clone(), tf.instrs.clone());
                                 }
+
+                                edit_tf = (bytes, tf.instrs);
                             }
 
-                            edit_tf = (bytes, tf.instrs);
+                            Err(err) => error!("{}", err),
                         }
                     }
 
