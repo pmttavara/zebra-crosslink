@@ -12,7 +12,6 @@ use abscissa_core::{
     terminal::{component::Terminal, stderr, stdout, ColorChoice},
     Application, Component, Configurable, FrameworkError, Shutdown, StandardPaths,
 };
-use lazy_static::lazy_static;
 use semver::{BuildMetadata, Version};
 
 use tokio::sync::watch;

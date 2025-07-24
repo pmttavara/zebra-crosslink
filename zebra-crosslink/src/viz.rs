@@ -2174,7 +2174,11 @@ pub async fn viz_main(
             }
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
-            let (scroll_x, scroll_y) = mouse_wheel();
+            let (scroll_x, scroll_y) = if mouse_is_over_ui {
+                (0.0,0.0)
+            } else {
+                mouse_wheel()
+            };
             // Potential per platform conditional compilation needed.
             ctx.screen_vel += vec2(8.0 * scroll_x, 8.0 * scroll_y);
 
@@ -2693,6 +2697,7 @@ pub async fn viz_main(
         }
 
         // calculate forces
+        // TODO: tiebreak nodes at the same height by timestamp and tiebreak those by array index
         let spring_stiffness = 160.;
         for node_ref in &on_screen_node_refs {
             let node_ref = *node_ref;
@@ -3281,7 +3286,7 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    widgets::Editbox::new(hash!(), vec2(12. * ch_w, font_size))
+                    widgets::Editbox::new(hash!(), vec2(28. * ch_w, font_size))
                         .multiline(false)
                         .ui(ui, &mut instr_path_str);
 
@@ -3341,16 +3346,10 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w)).ui(ui, |ui| {
+                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |ui| {
                         for instr_i in 0..edit_tf.1.len() {
                             let instr = &edit_tf.1[instr_i];
-
-                            match tf_read_instr(&edit_tf.0, instr) {
-                                Some(TestInstr::LoadPoW(block)) => {
-                                    ui.label(None, &format!("PoW block: {}", block.hash()));
-                                }
-                                _ => ui.label(None, TFInstr::str_from_kind(instr.kind)),
-                            }
+                            ui.label(None, &TFInstr::string_from_instr(&edit_tf.0, instr));
                         }
                     });
                 },
