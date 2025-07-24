@@ -605,19 +605,56 @@ pub async fn service_viz_requests(
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
+        // ALT: do 1 or the other of force/read, not both
+        // NOTE: we have to use force blocks, otherwise we miss side-chains
+        // TODO: try not to miss side-chains for normal reads
+        let mut height_hashes: Vec<(BlockHeight, BlockHash)> = Vec::new();
+        let mut pow_blocks: Vec<Option<Arc<Block>>> = Vec::new();
         {
             // TODO: is there a reason to not reuse the existing TEST_INSTRS global?
             let mut lock = G_FORCE_INSTRS.lock();
             let mut force_instrs: &mut (Vec<u8>, Vec<TFInstr>) = lock.as_mut().unwrap();
-            if !force_instrs.1.is_empty() {
-                test_format::read_instrs(tfl_handle.clone(), &force_instrs.0, &force_instrs.1).await;
+            let internal_handle = tfl_handle.clone();
+
+            for instr_i in 0..force_instrs.1.len() {
+                // mostly DUP of test_format::read_instrs
+                // ALT: add closure to read_instrs
+                let instr_val = &force_instrs.1[instr_i];
+                info!(
+                    "Loading instruction {}: {} ({})",
+                    instr_i,
+                    TFInstr::str_from_kind(instr_val.kind),
+                    instr_val.kind
+                );
+
+                if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
+                    // push to zebra
+                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_i).await;
+
+                    // push PoW to visualizer
+                    // NOTE: this has to be interleaved with pushes, otherwise some nodes seem to
+                    // disappear (as they're known to not be on the best chain?)
+                    if let TestInstr::LoadPoW(block) = instr {
+                        let hash = block.hash();
+                        info!("trying to push {:?}", hash);
+                        if let Some(h) = block_height_from_hash(&call, hash).await
+                        {
+                            info!("pushing {:?}", (h, hash));
+                            height_hashes.push((h, hash));
+                            pow_blocks.push(Some(Arc::new(block)));
+                        }
+                    }
+                } else {
+                    panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
+                }
             }
+
             force_instrs.0 = Vec::new();
             force_instrs.1 = Vec::new();
         }
 
         #[allow(clippy::never_loop)]
-        let (lo_height, bc_tip, hashes, blocks) = loop {
+        let (lo_height, bc_tip, hashes, seq_blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
             assert!(
                 lo <= hi || (lo >= 0 && hi < 0),
@@ -689,6 +726,18 @@ pub async fn service_viz_requests(
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
+        if hashes.len() != pow_blocks.len() {
+            // warn!("expected hashes & blocks to be parallel, actually have {} hashes, {} blocks", hashes.len(), pow_blocks.len());
+        }
+        for i in 0..hashes.len() {
+            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
+        }
+        for i in 0..seq_blocks.len() {
+            pow_blocks.push(seq_blocks[i].clone());
+        }
+
+
+        // BFT /////////////////////////////////////////////////////////////////////////
         let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
@@ -721,16 +770,11 @@ pub async fn service_viz_requests(
             )
         };
 
-        let mut height_hashes = Vec::with_capacity(hashes.len());
-        for i in 0..hashes.len() {
-            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
-        }
-
         let new_state = VizState {
             latest_final_block: tfl_final_block_height_hash(&tfl_handle).await,
             bc_tip,
             height_hashes,
-            blocks,
+            blocks: pow_blocks,
             internal_proposed_bft_string,
             bft_msg_flags,
             bft_blocks,

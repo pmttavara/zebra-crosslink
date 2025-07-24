@@ -193,7 +193,7 @@ pub enum InvalidBftBlock {
 /// This is provided as a trait so that downstream users can define or plug in their own alternative parameters.
 ///
 /// Ref: [Zcash Trailing Finality Layer §3.3.3 Parameters](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#parameters)
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ZcashCrosslinkParameters {
     /// The best-chain confirmation depth, `σ`
     ///

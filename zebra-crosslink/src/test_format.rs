@@ -324,6 +324,7 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum TestInstr {
     LoadPoW(Block),
     LoadPoS((BftBlock, FatPointerToBftBlock2)),
@@ -332,60 +333,64 @@ pub(crate) enum TestInstr {
     ExpectPoSChainLength(u64),
 }
 
-pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &Vec<u8>, instrs: &Vec<TFInstr>) {
-    let call = internal_handle.call.clone();
+pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8], instr: TestInstr, instr_i: usize) {
+    match instr {
+        TestInstr::LoadPoW(block) => {
+            // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
+            // info!("writing binary at {}", path);
+            // let mut file = std::fs::File::create(&path).expect("valid file");
+            // file.write_all(instr.data_slice(bytes));
 
+            (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+        }
+
+        TestInstr::LoadPoS((block, fat_ptr)) => {
+            // let path = format!("../crosslink-test-data/test_pos_block_{}.bin", instr_i);
+            // info!("writing binary at {}", path);
+            // let mut file = std::fs::File::create(&path).expect("valid file");
+            // file.write_all(instr.data_slice(bytes)).expect("write success");
+
+            (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+        }
+
+        TestInstr::SetParams(_) => {
+            debug_assert!(instr_i == 0, "should only be set at the beginning");
+            todo!("Params");
+        }
+
+        TestInstr::ExpectPoWChainLength(h) => {
+            if let ReadStateResponse::Tip(Some((height, hash))) =
+                (internal_handle.call.read_state)(ReadStateRequest::Tip)
+                    .await
+                    .expect("can read tip")
+            {
+                assert_eq!(height.0 + 1, h); // TODO: maybe assert in test but recoverable error in-GUI
+            }
+        }
+
+        TestInstr::ExpectPoSChainLength(h) => {
+            assert_eq!(
+                h as usize,
+                internal_handle.internal.lock().await.bft_blocks.len()
+            );
+        }
+    }
+}
+
+pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs: &[TFInstr]) {
     for instr_i in 0..instrs.len() {
-        let instr = &instrs[instr_i];
+        let instr_val = &instrs[instr_i];
         info!(
             "Loading instruction {}: {} ({})",
             instr_i,
-            TFInstr::str_from_kind(instr.kind),
-            instr.kind
+            TFInstr::str_from_kind(instr_val.kind),
+            instr_val.kind
         );
 
-        match tf_read_instr(bytes, instr) {
-            Some(TestInstr::LoadPoW(block)) => {
-                // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
-                // info!("writing binary at {}", path);
-                // let mut file = std::fs::File::create(&path).expect("valid file");
-                // file.write_all(instr.data_slice(bytes));
-
-                (call.force_feed_pow)(Arc::new(block)).await;
-            }
-
-            Some(TestInstr::LoadPoS((block, fat_ptr))) => {
-                // let path = format!("../crosslink-test-data/test_pos_block_{}.bin", instr_i);
-                // info!("writing binary at {}", path);
-                // let mut file = std::fs::File::create(&path).expect("valid file");
-                // file.write_all(instr.data_slice(bytes)).expect("write success");
-
-                (call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            }
-
-            Some(TestInstr::SetParams(_)) => {
-                debug_assert!(instr_i == 0, "should only be set at the beginning");
-                todo!("Params");
-            }
-
-            Some(TestInstr::ExpectPoWChainLength(h)) => {
-                if let ReadStateResponse::Tip(Some((height, hash))) =
-                    (call.read_state)(ReadStateRequest::Tip)
-                        .await
-                        .expect("can read tip")
-                {
-                    assert_eq!(height.0 + 1, h);
-                }
-            }
-
-            Some(TestInstr::ExpectPoSChainLength(h)) => {
-                assert_eq!(
-                    h as usize,
-                    internal_handle.internal.lock().await.bft_blocks.len()
-                );
-            }
-
-            None => panic!("Failed to do {}", TFInstr::str_from_kind(instr.kind)),
+        if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
+            handle_instr(&internal_handle, bytes, instr, instr_i).await;
+        } else {
+            panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
         }
 
         *TEST_INSTR_I.lock().unwrap() = instr_i + 1; // accounts for end
