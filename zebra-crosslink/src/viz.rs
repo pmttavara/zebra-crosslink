@@ -2415,8 +2415,8 @@ pub async fn viz_main(
                                     break Vec::new();
                                 };
 
-                                break match node.header.clone() {
-                                    VizHeader::BlockHeader(hdr) => vec![hdr],
+                                break match &node.header {
+                                    VizHeader::BlockHeader(hdr) => vec![hdr.clone()],
                                     _ => Vec::new(),
                                 };
                             },
@@ -3051,7 +3051,7 @@ pub async fn viz_main(
                         VizHeader::BlockHeader(hdr) => {
                             let string = format!("PoS fp all: {}", hdr.fat_pointer_to_bft_block);
                             let mut iter = string.chars();
-                            
+
                             loop {
                                 let mut buf = String::new();
                                 let mut got = iter.next();
