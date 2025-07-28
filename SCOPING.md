@@ -1,20 +1,20 @@
-Scoping for Shielded Labs's first deployment of Crosslink
+Scope for Crosslink
 ===
 
-**Progress Tracking:** The top-level goals from this document are tracked as GitHub issues with the [Scoping](https://github.com/ShieldedLabs/crosslink-deployment/labels/Scoping) label.
+# What is Shielded Labs's first deployment of Crosslink actually required to do?
 
 # Rationale
 
 ## Why add Proof-of-Stake?
 
 * Staking ZEC replaces sell pressure from mining pools with buy pressure from finalizers. Reducing supply and increasing demand can potentially put upward pressure on the price of ZEC. This is good because the price of ZEC is the fuel for the mission and attracts users.
-* Proof-of-Stake adds economic finality, which protects users from being robbed, reduces and unifies [deposit times at centralized exchanges](https://zechub.wiki/using-zcash/custodial-exchanges) and other services and improves the safety and efficiency of bridges.
-* Proof-of-Stake provides finality more efficiently than Proof-of-Work – at a lower cost in terms of both economics and energy usage. This makes Zcash both more secure (provide better security for the same cost) and more sustainable (provide security long-term even as the rate of issuance shrinks).
+* Proof-of-Stake adds assured finality, which protects users from being robbed, improves the safety and efficiency of bridges, and enables centralized exchanges and other services to reduce and unify [deposit times](https://zechub.wiki/using-zcash/custodial-exchanges).
+* Proof-of-Stake provides finality more efficiently than Proof-of-Work – at a lower cost in terms of both economics and energy usage. This makes Zcash both more secure (provide better security for the same cost) and more sustainable (provide security long-term even if the rate of issuance shrinks).
 * Staking allows a larger number of users to participate actively in the network than mining does, and to become direct recipients of newly created ZEC from the blockchain. This increases the size and decentralization of the network of users and stakeholders.
 * About the economic disadvantage of a smaller miner/finalizer/delegator competing with a larger operation:
   * In Proof-of-Work, smaller miners have a substantial economic disadvantage compared to larger mining operations.
   * In Proof-of-Stake, smaller finalizers have an economic disadvantage compared to larger finalizer services, but the disadvantage is not as pronounced as in Proof-of-Work mining.
-  * In Proof-of-Stake, smaller delegators compete on a level playing field with larger delegators, earning roughly the same reward with roughly the same risk. (Note that delegators get less reward than finalizer.)
+  * In Proof-of-Stake, smaller delegators compete on a level playing field with larger delegators, earning roughly the same reward with roughly the same risk. (Note that delegators get less reward than finalizers.)
 
 ## Why use a Hybrid Proof-of-Stake plus Proof-of-Work system?
 
@@ -27,29 +27,27 @@ Scoping for Shielded Labs's first deployment of Crosslink
 UX goals
 ---
 
-This list of [UX Goals](https://github.com/ShieldedLabs/crosslink-deployment/labels/UX%20Goal) is tracked on GitHub.
+This list of [UX Goals](https://github.com/ShieldedLabs/zebra-crosslink/labels/UX%20Goal) is tracked on GitHub.
 
-* [GH #10](https://github.com/ShieldedLabs/crosslink-deployment/issues/10): Users justifiedly feel safe about the finality of their incoming Zcash transactions.
-* [GH #11](https://github.com/ShieldedLabs/crosslink-deployment/issues/11): Services are willing to rely on incoming Zcash transaction finality. E.g. Coinbase re-enables market orders and reduces required confirmations to a nice small number like 10. All or most services rely on the same canonical (protocol-provided) finality instead of enforcing [their own additional delays or conditions](https://zechub.wiki/using-zcash/custodial-exchanges), and so the user experience is that transaction finality is predictable and recognizable across services.
-* [GH #14](https://github.com/ShieldedLabs/crosslink-deployment/issues/14): Other services that require finality, such as cross-chain bridges, are willing to rely on Zcash’s finality.
-* [GH #15](https://github.com/ShieldedLabs/crosslink-deployment/issues/15): Casual users (who understand little about crypto and do not use specialized tools such as a Linux user interface) delegate ZEC and get rewards from their mobile wallet. They have to learn a minimal set of new concepts in order to do this.
-* [GH #16](https://github.com/ShieldedLabs/crosslink-deployment/issues/16): Users run finalizers and get rewards. (It is okay if finalizers operators have to understand a lot and can use specialized tools).
+* [GH #132](https://github.com/ShieldedLabs/zebra-crosslink/issues/132): Users justifiedly feel safe about the finality of their incoming Zcash transactions.
+* [GH #131](https://github.com/ShieldedLabs/zebra-crosslink/issues/131): CEXes are willing to rely on incoming Zcash transaction finality. E.g. Coinbase re-enables market orders and reduces required confirmations to a nice small number like 10. All or most services rely on the same canonical (protocol-provided) finality instead of enforcing [their own additional delays or conditions](https://zechub.wiki/using-zcash/custodial-exchanges), and so the user experience is that transaction finality is predictable and recognizable across services.
+* [GH #128](https://github.com/ShieldedLabs/zebra-crosslink/issues/128): Other services that require finality, such as cross-chain bridges, are willing to rely on Zcash’s finality.
+* [GH #127](https://github.com/ShieldedLabs/zebra-crosslink/issues/127): Casual users (who understand little about crypto and do not use specialized tools such as a Linux user interface) delegate ZEC and get rewards from their mobile wallet. [GH #124](https://github.com/ShieldedLabs/zebra-crosslink/issues/124) They have to learn a minimal set of new concepts in order to do this.
+* [GH #126](https://github.com/ShieldedLabs/zebra-crosslink/issues/126) Users (who have to understand a lot and can use specialized tools) run finalizers and get rewards.
 
 _Shielded Labs’s First Deployment of Crosslink is not done until substantial numbers of real users are actually gaining these five benefits._
 
 Deployment Goals
 ---
 
-This list of [Deployment Goals](https://github.com/ShieldedLabs/crosslink-deployment/labels/Deployment%20Goals) is tracked on GitHub.
+This list of [Deployment Goals](https://github.com/ShieldedLabs/zebra-crosslink/labels/Deployment%20Goals) is tracked on GitHub.
 
-* [GH #18](https://github.com/ShieldedLabs/crosslink-deployment/issues/18): Zcash transactions come with a kind of finality which protects the users as much as possible against all possible attacks, and is sufficient for services such as cross-chain bridges and centralized exchanges.
-* [GH #19](https://github.com/ShieldedLabs/crosslink-deployment/issues/19): Users can delegate their ZEC and earn rewards, safely and while needing to learn only the minimal number of new concepts.
+* [GH #125](https://github.com/ShieldedLabs/zebra-crosslink/issues/125): Zcash transactions come with a kind of finality which protects the users as much as possible against all possible attacks, and is sufficient for services such as cross-chain bridges and centralized exchanges.
+* [GH #124](https://github.com/ShieldedLabs/zebra-crosslink/issues/124): Users can delegate their ZEC and earn rewards, safely and while needing to learn only the minimal number of new concepts.
     * Delegating to a finalizer does not enable the finalizer to steal your funds.
     * Delegating to a finalizer does not leak information that links the user's action to other information about them, such as their IP address, their other ZEC holdings that they are choosing not to stake, or their previous or future transactions.
-* [GH #20](https://github.com/ShieldedLabs/crosslink-deployment/issues/20): The time-to-market and the risk of Shielded Labs's First Deployment of Crosslink is minimized: the benefits listed above start accruing to users as soon as safely possible.
-* [GH #21](https://github.com/ShieldedLabs/crosslink-deployment/issues/21): Activating Crosslink on Zcash mainnet retains as much as possible of Zcash users' safety, security, privacy, and availability guarantees.
-* This is neutral with regard to Zcash governance -- it doesn't change anything about Zcash governance.
-* This does not change the emissions schedule -- how much total ZEC is in circulation at any given point in time in the future -- and in particular it does not change the eventual 21 million ZEC supply cap.
+* [GH #123](https://github.com/ShieldedLabs/zebra-crosslink/issues/123): The time-to-market and the risk of Shielded Labs's First Deployment of Crosslink is minimized: the benefits listed above start accruing to users as soon as safely possible.
+* [GH #122](https://github.com/ShieldedLabs/zebra-crosslink/issues/122): Activating Crosslink on Zcash mainnet retains as much as possible of Zcash users' safety, security, privacy, and availability guarantees.
 
 Trade-offs
 ---
@@ -64,7 +62,7 @@ Non-Goals
 ---
 
 * The consensus mechanism is needed only to prevent double-spending/multi-spending/rollback attacks. It is not needed for censorship-resistance, since that is provided by end-to-end encryption, and it is not needed for counterfeiting-resistance, since that is provided by two layers of defense: proofs and turnstiles. So censorship-resistance and counterfeiting-resistance are non-goals for (at least) the first deployment of Crosslink.
+* This is neutral with regard to Zcash governance -- it doesn't change anything about Zcash governance.
+* This does not change the emissions schedule -- how much total ZEC is in circulation at any given point in time in the future -- and in particular it does not change the eventual 21 million ZEC supply cap.
 
-See also [Technical Requirements](https://docs.google.com/document/d/1YXalTGoezGH8GS1dknO8aK6eBFRq_Pq8LvDeho1KVZ8/edit?usp=sharing).
-
-[For a much more detailed and "living/work-in-progress" analysis of possible requirements, goals, and trade-offs, see this google doc: https://docs.google.com/document/d/1GZYQgQdzL1-GNJLWmt5CbTFXo1nuufkL7-gg7az_M2Q/edit?tab=t.0 .]
+See also [Zebra Crosslink Implementation Requirements](https://docs.google.com/document/d/1YXalTGoezGH8GS1dknO8aK6eBFRq_Pq8LvDeho1KVZ8/edit?usp=sharing).

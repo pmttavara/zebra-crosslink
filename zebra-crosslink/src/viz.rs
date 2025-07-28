@@ -23,6 +23,7 @@ use static_assertions::*;
 use std::{
     cmp::{max, min},
     collections::HashMap,
+    path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
 };
@@ -535,7 +536,7 @@ pub struct VizGlobals {
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
-static G_FORCE_BLOCKS: std::sync::Mutex<Vec<Arc<Block>>> = std::sync::Mutex::new(Vec::new());
+static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -604,16 +605,56 @@ pub async fn service_viz_requests(
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
+        // ALT: do 1 or the other of force/read, not both
+        // NOTE: we have to use force blocks, otherwise we miss side-chains
+        // TODO: try not to miss side-chains for normal reads
+        let mut height_hashes: Vec<(BlockHeight, BlockHash)> = Vec::new();
+        let mut pow_blocks: Vec<Option<Arc<Block>>> = Vec::new();
         {
-            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
-            for block in force_feed_blocks.drain(..) {
-                (call.force_feed_pow)(block);
+            // TODO: is there a reason to not reuse the existing TEST_INSTRS global?
+            let mut lock = G_FORCE_INSTRS.lock();
+            let mut force_instrs: &mut (Vec<u8>, Vec<TFInstr>) = lock.as_mut().unwrap();
+            let internal_handle = tfl_handle.clone();
+
+            for instr_i in 0..force_instrs.1.len() {
+                // mostly DUP of test_format::read_instrs
+                // ALT: add closure to read_instrs
+                let instr_val = &force_instrs.1[instr_i];
+                info!(
+                    "Loading instruction {}: {} ({})",
+                    instr_i,
+                    TFInstr::str_from_kind(instr_val.kind),
+                    instr_val.kind
+                );
+
+                if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
+                    // push to zebra
+                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_i).await;
+
+                    // push PoW to visualizer
+                    // NOTE: this has to be interleaved with pushes, otherwise some nodes seem to
+                    // disappear (as they're known to not be on the best chain?)
+                    if let TestInstr::LoadPoW(block) = instr {
+                        let hash = block.hash();
+                        info!("trying to push {:?}", hash);
+                        if let Some(h) = block_height_from_hash(&call, hash).await
+                        {
+                            info!("pushing {:?}", (h, hash));
+                            height_hashes.push((h, hash));
+                            pow_blocks.push(Some(Arc::new(block)));
+                        }
+                    }
+                } else {
+                    panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
+                }
             }
+
+            force_instrs.0 = Vec::new();
+            force_instrs.1 = Vec::new();
         }
 
         #[allow(clippy::never_loop)]
-        let (lo_height, bc_tip, hashes, blocks) = loop {
+        let (lo_height, bc_tip, hashes, seq_blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
             assert!(
                 lo <= hi || (lo >= 0 && hi < 0),
@@ -685,6 +726,18 @@ pub async fn service_viz_requests(
             break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
         };
 
+        if hashes.len() != pow_blocks.len() {
+            // warn!("expected hashes & blocks to be parallel, actually have {} hashes, {} blocks", hashes.len(), pow_blocks.len());
+        }
+        for i in 0..hashes.len() {
+            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
+        }
+        for i in 0..seq_blocks.len() {
+            pow_blocks.push(seq_blocks[i].clone());
+        }
+
+
+        // BFT /////////////////////////////////////////////////////////////////////////
         let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
@@ -717,16 +770,11 @@ pub async fn service_viz_requests(
             )
         };
 
-        let mut height_hashes = Vec::with_capacity(hashes.len());
-        for i in 0..hashes.len() {
-            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
-        }
-
         let new_state = VizState {
             latest_final_block: tfl_final_block_height_hash(&tfl_handle).await,
             bc_tip,
             height_hashes,
-            blocks,
+            blocks: pow_blocks,
             internal_proposed_bft_string,
             bft_msg_flags,
             bft_blocks,
@@ -1855,6 +1903,7 @@ pub async fn viz_main(
     root_ui().push_skin(&skin);
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
+    let mut instr_path_str = "blocks.zeccltf".to_string();
     let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
@@ -2169,7 +2218,11 @@ pub async fn viz_main(
             }
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
-            let (scroll_x, scroll_y) = mouse_wheel();
+            let (scroll_x, scroll_y) = if mouse_is_over_ui {
+                (0.0,0.0)
+            } else {
+                mouse_wheel()
+            };
             // Potential per platform conditional compilation needed.
             ctx.screen_vel += vec2(8.0 * scroll_x, 8.0 * scroll_y);
 
@@ -2689,6 +2742,7 @@ pub async fn viz_main(
         }
 
         // calculate forces
+        // TODO: tiebreak nodes at the same height by timestamp and tiebreak those by array index
         let spring_stiffness = 160.;
         for node_ref in &on_screen_node_refs {
             let node_ref = *node_ref;
@@ -3293,90 +3347,39 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    let path: std::path::PathBuf = "blocks.zeccltf".into();
-                    const NODE_LOAD_INSTRS: usize = 0;
-                    const NODE_LOAD_VIZ: usize = 1;
-                    const NODE_LOAD_ZEBRA: usize = 2;
+                    widgets::Editbox::new(hash!(), vec2(28. * ch_w, font_size))
+                        .multiline(false)
+                        .ui(ui, &mut instr_path_str);
+
+                    let path: PathBuf = instr_path_str.clone().into();
+                    const NODE_LOAD_ZEBRA: usize = 0;
+                    const NODE_LOAD_INSTRS: usize = 1;
+                    const NODE_LOAD_VIZ: usize = 2;
                     const NODE_LOAD_STRS: [&str; 3] = {
                         let mut strs = [""; 3];
+                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs[NODE_LOAD_INSTRS] = "edit";
                         strs[NODE_LOAD_VIZ] = "visualizer";
-                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs
                     };
                     widgets::ComboBox::new(hash!(), &NODE_LOAD_STRS)
                         .label("Load to")
                         .ui(ui, &mut config.node_load_kind);
 
+
                     if ui.button(None, "Load from serialization") {
-                        if let Ok((bytes, tf)) = TF::read_from_file(&path) {
-                            // TODO: this needs an API pass
-                            for instr_i in 0..tf.instrs.len() {
-                                let instr = &tf.instrs[instr_i];
-                                info!(
-                                    "Loading instruction {} ({})",
-                                    TFInstr::str_from_kind(instr.kind),
-                                    instr.kind
-                                );
-
-                                match tf_read_instr(&bytes, instr) {
-                                    Some(TestInstr::LoadPoW(block)) => {
-                                        let block: Arc<Block> = Arc::new(block);
-
-                                        // NOTE (perf): block.hash() immediately reserializes the block to
-                                        // hash the canonical form...
-
-                                        let height_hash = (
-                                            block
-                                                .coinbase_height()
-                                                .expect("Block should have a valid height"),
-                                            block.hash(),
-                                        );
-
-                                        info!(
-                                            "Successfully loaded block at height {:?}, hash {}",
-                                            height_hash.0, height_hash.1
-                                        );
-
-                                        match config.node_load_kind {
-                                            NODE_LOAD_VIZ => {
-                                                ctx.push_bc_block(&config, &block, &height_hash)
-                                            }
-                                            NODE_LOAD_ZEBRA => {
-                                                let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-                                                let mut force_feed_blocks: &mut Vec<Arc<Block>> =
-                                                    lock.as_mut();
-                                                force_feed_blocks.push(block);
-                                            }
-                                            _ | NODE_LOAD_INSTRS => {}
-                                        };
-                                    }
-
-                                    Some(TestInstr::LoadPoS(_)) => {
-                                        todo!("LOAD_POS");
-                                    }
-
-                                    Some(TestInstr::SetParams(params)) => {
-                                        debug_assert!(
-                                            instr_i == 0,
-                                            "should only be set at the beginning"
-                                        );
-                                        todo!("Actually set params");
-                                    }
-
-                                    Some(TestInstr::ExpectPoWChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    Some(TestInstr::ExpectPoSChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    None => {}
+                         match TF::read_from_file(&path) {
+                            Ok((bytes, tf)) => {
+                                info!("read {} bytes and {} instructions", bytes.len(), tf.instrs.len());
+                                if config.node_load_kind == NODE_LOAD_ZEBRA {
+                                    let mut lock = G_FORCE_INSTRS.lock();
+                                    **lock.as_mut().unwrap() = (bytes.clone(), tf.instrs.clone());
                                 }
+
+                                edit_tf = (bytes, tf.instrs);
                             }
 
-                            edit_tf = (bytes, tf.instrs);
+                            Err(err) => error!("{}", err),
                         }
                     }
 
@@ -3404,16 +3407,10 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w)).ui(ui, |ui| {
+                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |ui| {
                         for instr_i in 0..edit_tf.1.len() {
                             let instr = &edit_tf.1[instr_i];
-
-                            match tf_read_instr(&edit_tf.0, instr) {
-                                Some(TestInstr::LoadPoW(block)) => {
-                                    ui.label(None, &format!("PoW block: {}", block.hash()));
-                                }
-                                _ => ui.label(None, TFInstr::str_from_kind(instr.kind)),
-                            }
+                            ui.label(None, &TFInstr::string_from_instr(&edit_tf.0, instr));
                         }
                     });
                 },
