@@ -425,12 +425,12 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
 pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs: &[TFInstr]) {
     for instr_i in 0..instrs.len() {
         let instr_val = &instrs[instr_i];
-        info!(
-            "Loading instruction {}: {} ({})",
-            instr_i,
-            TFInstr::str_from_kind(instr_val.kind),
-            instr_val.kind
-        );
+        // info!(
+        //     "Loading instruction {}: {} ({})",
+        //     instr_i,
+        //     TFInstr::str_from_kind(instr_val.kind),
+        //     instr_val.kind
+        // );
 
         if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
             handle_instr(&internal_handle, bytes, instr, instr_i).await;

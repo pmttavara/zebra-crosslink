@@ -366,31 +366,18 @@ fn crosslink_test_basic_finality() {
         // hashes.push()
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
 
-        // for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-        //     tf.push_instr_ex(
-        //         TFInstr::EXPECT_POW_BLOCK_FINALITY,
-        //         0,
-        //         &hashes[i2].0,
-        //         test_format::val_from_finality(if i2 <= i {
-        //             Some(TFLBlockFinality::NotYetFinalized)
-        //         } else {
-        //             None
-        //         })
-        //     );
-        // }
-    }
-
-    for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr_ex(
-            TFInstr::EXPECT_POW_BLOCK_FINALITY,
-            0,
-            &hashes[i2].0,
-            test_format::val_from_finality(if i2 != 2 {
-                Some(TFLBlockFinality::NotYetFinalized)
-            } else {
-                None
-            })
-        );
+        for i2 in 0..REGTEST_BLOCK_BYTES.len() {
+            tf.push_instr_ex(
+                TFInstr::EXPECT_POW_BLOCK_FINALITY,
+                0,
+                &hashes[i2].0,
+                test_format::val_from_finality(if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3){
+                    None
+                } else {
+                    Some(TFLBlockFinality::NotYetFinalized)
+                })
+            );
+        }
     }
 
     for i in 0..REGTEST_POS_BLOCK_BYTES.len() {
@@ -401,15 +388,16 @@ fn crosslink_test_basic_finality() {
                 TFInstr::EXPECT_POW_BLOCK_FINALITY,
                 0,
                 &hashes[i2].0,
-                test_format::val_from_finality(Some(if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
+                test_format::val_from_finality(
                     if i2 == 2 { // unpicked sidechain
-                        TFLBlockFinality::CantBeFinalized
+                                 // TFLBlockFinality::CantBeFinalized
+                        None
+                    } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
+                        Some(TFLBlockFinality::Finalized)
                     } else {
-                        TFLBlockFinality::Finalized
+                        Some(TFLBlockFinality::NotYetFinalized)
                     }
-                } else {
-                    TFLBlockFinality::NotYetFinalized
-                }))
+                )
             );
         }
     }

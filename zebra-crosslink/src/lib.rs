@@ -1030,11 +1030,12 @@ async fn tfl_block_finality_from_hash(internal_handle: TFLServiceHandle, hash: B
         if let Ok(ReadStateResponse::BlockHeader {
             header: block_hdr,
             height,
-            hash: mut check_hash,
+            hash: check_hash,
             ..
         }) = block_hdr.await
         {
             assert_eq!(check_hash, block_hdr.hash());
+            assert_eq!(check_hash, hash);
 
             if height > final_height {
                 Some(TFLBlockFinality::NotYetFinalized)
@@ -1042,64 +1043,25 @@ async fn tfl_block_finality_from_hash(internal_handle: TFLServiceHandle, hash: B
                 assert_eq!(height, final_height);
                 Some(TFLBlockFinality::Finalized)
             } else {
-                // NOTE: option not available because KnownBlock is Request::, not ReadRequest::
-                // (despite all the current values being read from ReadStateService...)
-                // let known_block = (call.read_state)(ReadStateRequest::KnownBlock(hash.into()));
-                // let known_block = known_block.await.map_misc_error();
-                //
-                // if let Ok(ReadStateResponse::KnownBlock(Some(known_block))) = known_block {
-                //     match known_block {
-                //         BestChain => Some(TFLBlockFinality::Finalized),
-                //         SideChain => Some(TFLBlockFinality::CantBeFinalized),
-                //         Queue     => { debug!("Block in queue below final height"); None },
-                //     }
-                // } else {
-                //     None
-                // }
-
-                // ALT: get by height, check hash match against known-best chain
-                loop {
-                    let hdrs = (call.read_state)(ReadStateRequest::FindBlockHeaders {
-                        known_blocks: vec![check_hash],
-                        stop: Some(final_hash),
-                    })
-                    .await;
-
-                    if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = hdrs {
-                        let hdr = &hdrs
-                            .last()
-                            .expect("This case should be handled above")
-                            .header;
-                        check_hash = hdr.hash();
-
-                        if check_hash == final_hash {
-                            // is in best chain
-                            break Some(TFLBlockFinality::Finalized);
+                // get the block at the given height from the best chain.
+                // If it matches this then our block is on the best chain under the finalization
+                // height & is thus finalized.
+                // Otherwise it can't be finalized.
+                match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
+                    Ok(ReadStateResponse::BlockHeader{ hash: hash_of_best_block_at_height, .. }) => {
+                        Some(if hash_of_best_block_at_height == hash {
+                            TFLBlockFinality::Finalized
                         } else {
-                            let check_height =
-                                block_height_from_hash(&call, check_hash).await;
-
-                            if let Some(check_height) = check_height {
-                                if check_height >= final_height {
-                                    // TODO: may not actually be possible to hit this without
-                                    // caching non-final blocks ourselves, given that most
-                                    // things get thrown away if not in the final chain.
-
-                                    // is not in best chain
-                                    break Some(TFLBlockFinality::CantBeFinalized);
-                                } else {
-                                    // need to look at next batch of block headers
-                                    assert!(hdrs.len() == (zebra_state::constants::MAX_FIND_BLOCK_HEADERS_RESULTS as usize));
-                                    continue;
-                                }
-                            }
-                        }
+                            TFLBlockFinality::CantBeFinalized
+                        })
                     }
 
-                    break None;
+                    Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
+                    _ => return Err(TFLServiceError::Misc("Invalid BlockHeader response type".to_string())),
                 }
             }
         } else {
+            // warn!("couldn't find PoW hash {}", hash);
             None
         }
     )
