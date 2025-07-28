@@ -95,13 +95,29 @@ pub struct Header {
 pub struct FatPointerToBftBlock {
     #[serde(with = "serde_big_array::BigArray")]
     pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
-    pub signatures: Vec<BftSignatureBytes>,
+    pub signatures: Vec<FatPointerSignature>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct BftSignatureBytes {
+pub struct FatPointerSignature {
+    pub public_key: [u8; 32],
     #[serde(with = "serde_big_array::BigArray")]
-    pub bytes: [u8; 32 + 64],
+    pub vote_signature: [u8; 64],
+}
+
+impl FatPointerSignature {
+    pub fn to_bytes(&self) -> [u8; 32 + 64] {
+        let mut buf = [0_u8; 32 + 64];
+        buf[0..32].copy_from_slice(&self.public_key);
+        buf[32..32 + 64].copy_from_slice(&self.vote_signature);
+        buf
+    }
+    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature {
+        Self {
+            public_key: bytes[0..32].try_into().unwrap(),
+            vote_signature: bytes[32..32 + 64].try_into().unwrap(),
+        }
+    }
 }
 
 impl FatPointerToBftBlock {
@@ -117,7 +133,7 @@ impl FatPointerToBftBlock {
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
         buf.extend_from_slice(&(self.signatures.len() as u16).to_le_bytes());
         for s in &self.signatures {
-            buf.extend_from_slice(&s.bytes);
+            buf.extend_from_slice(&s.to_bytes());
         }
         buf
     }
@@ -134,7 +150,7 @@ impl FatPointerToBftBlock {
         let rem = &bytes[76 - 32 + 2..];
         let signatures = rem
             .chunks_exact(32 + 64)
-            .map(|chunk| BftSignatureBytes { bytes: chunk.try_into().unwrap()})
+            .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap()))
             .collect();
 
         Some(Self {
@@ -143,19 +159,50 @@ impl FatPointerToBftBlock {
         })
     }
 
-    pub fn points_at_block_hash(&self) -> [u8; 32 + 64] {
+
+    pub fn points_at_block_hash(&self) -> [u8; 32] {
         self.vote_for_block_without_finalizer_public_key[0..32]
             .try_into()
             .unwrap()
     }
 }
 
+impl std::fmt::Display for FatPointerToBftBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{{hash:")?;
+        for b in &self.vote_for_block_without_finalizer_public_key[0..32] {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, " ovd:")?;
+        for b in &self.vote_for_block_without_finalizer_public_key[32..] {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, " signatures:[")?;
+        for (i, s) in self.signatures.iter().enumerate() {
+            write!(f, "{{pk:")?;
+            for b in s.public_key {
+                write!(f, "{:02x}", b)?;
+            }
+            write!(f, " sig:")?;
+            for b in s.vote_signature {
+                write!(f, "{:02x}", b)?;
+            }
+            write!(f, "}}")?;
+            if i + 1 < self.signatures.len() {
+                write!(f, " ")?;
+            }
+        }
+        write!(f, "]}}")?;
+        Ok(())
+    }
+}
+
 impl crate::serialization::ZcashSerialize for FatPointerToBftBlock {
-    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
+    fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
         writer.write_all(&self.vote_for_block_without_finalizer_public_key);
         writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
         for signature in &self.signatures {
-            writer.write_all(&signature.bytes);
+            writer.write_all(&signature.to_bytes());
         }
         Ok(())
     }
@@ -167,11 +214,11 @@ impl crate::serialization::ZcashDeserialize for FatPointerToBftBlock {
         reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
 
         let len = reader.read_u16::<LittleEndian>()?;
-        let mut signatures: Vec<BftSignatureBytes> = Vec::with_capacity(len.into());
+        let mut signatures: Vec<FatPointerSignature> = Vec::with_capacity(len.into());
         for _ in 0..len {
             let mut signature_bytes = [0u8; 32 + 64];
             reader.read_exact(&mut signature_bytes)?;
-            signatures.push(BftSignatureBytes { bytes: signature_bytes });
+            signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
         }
 
         Ok(FatPointerToBftBlock {

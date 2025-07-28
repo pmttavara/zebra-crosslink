@@ -245,7 +245,7 @@ pub struct VizState {
     /// Vector of all decided BFT blocks, indexed by height-1.
     pub bft_blocks: Vec<BftBlock>,
     /// Fat pointer to the BFT tip (all other fat pointers are available at height+1)
-    pub fat_pointer_to_bft_tip: FatPointerToBftBlock,
+    pub fat_pointer_to_bft_tip: FatPointerToBftBlock2,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -578,7 +578,7 @@ pub async fn service_viz_requests(
             internal_proposed_bft_string: None,
             bft_msg_flags: 0,
             bft_blocks: Vec::new(),
-            fat_pointer_to_bft_tip: FatPointerToBftBlock::null(),
+            fat_pointer_to_bft_tip: FatPointerToBftBlock2::null(),
         }),
 
         // NOTE: bitwise not of x (!x in rust) is the same as -1 - x
@@ -1375,7 +1375,7 @@ impl VizCtx {
 
                     hash: height_hash.1 .0,
                     height: height_hash.0 .0,
-                    header: *block.header,
+                    header: block.header.as_ref().clone(),
                     difficulty: Some(block.header.difficulty_threshold),
                     txs_n: block.transactions.len() as u32,
                     is_real: true,
@@ -2040,7 +2040,7 @@ pub async fn viz_main(
                         (i + 1) as u64,
                     ) {
                         let bft_parent =
-                            if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::null() {
+                            if bft_block.previous_block_fat_ptr == FatPointerToBftBlock2::null() {
                                 if i != 0 {
                                     error!(
                                         "block at height {} does not have a previous_block_hash",
@@ -2345,7 +2345,7 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_fat_ptr: FatPointerToBftBlock::null(),
+                            previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: loop {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -2362,7 +2362,7 @@ pub async fn viz_main(
                                     break Vec::new();
                                 };
 
-                                break match node.header {
+                                break match node.header.clone() {
                                     VizHeader::BlockHeader(hdr) => vec![hdr],
                                     _ => Vec::new(),
                                 };
@@ -2379,7 +2379,7 @@ pub async fn viz_main(
 
                                 bft_block: BftBlockAndFatPointerToIt {
                                     block: bft_block,
-                                    fat_ptr: FatPointerToBftBlock::null(),
+                                    fat_ptr: FatPointerToBftBlock2::null(),
                                 },
                                 text: node_str.clone(),
                                 height: ctx.bft_last_added.map_or(Some(0), |_| None),
@@ -2607,6 +2607,7 @@ pub async fn viz_main(
                             difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
                             nonce: zebra_chain::fmt::HexDebug([0; 32]),
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
+                            fat_pointer_to_bft_block: zebra_chain::block::FatPointerToBftBlock::null(),
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)
@@ -2616,7 +2617,7 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_fat_ptr: FatPointerToBftBlock::null(),
+                            previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
                         };
@@ -2624,7 +2625,7 @@ pub async fn viz_main(
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
                         let bft_block_and_ptr = BftBlockAndFatPointerToIt {
                             block: bft_block,
-                            fat_ptr: FatPointerToBftBlock::null(),
+                            fat_ptr: FatPointerToBftBlock2::null(),
                         };
                         (VizHeader::BftBlock(bft_block_and_ptr), id, None)
                     }
@@ -2993,7 +2994,23 @@ pub async fn viz_main(
 
                     match &click_node.header {
                         VizHeader::None => {}
-                        VizHeader::BlockHeader(hdr) => {}
+                        VizHeader::BlockHeader(hdr) => {
+                            let string = format!("PoS fp all: {}", hdr.fat_pointer_to_bft_block);
+                            let mut iter = string.chars();
+                            
+                            loop {
+                                let mut buf = String::new();
+                                let mut got = iter.next();
+                                if got.is_none() { break; }
+                                let mut count = 0;
+                                while count < 70 && got.is_some() {
+                                    buf.push_str(&got.unwrap().to_string());
+                                    got = iter.next();
+                                    count += 1;
+                                }
+                                ui.label(None, &buf);
+                            }
+                        }
                         VizHeader::BftBlock(bft_block) => {
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {

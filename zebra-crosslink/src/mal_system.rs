@@ -691,7 +691,7 @@ async fn malachite_system_main_loop(
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
 pub struct FatPointerToBftBlock2 {
     pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
-    pub signatures: Vec<FatPointerSignature>,
+    pub signatures: Vec<FatPointerSignature2>,
 }
 
 impl std::fmt::Display for FatPointerToBftBlock2 {
@@ -745,7 +745,7 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
                     let public_key: MalPublicKey2 = commit_signature.address;
                     let signature: [u8; 64] = commit_signature.signature;
 
-                    FatPointerSignature {
+                    FatPointerSignature2 {
                         public_key: public_key.0.into(),
                         vote_signature: signature,
                     }
@@ -785,7 +785,7 @@ impl FatPointerToBftBlock2 {
         let rem = &bytes[76 - 32 + 2..];
         let signatures = rem
             .chunks_exact(32 + 64)
-            .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap()))
+            .map(|chunk| FatPointerSignature2::from_bytes(chunk.try_into().unwrap()))
             .collect();
 
         Some(Self {
@@ -850,11 +850,11 @@ impl ZcashDeserialize for FatPointerToBftBlock2 {
         reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
 
         let len = reader.read_u16::<LittleEndian>()?;
-        let mut signatures: Vec<FatPointerSignature> = Vec::with_capacity(len.into());
+        let mut signatures: Vec<FatPointerSignature2> = Vec::with_capacity(len.into());
         for _ in 0..len {
             let mut signature_bytes = [0u8; 32 + 64];
             reader.read_exact(&mut signature_bytes)?;
-            signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
+            signatures.push(FatPointerSignature2::from_bytes(&signature_bytes));
         }
 
         Ok(FatPointerToBftBlock2 {
@@ -866,19 +866,19 @@ impl ZcashDeserialize for FatPointerToBftBlock2 {
 
 /// A vote signature for a block
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerSignature {
+pub struct FatPointerSignature2 {
     pub public_key: [u8; 32],
     pub vote_signature: [u8; 64],
 }
 
-impl FatPointerSignature {
+impl FatPointerSignature2 {
     pub fn to_bytes(&self) -> [u8; 32 + 64] {
         let mut buf = [0_u8; 32 + 64];
         buf[0..32].copy_from_slice(&self.public_key);
         buf[32..32 + 64].copy_from_slice(&self.vote_signature);
         buf
     }
-    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature {
+    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature2 {
         Self {
             public_key: bytes[0..32].try_into().unwrap(),
             vote_signature: bytes[32..32 + 64].try_into().unwrap(),
