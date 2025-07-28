@@ -11,6 +11,8 @@ use crate::{
     serialization::{TrustedPreallocate, MAX_PROTOCOL_MESSAGE_LEN},
     work::{difficulty::CompactDifficulty, equihash::Solution},
 };
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io;
 
 use super::{merkle, Commitment, CommitmentError, Hash, Height};
 
@@ -23,7 +25,7 @@ use proptest_derive::Arbitrary;
 /// backwards reference (previous header hash) present in the block
 /// header. Each block points backwards to its parent, all the way
 /// back to the genesis block (the first block in the blockchain).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Header {
     /// The block's version field. This is supposed to be `4`:
     ///
@@ -83,7 +85,102 @@ pub struct Header {
 
     /// The Equihash solution.
     pub solution: Solution,
+
+    /// Crosslink fat pointer to PoS block.
+    pub fat_pointer_to_bft_block: FatPointerToBftBlock,
 }
+
+/// A bundle of signed votes for a block
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FatPointerToBftBlock {
+    #[serde(with = "serde_big_array::BigArray")]
+    pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
+    pub signatures: Vec<BftSignatureBytes>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct BftSignatureBytes {
+    #[serde(with = "serde_big_array::BigArray")]
+    pub bytes: [u8; 32 + 64],
+}
+
+impl FatPointerToBftBlock {
+    pub fn null() -> FatPointerToBftBlock {
+        FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
+            signatures: Vec::new(),
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
+        buf.extend_from_slice(&(self.signatures.len() as u16).to_le_bytes());
+        for s in &self.signatures {
+            buf.extend_from_slice(&s.bytes);
+        }
+        buf
+    }
+    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
+        if bytes.len() < 76 - 32 + 2 {
+            return None;
+        }
+        let vote_for_block_without_finalizer_public_key = bytes[0..76 - 32].try_into().unwrap();
+        let len = u16::from_le_bytes(bytes[76 - 32..2].try_into().unwrap()) as usize;
+
+        if 76 - 32 + 2 + len * (32 + 64) > bytes.len() {
+            return None;
+        }
+        let rem = &bytes[76 - 32 + 2..];
+        let signatures = rem
+            .chunks_exact(32 + 64)
+            .map(|chunk| BftSignatureBytes { bytes: chunk.try_into().unwrap()})
+            .collect();
+
+        Some(Self {
+            vote_for_block_without_finalizer_public_key,
+            signatures,
+        })
+    }
+
+    pub fn points_at_block_hash(&self) -> [u8; 32 + 64] {
+        self.vote_for_block_without_finalizer_public_key[0..32]
+            .try_into()
+            .unwrap()
+    }
+}
+
+impl crate::serialization::ZcashSerialize for FatPointerToBftBlock {
+    fn zcash_serialize<W: std::io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        for signature in &self.signatures {
+            writer.write_all(&signature.bytes);
+        }
+        Ok(())
+    }
+}
+
+impl crate::serialization::ZcashDeserialize for FatPointerToBftBlock {
+    fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, crate::serialization::SerializationError> {
+        let mut vote_for_block_without_finalizer_public_key = [0u8; 76 - 32];
+        reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
+
+        let len = reader.read_u16::<LittleEndian>()?;
+        let mut signatures: Vec<BftSignatureBytes> = Vec::with_capacity(len.into());
+        for _ in 0..len {
+            let mut signature_bytes = [0u8; 32 + 64];
+            reader.read_exact(&mut signature_bytes)?;
+            signatures.push(BftSignatureBytes { bytes: signature_bytes });
+        }
+
+        Ok(FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key,
+            signatures,
+        })
+    }
+}
+
 
 /// TODO: Use this error as the source for zebra_consensus::error::BlockError::Time,
 /// and make `BlockError::Time` add additional context.

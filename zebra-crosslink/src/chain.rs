@@ -16,7 +16,7 @@ use zebra_chain::serialization::{
     ReadZcashExt, SerializationError, ZcashDeserialize, ZcashSerialize,
 };
 
-use crate::mal_system::FatPointerToBftBlock;
+use crate::mal_system::FatPointerToBftBlock2;
 
 /// The BFT block content for Crosslink
 ///
@@ -66,7 +66,7 @@ pub struct BftBlock {
     // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
     /// Hash of the previous BFT Block.
-    pub previous_block_fat_ptr: FatPointerToBftBlock,
+    pub previous_block_fat_ptr: FatPointerToBftBlock2,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
     /// The PoW Headers
@@ -93,7 +93,7 @@ impl ZcashDeserialize for BftBlock {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
-        let previous_block_fat_ptr = FatPointerToBftBlock::zcash_deserialize(&mut reader)?;
+        let previous_block_fat_ptr = FatPointerToBftBlock2::zcash_deserialize(&mut reader)?;
         let finalization_candidate_height = reader.read_u32::<LittleEndian>()?;
         let header_count = reader.read_u32::<LittleEndian>()?;
         if header_count > 2048 {
@@ -129,7 +129,7 @@ impl BftBlock {
     pub fn try_from(
         params: &ZcashCrosslinkParameters,
         height: u32,
-        previous_block_fat_ptr: FatPointerToBftBlock,
+        previous_block_fat_ptr: FatPointerToBftBlock2,
         finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftBlock> {
@@ -258,14 +258,14 @@ pub struct BftBlockAndFatPointerToIt {
     /// A BFT block
     pub block: BftBlock,
     /// The fat pointer to block, showing it has been signed
-    pub fat_ptr: FatPointerToBftBlock,
+    pub fat_ptr: FatPointerToBftBlock2,
 }
 
 impl ZcashDeserialize for BftBlockAndFatPointerToIt {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         Ok(BftBlockAndFatPointerToIt {
             block: BftBlock::zcash_deserialize(&mut reader)?,
-            fat_ptr: FatPointerToBftBlock::zcash_deserialize(&mut reader)?,
+            fat_ptr: FatPointerToBftBlock2::zcash_deserialize(&mut reader)?,
         })
     }
 }

@@ -30,7 +30,7 @@ use ::sapling_crypto::{
 
 use zebra_chain::{
     amount::{Amount, NegativeAllowed},
-    block::{self, merkle, Block, Header, Height},
+    block::{self, merkle, Block, FatPointerToBftBlock, Header, Height},
     fmt::HexDebug,
     parameters::Network,
     primitives::{redjubjub, Groth16Proof},
@@ -100,6 +100,7 @@ pub fn fake_block(
         difficulty_threshold: CompactDifficulty::default(),
         nonce: HexDebug::default(),
         solution: Solution::default(),
+        fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
     };
 
     let block = fake_compact_block(

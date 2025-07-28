@@ -19,7 +19,7 @@ use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 use crate::chain::BftBlock;
-use crate::mal_system::FatPointerToBftBlock;
+use crate::mal_system::FatPointerToBftBlock2;
 use crate::{
     tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
 };
@@ -133,7 +133,7 @@ pub(crate) type ForceFeedPoWBlockProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoSBlockProcedure = Arc<
-    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock2) -> Pin<Box<dyn Future<Output = ()> + Send>>
         + Send
         + Sync,
 >;
@@ -170,7 +170,7 @@ pub fn spawn_new_tfl_service(
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,
         bft_blocks: Vec::new(),
-        fat_pointer_to_tip: FatPointerToBftBlock::null(),
+        fat_pointer_to_tip: FatPointerToBftBlock2::null(),
         proposed_bft_string: None,
         malachite_watchdog: tokio::time::Instant::now(),
     }));
@@ -241,7 +241,7 @@ mod tests {
             stakers: Vec::new(),
             final_change_tx: broadcast::channel(16).0,
             bft_blocks: Vec::new(),
-            fat_pointer_to_tip: FatPointerToBftBlock::null(),
+            fat_pointer_to_tip: FatPointerToBftBlock2::null(),
             bft_msg_flags: 0,
             proposed_bft_string: None,
             malachite_watchdog: tokio::time::Instant::now(),

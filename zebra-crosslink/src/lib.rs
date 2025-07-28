@@ -119,7 +119,7 @@ pub(crate) struct TFLServiceInternal {
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
     bft_blocks: Vec<BftBlock>,
-    fat_pointer_to_tip: FatPointerToBftBlock,
+    fat_pointer_to_tip: FatPointerToBftBlock2,
     proposed_bft_string: Option<String>,
 
     malachite_watchdog: Instant,
@@ -432,7 +432,7 @@ async fn propose_new_bft_block(
 async fn new_decided_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
-    fat_pointer: &FatPointerToBftBlock,
+    fat_pointer: &FatPointerToBftBlock2,
 ) -> bool {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
@@ -466,7 +466,7 @@ async fn new_decided_bft_block_from_malachite(
         internal.bft_blocks.push(BftBlock {
             version: 0,
             height: i as u32,
-            previous_block_fat_ptr: FatPointerToBftBlock {
+            previous_block_fat_ptr: FatPointerToBftBlock2 {
                 vote_for_block_without_finalizer_public_key: [0u8; 76 - 32],
                 signatures: Vec::new(),
             },
@@ -538,9 +538,9 @@ async fn validate_bft_block_from_malachite_already_locked(
 
 fn fat_pointer_to_block_at_height(
     bft_blocks: &[BftBlock],
-    fat_pointer_to_tip: &FatPointerToBftBlock,
+    fat_pointer_to_tip: &FatPointerToBftBlock2,
     at_height: u64,
-) -> Option<FatPointerToBftBlock> {
+) -> Option<FatPointerToBftBlock2> {
     if at_height == 0 || at_height as usize - 1 >= bft_blocks.len() {
         return None;
     }
@@ -559,7 +559,7 @@ fn fat_pointer_to_block_at_height(
 async fn get_historical_bft_block_at_height(
     tfl_handle: &TFLServiceHandle,
     at_height: u64,
-) -> Option<(BftBlock, FatPointerToBftBlock)> {
+) -> Option<(BftBlock, FatPointerToBftBlock2)> {
     let mut internal = tfl_handle.internal.lock().await;
     if at_height == 0 || at_height as usize - 1 >= internal.bft_blocks.len() {
         return None;

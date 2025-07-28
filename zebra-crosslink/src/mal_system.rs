@@ -157,7 +157,7 @@ async fn malachite_system_main_loop(
     let my_public_key = (&my_private_key).into();
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
-    let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock)> = None;
+    let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock2)> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<
         tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
     > = None;
@@ -513,7 +513,7 @@ async fn malachite_system_main_loop(
                     assert_eq!(lock.round as i64, certificate.round.as_i64());
                     bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
-                    let fat_pointer = FatPointerToBftBlock::from(&certificate);
+                    let fat_pointer = FatPointerToBftBlock2::from(&certificate);
                     info!("Fat pointer to tip is now: {}", fat_pointer);
                     assert!(fat_pointer.validate_signatures());
                     assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
@@ -689,12 +689,12 @@ async fn malachite_system_main_loop(
 
 /// A bundle of signed votes for a block
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerToBftBlock {
+pub struct FatPointerToBftBlock2 {
     pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
     pub signatures: Vec<FatPointerSignature>,
 }
 
-impl std::fmt::Display for FatPointerToBftBlock {
+impl std::fmt::Display for FatPointerToBftBlock2 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{{hash:")?;
         for b in &self.vote_for_block_without_finalizer_public_key[0..32] {
@@ -724,8 +724,8 @@ impl std::fmt::Display for FatPointerToBftBlock {
     }
 }
 
-impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
-    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock {
+impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
+    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock2 {
         let vote_template = MalVote {
             validator_address: MalPublicKey2([0_u8; 32].into()),
             value: NilOrVal::Val(certificate.value_id), // previous_block_hash
@@ -736,7 +736,7 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
         let vote_for_block_without_finalizer_public_key: [u8; 76 - 32] =
             vote_template.to_bytes()[32..].try_into().unwrap();
 
-        FatPointerToBftBlock {
+        FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key,
             signatures: certificate
                 .commit_signatures
@@ -755,9 +755,9 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
     }
 }
 
-impl FatPointerToBftBlock {
-    pub fn null() -> FatPointerToBftBlock {
-        FatPointerToBftBlock {
+impl FatPointerToBftBlock2 {
+    pub fn null() -> FatPointerToBftBlock2 {
+        FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
             signatures: Vec::new(),
         }
@@ -772,7 +772,7 @@ impl FatPointerToBftBlock {
         }
         buf
     }
-    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
+    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock2> {
         if bytes.len() < 76 - 32 + 2 {
             return None;
         }
@@ -833,7 +833,7 @@ impl FatPointerToBftBlock {
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
-impl ZcashSerialize for FatPointerToBftBlock {
+impl ZcashSerialize for FatPointerToBftBlock2 {
     fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
         writer.write_all(&self.vote_for_block_without_finalizer_public_key);
         writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
@@ -844,7 +844,7 @@ impl ZcashSerialize for FatPointerToBftBlock {
     }
 }
 
-impl ZcashDeserialize for FatPointerToBftBlock {
+impl ZcashDeserialize for FatPointerToBftBlock2 {
     fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let mut vote_for_block_without_finalizer_public_key = [0u8; 76 - 32];
         reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
@@ -857,7 +857,7 @@ impl ZcashDeserialize for FatPointerToBftBlock {
             signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
         }
 
-        Ok(FatPointerToBftBlock {
+        Ok(FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key,
             signatures,
         })

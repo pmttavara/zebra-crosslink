@@ -37,7 +37,7 @@ pub use commitment::{
     ChainHistoryBlockTxAuthCommitmentHash, ChainHistoryMmrRootHash, Commitment, CommitmentError,
 };
 pub use hash::Hash;
-pub use header::{BlockTimeError, CountedHeader, Header, ZCASH_BLOCK_VERSION};
+pub use header::{BlockTimeError, CountedHeader, Header, ZCASH_BLOCK_VERSION, FatPointerToBftBlock};
 pub use height::{Height, HeightDiff, TryIntoHeight};
 pub use serialize::{SerializedBlock, MAX_BLOCK_BYTES};
 

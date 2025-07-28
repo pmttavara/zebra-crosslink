@@ -5,7 +5,7 @@
 use std::{num::ParseIntError, str::FromStr, sync::Arc};
 
 use zebra_chain::{
-    block::{self, Block, Height},
+    block::{self, Block, FatPointerToBftBlock, Height},
     parameters::NetworkUpgrade,
     serialization::{DateTime32, SerializationError, ZcashDeserializeInto},
     work::equihash::Solution,
@@ -232,6 +232,7 @@ pub fn proposal_block_from_template(
             difficulty_threshold,
             nonce: [0; 32].into(),
             solution: Solution::for_proposal(),
+            fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
         }),
         transactions,
     })

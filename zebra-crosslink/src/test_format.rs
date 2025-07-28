@@ -321,7 +321,7 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
 
 pub(crate) enum TestInstr {
     LoadPoW(Block),
-    LoadPoS((BftBlock, FatPointerToBftBlock)),
+    LoadPoS((BftBlock, FatPointerToBftBlock2)),
     SetParams(ZcashCrosslinkParameters),
     ExpectPoWChainLength(u32),
     ExpectPoSChainLength(u64),
