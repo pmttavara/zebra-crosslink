@@ -59,8 +59,9 @@ static TF_INSTR_KIND_STRS: [&str; TFInstr::COUNT as usize] = {
     strs[TFInstr::SET_PARAMS as usize] = "SET_PARAMS";
     strs[TFInstr::EXPECT_POW_CHAIN_LENGTH as usize] = "EXPECT_POW_CHAIN_LENGTH";
     strs[TFInstr::EXPECT_POS_CHAIN_LENGTH as usize] = "EXPECT_POS_CHAIN_LENGTH";
+    strs[TFInstr::EXPECT_POW_BLOCK_FINALITY as usize] = "EXPECT_POW_BLOCK_FINALITY";
 
-    const_assert!(TFInstr::COUNT == 5);
+    const_assert!(TFInstr::COUNT == 6);
     strs
 };
 
@@ -73,8 +74,9 @@ impl TFInstr {
     pub const SET_PARAMS: TFInstrKind = 2;
     pub const EXPECT_POW_CHAIN_LENGTH: TFInstrKind = 3;
     pub const EXPECT_POS_CHAIN_LENGTH: TFInstrKind = 4;
+    pub const EXPECT_POW_BLOCK_FINALITY: TFInstrKind = 5;
     // TODO: set roster via PoW
-    pub const COUNT: TFInstrKind = 5;
+    pub const COUNT: TFInstrKind = 6;
 
     pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
         let kind = kind as usize;
@@ -95,6 +97,7 @@ impl TFInstr {
             Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
             Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
+            Some(TestInstr::ExpectPoWBlockFinality(hash, f)) => str += &format!("{} => {:?}", hash, f),
             None => {}
         }
 
@@ -110,6 +113,33 @@ pub struct TF {
     pub instrs: Vec<TFInstr>,
     pub data: Vec<u8>,
 }
+
+pub const TF_NOT_YET_FINALIZED: u64 = 0;
+pub const TF_FINALIZED: u64 = 1;
+pub const TF_CANT_BE_FINALIZED: u64 = 2;
+
+pub fn finality_from_val(val: &[u64; 2]) -> Option<TFLBlockFinality> {
+    if (val[0] == 0) {
+        None
+    } else {
+        match (val[1]) {
+            test_format::TF_NOT_YET_FINALIZED => Some(TFLBlockFinality::NotYetFinalized),
+            test_format::TF_FINALIZED => Some(TFLBlockFinality::Finalized),
+            test_format::TF_CANT_BE_FINALIZED => Some(TFLBlockFinality::CantBeFinalized),
+            _ => panic!("unexpected finality value"),
+        }
+    }
+}
+
+pub fn val_from_finality(val: Option<TFLBlockFinality>) -> [u64; 2] {
+    match (val) {
+        Some(TFLBlockFinality::NotYetFinalized) => [1u64, test_format::TF_NOT_YET_FINALIZED],
+        Some(TFLBlockFinality::Finalized) => [1u64, test_format::TF_FINALIZED],
+        Some(TFLBlockFinality::CantBeFinalized) => [1u64, test_format::TF_CANT_BE_FINALIZED],
+        None => [0u64; 2]
+    }
+}
+
 
 impl TF {
     pub fn new(params: &ZcashCrosslinkParameters) -> TF {
@@ -291,7 +321,7 @@ impl TF {
 use crate::*;
 
 pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
-    const_assert!(TFInstr::COUNT == 5);
+    const_assert!(TFInstr::COUNT == 6);
     match instr.kind {
         TFInstr::LOAD_POW => {
             let block = Block::zcash_deserialize(instr.data_slice(bytes)).ok()?;
@@ -317,6 +347,13 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
         TFInstr::EXPECT_POS_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
 
+        TFInstr::EXPECT_POW_BLOCK_FINALITY => {
+            Some(TestInstr::ExpectPoWBlockFinality(
+                    BlockHash(instr.data_slice(bytes).try_into().expect("should be 32 bytes for hash")),
+                    finality_from_val(&instr.val)
+            ))
+        },
+
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
             None
@@ -331,6 +368,7 @@ pub(crate) enum TestInstr {
     SetParams(ZcashCrosslinkParameters),
     ExpectPoWChainLength(u32),
     ExpectPoSChainLength(u64),
+    ExpectPoWBlockFinality(BlockHash, Option<TFLBlockFinality>),
 }
 
 pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8], instr: TestInstr, instr_i: usize) {
@@ -372,6 +410,13 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             assert_eq!(
                 h as usize,
                 internal_handle.internal.lock().await.bft_blocks.len()
+            );
+        }
+
+        TestInstr::ExpectPoWBlockFinality(hash, f) => {
+            assert_eq!(
+                f,
+                tfl_block_finality_from_hash(internal_handle.clone(), hash).await.expect("valid response, even if None")
             );
         }
     }
@@ -432,7 +477,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     *TEST_INSTRS.lock().unwrap() = tf.instrs.clone();
 
-    read_instrs(internal_handle, &bytes, &tf.instrs);
+    read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
