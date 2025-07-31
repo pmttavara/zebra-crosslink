@@ -22,7 +22,7 @@ use macroquad::{
 use static_assertions::*;
 use std::{
     cmp::{max, min},
-    collections::HashMap,
+    collections::{ HashMap, HashSet },
     path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
@@ -236,8 +236,9 @@ pub struct VizState {
     /// Ascending in height from `lo_height`. Parallel to `blocks`.
     pub height_hashes: Vec<(BlockHeight, BlockHash)>,
     /// A range of blocks from the PoW chain, as requested by the visualizer.
-    /// Ascending in height from `lo_height`. Parallel to `hashes`.
+    /// Ascending in height from `lo_height`. Parallel to `height_hashes`.
     pub blocks: Vec<Option<Arc<Block>>>,
+    pub block_finalities: Vec<Option<TFLBlockFinality>>,
 
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
@@ -575,6 +576,7 @@ pub async fn service_viz_requests(
 
             height_hashes: Vec::new(),
             blocks: Vec::new(),
+            block_finalities: Vec::new(),
 
             internal_proposed_bft_string: None,
             bft_msg_flags: 0,
@@ -736,6 +738,11 @@ pub async fn service_viz_requests(
             pow_blocks.push(seq_blocks[i].clone());
         }
 
+        // TODO: smarter caching
+        let mut block_finalities = Vec::with_capacity(height_hashes.len());
+        for i in 0..height_hashes.len() {
+            block_finalities.push(tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1).await.unwrap_or(None));
+        }
 
         // BFT /////////////////////////////////////////////////////////////////////////
         let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
@@ -775,6 +782,7 @@ pub async fn service_viz_requests(
             bc_tip,
             height_hashes,
             blocks: pow_blocks,
+            block_finalities,
             internal_proposed_bft_string,
             bft_msg_flags,
             bft_blocks,
@@ -1947,6 +1955,7 @@ pub async fn viz_main(
     let mut bft_msg_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
+    let mut finalized_pow_blocks = HashSet::new();
     let mut edit_tf = (Vec::<u8>::new(), Vec::<TFInstr>::new());
 
     init_audio(&config).await;
@@ -2054,6 +2063,10 @@ pub async fn viz_main(
 
             if is_new_bc_hi {
                 for (i, height_hash) in g.state.height_hashes.iter().enumerate() {
+                    if let Some(TFLBlockFinality::Finalized) = g.state.block_finalities[i] {
+                        finalized_pow_blocks.insert(height_hash.1);
+                    }
+
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
@@ -2065,6 +2078,10 @@ pub async fn viz_main(
                 }
             } else {
                 for (i, height_hash) in g.state.height_hashes.iter().enumerate().rev() {
+                    if let Some(TFLBlockFinality::Finalized) = g.state.block_finalities[i] {
+                        finalized_pow_blocks.insert(height_hash.1);
+                    }
+
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
@@ -3132,13 +3149,14 @@ pub async fn viz_main(
                 // node is on screen
 
                 let is_final = if node.kind == NodeKind::BC {
-                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
-                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
-                    if let Some((final_h, _)) = g.state.latest_final_block {
-                        node.height <= final_h.0
-                    } else {
-                        false
-                    }
+                    finalized_pow_blocks.contains(&BlockHash(node.hash().unwrap()))
+                    // bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
+                    // bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
+                    // if let Some((final_h, _)) = g.state.latest_final_block {
+                    //     node.height <= final_h.0
+                    // } else {
+                    //     false
+                    // }
                 } else {
                     true
                 };

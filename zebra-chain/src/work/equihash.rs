@@ -196,7 +196,7 @@ impl Solution {
     ///
     /// # Panics
     ///
-    /// - If `header` contains an invalid difficulty threshold.  
+    /// - If `header` contains an invalid difficulty threshold.
     #[cfg(feature = "internal-miner")]
     fn difficulty_is_valid(header: &Header) -> bool {
         // Simplified from zebra_consensus::block::check::difficulty_is_valid().

@@ -1012,6 +1012,7 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
 }
 
 
+// TODO: from_height_hash
 async fn tfl_block_finality_from_hash(internal_handle: TFLServiceHandle, hash: BlockHash) -> Result<Option<TFLBlockFinality>, TFLServiceError>
 {
     let call = internal_handle.call.clone();
