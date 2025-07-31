@@ -379,7 +379,8 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes));
 
-            (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+            let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+            assert!(pow_force_feed_ok);
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -388,7 +389,8 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
-            (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+            let pos_force_feed_ok = (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+            assert!(pos_force_feed_ok);
         }
 
         TestInstr::SetParams(_) => {

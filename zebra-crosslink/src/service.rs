@@ -129,7 +129,7 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoWBlockProcedure = Arc<
-    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
@@ -137,7 +137,7 @@ pub(crate) type ForceFeedPoWBlockProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoSBlockProcedure = Arc<
-    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock2) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock2) -> Pin<Box<dyn Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
@@ -189,8 +189,10 @@ pub fn spawn_new_tfl_service(
                 .await
             {
                 info!("Successfully force-fed BFT block");
+                true
             } else {
                 error!("Failed to force-feed BFT block");
+                false
             }
         })
     });

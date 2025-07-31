@@ -315,7 +315,7 @@ impl StartCmd {
                             .call(zebra_consensus::Request::Commit(block))
                             .await;
 
-                        let chain_error = match block_verifier_router_response {
+                        match block_verifier_router_response {
                             // Currently, this match arm returns `null` (Accepted) for blocks committed
                             // to any chain, but Accepted is only for blocks in the best chain.
                             //
@@ -330,6 +330,7 @@ impl StartCmd {
                                     .unwrap();
 
                                 // return Ok(submit_block::Response::Accepted);
+                                true
                             }
 
                             // Turns BoxError into Result<VerifyChainError, BoxError>,
@@ -347,8 +348,9 @@ impl StartCmd {
                                 );
 
                                 // error
+                                false
                             }
-                        };
+                        }
                     })
                 }),
                 config.crosslink.clone(),
