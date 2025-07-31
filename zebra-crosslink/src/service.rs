@@ -60,6 +60,8 @@ pub enum TFLServiceRequest {
     Roster,
     /// Update the list of stakers
     UpdateStaker(TFLStaker),
+    /// Get the fat pointer to the BFT chain tip
+    FatPointerToBFTChainTip,
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -83,6 +85,8 @@ pub enum TFLServiceResponse {
     Roster(TFLRoster),
     /// Update the list of stakers
     UpdateStaker, // TODO: batch?
+    /// Fat pointer to the BFT chain tip
+    FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
 }
 
 /// Errors that can occur when interacting with the TFLService.

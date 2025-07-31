@@ -199,10 +199,10 @@ impl std::fmt::Display for FatPointerToBftBlock {
 
 impl crate::serialization::ZcashSerialize for FatPointerToBftBlock {
     fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
-        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
-        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key)?;
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16)?;
         for signature in &self.signatures {
-            writer.write_all(&signature.to_bytes());
+            writer.write_all(&signature.to_bytes())?;
         }
         Ok(())
     }

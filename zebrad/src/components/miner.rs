@@ -332,7 +332,7 @@ where
 
         // If the template has actually changed, send an updated template.
         template_sender.send_if_modified(|old_block| {
-            if old_block.as_ref().map(|b| *b.header) == Some(*block.header) {
+            if old_block.as_ref().map(|b| b.header.clone()) == Some(block.header.clone()) {
                 return false;
             }
             *old_block = Some(Arc::new(block));
@@ -441,7 +441,7 @@ where
 
         // Set up the cancellation conditions for the miner.
         let mut cancel_receiver = template_receiver.clone();
-        let old_header = *template.header;
+        let old_header = zebra_chain::block::Header::clone(&template.header);
         let cancel_fn = move || match cancel_receiver.has_changed() {
             // Guard against get_block_template() providing an identical header. This could happen
             // if something irrelevant to the block data changes, the time was within 1 second, or
@@ -452,7 +452,7 @@ where
                 // We only need to check header equality, because the block data is bound to the
                 // header.
                 if has_changed
-                    && Some(old_header) != cancel_receiver.cloned_watch_data().map(|b| *b.header)
+                    && Some(old_header.clone()) != cancel_receiver.cloned_watch_data().map(|b| zebra_chain::block::Header::clone(&b.header))
                 {
                     Err(SolverCancelled)
                 } else {
@@ -565,7 +565,7 @@ where
 {
     // TODO: Replace with Arc::unwrap_or_clone() when it stabilises:
     // https://github.com/rust-lang/rust/issues/93610
-    let mut header = *template.header;
+    let mut header = zebra_chain::block::Header::clone(&template.header);
 
     // Use a different nonce for each solver thread.
     // Change both the first and last bytes, so we don't have to care if the nonces are incremented in

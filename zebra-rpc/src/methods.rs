@@ -35,7 +35,7 @@ use zcash_primitives::consensus::Parameters;
 
 use zebra_chain::{
     amount::{self, Amount, NonNegative},
-    block::{self, Block, Commitment, Height, SerializedBlock, TryIntoHeight},
+    block::{self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight},
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
     parameters::{
@@ -232,6 +232,10 @@ pub trait Rpc {
     /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_roster")]
     async fn get_tfl_roster(&self) -> Option<TFLRoster>;
+
+    /// Get the fat pointer to the BFT Chain tip. TODO: Example
+    #[method(name = "get_tfl_fat_pointer_to_bft_chain_tip")]
+    async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock>;
 
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
@@ -1603,6 +1607,23 @@ where
         }
     }
 
+    async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::FatPointerToBFTChainTip)
+            .await;
+        if let Ok(TFLServiceResponse::FatPointerToBFTChainTip(fat_pointer)) = ret {
+            Some(fat_pointer)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
+        }
+    }
+
     async fn update_tfl_staker(&self, staker: TFLStaker) {
         if let Ok(TFLServiceResponse::UpdateStaker) = self
             .tfl_service
@@ -2873,6 +2894,8 @@ where
             "selected transactions for the template from the mempool"
         );
 
+        let fat_pointer = self.get_tfl_fat_pointer_to_bft_chain_tip().await.expect("get fat pointer should never fail only return a null pointer");
+
         // - After this point, the template only depends on the previously fetched data.
 
         let response = GetBlockTemplate::new(
@@ -2884,6 +2907,7 @@ where
             submit_old,
             debug_like_zcashd,
             extra_coinbase_data,
+            fat_pointer,
         );
 
         Ok(response.into())

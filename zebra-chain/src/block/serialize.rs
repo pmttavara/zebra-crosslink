@@ -80,7 +80,7 @@ impl ZcashSerialize for Header {
         writer.write_u32::<LittleEndian>(self.difficulty_threshold.0)?;
         writer.write_all(&self.nonce[..])?;
         self.solution.zcash_serialize(&mut writer)?;
-        if self.version > 5 {
+        if self.version >= 5 {
             self.fat_pointer_to_bft_block.zcash_serialize(&mut writer)?;
         }
         Ok(())

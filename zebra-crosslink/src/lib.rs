@@ -1161,6 +1161,13 @@ async fn tfl_service_incoming_request(
             roster
         })),
 
+        TFLServiceRequest::FatPointerToBFTChainTip => {
+            let internal = internal_handle.internal.lock().await;
+            Ok(TFLServiceResponse::FatPointerToBFTChainTip(
+                internal.fat_pointer_to_tip.clone().to_non_two(),
+            ))
+        }
+
         _ => Err(TFLServiceError::NotImplemented),
     }
 }

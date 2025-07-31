@@ -756,6 +756,13 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
 }
 
 impl FatPointerToBftBlock2 {
+    pub fn to_non_two(self) -> zebra_chain::block::FatPointerToBftBlock {
+        zebra_chain::block::FatPointerToBftBlock { 
+            vote_for_block_without_finalizer_public_key: self.vote_for_block_without_finalizer_public_key,
+            signatures: self.signatures.into_iter().map(|two| zebra_chain::block::FatPointerSignature { public_key: two.public_key, vote_signature: two.vote_signature }).collect(),
+        }
+    }
+
     pub fn null() -> FatPointerToBftBlock2 {
         FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
@@ -835,10 +842,10 @@ use std::io;
 
 impl ZcashSerialize for FatPointerToBftBlock2 {
     fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
-        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
-        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key)?;
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16)?;
         for signature in &self.signatures {
-            writer.write_all(&signature.to_bytes());
+            writer.write_all(&signature.to_bytes())?;
         }
         Ok(())
     }

@@ -176,7 +176,7 @@ impl Solution {
                 }
 
                 if Self::difficulty_is_valid(&header) {
-                    valid_solutions.push(header);
+                    valid_solutions.push(header.clone());
                 }
             }
 
