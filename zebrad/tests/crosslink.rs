@@ -4,6 +4,7 @@
 
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -423,6 +424,54 @@ fn reject_pos_block_with_lt_sigma_headers() {
 
     tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+}
+
+#[test]
+fn crosslink_test_pow_to_pos_link() {
+    set_test_name(function_name!());
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    let hashes = regtest_block_hashes();
+
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[2]);
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[3]);
+    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[4]);
+
+    // TODO: maybe have push_instr return data?
+    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    let pos_0 = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
+    let pos_0_fat_ptr = zebra_chain::block::FatPointerToBftBlock {
+        vote_for_block_without_finalizer_public_key: pos_0.fat_ptr.vote_for_block_without_finalizer_public_key,
+        signatures: pos_0.fat_ptr.signatures.iter().map(|sig| zebra_chain::block::FatPointerSignature {
+            public_key: sig.public_key,
+            vote_signature: sig.vote_signature,
+        }).collect(),
+    };
+
+    let mut pow_5 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[5]).unwrap();
+    pow_5.header = Arc::new(BlockHeader {
+        version: 5,
+        fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
+        ..*pow_5.header
+    });
+    let pow_5_hash = pow_5.hash();
+    tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_5);
+
+//     let mut pow_6 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[6]).unwrap();
+//     pow_6.header = Arc::new(BlockHeader {
+//         version: 5,
+//         fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
+//         previous_block_hash: pow_5_hash,
+//         ..*pow_6.header
+//     });
+//     // let pow5_hash = pow_5.hash();
+//     tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_6);
+
+
+    tf.write_to_file(&Path::new(&format!("{}.zeccltf", function_name!())));
+    test_bytes(tf.write_to_bytes());
 }
 
 // TODO:

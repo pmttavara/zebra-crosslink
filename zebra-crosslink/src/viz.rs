@@ -899,6 +899,18 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     }
 }
 
+
+fn pos_link_from_pow_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        _ => None,
+    }
+}
+
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftBlock(bft_block) => {
@@ -910,6 +922,25 @@ fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         }
 
         _ => None,
+    }
+}
+
+fn cross_chain_link_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BftBlock(bft_block) => {
+            if let Some(pow_block) = bft_block.block.headers.first() {
+                ctx.find_bc_node_by_hash(&pow_block.hash())
+            } else {
+                None
+            }
+        }
+
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        VizHeader::None => None,
     }
 }
 
@@ -3139,7 +3170,7 @@ pub async fn viz_main(
                 if let Some(link) = if false {
                     ctx.get_node(tfl_nominee_from_node(&ctx, node))
                 } else {
-                    ctx.get_node(tfl_finalized_from_node(&ctx, node))
+                    ctx.get_node(cross_chain_link_from_node(&ctx, node))
                 } {
                     draw_arrow_between_circles(circle, link.circle(), 2., 9., PINK);
                 }
