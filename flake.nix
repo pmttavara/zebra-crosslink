@@ -268,6 +268,7 @@
               rustup
               mdbook
               mdbook-mermaid
+              nixfmt-rfc-style
             ];
 
             dynlibs = with pkgs; [
