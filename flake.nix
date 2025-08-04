@@ -55,8 +55,18 @@
     };
   };
 
-  outputs = { self, nixpkgs, crane, fenix, flake-utils, advisory-db, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      crane,
+      fenix,
+      flake-utils,
+      advisory-db,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
@@ -64,17 +74,14 @@
 
         # Print out a JSON serialization of the argument as a stderr diagnostic:
         enableTrace = false;
-        traceJson =
-          if enableTrace
-          then (lib.debug.traceValFn builtins.toJSON)
-          else (x: x);
+        traceJson = if enableTrace then (lib.debug.traceValFn builtins.toJSON) else (x: x);
 
         craneLib = crane.mkLib pkgs;
 
         # We use the latest nixpkgs `libclang`:
         inherit (pkgs.llvmPackages)
           libclang
-        ;
+          ;
 
         src = lib.sources.cleanSource ./.;
 
@@ -100,32 +107,37 @@
           ];
 
           # Additional environment variables can be set directly
-          LIBCLANG_PATH="${libclang.lib}/lib";
+          LIBCLANG_PATH = "${libclang.lib}/lib";
         };
 
         # Build *just* the cargo dependencies (of the entire workspace),
         # so we can reuse all of that work (e.g. via cachix) when running in CI
-        cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-          pname = "zebrad-workspace-dependency-artifacts";
-          version = "0.0.0";
-        });
+        cargoArtifacts = craneLib.buildDepsOnly (
+          commonArgs
+          // {
+            pname = "zebrad-workspace-dependency-artifacts";
+            version = "0.0.0";
+          }
+        );
 
-        individualCrateArgs = (crate:
+        individualCrateArgs = (
+          crate:
           let
             result = commonArgs // {
               inherit cargoArtifacts;
-              inherit (traceJson (craneLib.crateNameFromCargoToml { cargoToml = traceJson (crate + "/Cargo.toml"); }))
+              inherit
+                (traceJson (craneLib.crateNameFromCargoToml { cargoToml = traceJson (crate + "/Cargo.toml"); }))
                 pname
                 version
-              ;
+                ;
 
               # BUG 1: We should not need this on the assumption that crane already knows the package from pname?
               # BUG 2: crate is a path, not a string.
               # cargoExtraArgs = "-p ${crate}";
             };
           in
-            assert builtins.isPath crate;
-            traceJson result
+          assert builtins.isPath crate;
+          traceJson result
         );
 
         # Build the top-level crates of the workspace as individual derivations.
@@ -196,10 +208,13 @@
           #   cargoClippyExtraArgs = "--all-targets -- --deny warnings";
           # });
 
-          my-workspace-doc = craneLib.cargoDoc (commonArgs // {
-            inherit (zebrad) pname version;
-            inherit cargoArtifacts;
-          });
+          my-workspace-doc = craneLib.cargoDoc (
+            commonArgs
+            // {
+              inherit (zebrad) pname version;
+              inherit cargoArtifacts;
+            }
+          );
 
           # Check formatting
           #
@@ -237,13 +252,16 @@
           # Run tests with cargo-nextest
           # Consider setting `doCheck = false` on other crate derivations
           # if you do not want the tests to run twice
-          my-workspace-nextest = craneLib.cargoNextest (commonArgs // {
-            inherit (zebrad) pname version;
-            inherit cargoArtifacts;
+          my-workspace-nextest = craneLib.cargoNextest (
+            commonArgs
+            // {
+              inherit (zebrad) pname version;
+              inherit cargoArtifacts;
 
-            partitions = 1;
-            partitionType = "count";
-          });
+              partitions = 1;
+              partitionType = "count";
+            }
+          );
         };
 
         packages = {
@@ -279,13 +297,17 @@
               xorg.libXi
             ];
 
-          in mkClangShell (commonArgs // {
-            # Include devShell inputs:
-            nativeBuildInputs = commonArgs.nativeBuildInputs ++ devShellInputs;
+          in
+          mkClangShell (
+            commonArgs
+            // {
+              # Include devShell inputs:
+              nativeBuildInputs = commonArgs.nativeBuildInputs ++ devShellInputs;
 
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath dynlibs;
-          })
+              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath dynlibs;
+            }
+          )
         );
-      });
+      }
+    );
 }
-
