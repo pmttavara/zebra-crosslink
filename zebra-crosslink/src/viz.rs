@@ -3172,7 +3172,12 @@ pub async fn viz_main(
                 } else {
                     ctx.get_node(cross_chain_link_from_node(&ctx, node))
                 } {
-                    draw_arrow_between_circles(circle, link.circle(), 2., 9., PINK);
+                    let col = if node.kind == NodeKind::BFT {
+                        PINK
+                    } else {
+                        ORANGE
+                    };
+                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col);
                 }
             }
 
