@@ -68,9 +68,14 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
+        pname = "zebrad-crosslink-workspace";
+
         pkgs = nixpkgs.legacyPackages.${system};
 
         inherit (pkgs) lib;
+
+        # We use this style of nix formatting in checks and the dev shell:
+        nixfmt = pkgs.nixfmt-rfc-style;
 
         # Print out a JSON serialization of the argument as a stderr diagnostic:
         enableTrace = false;
@@ -79,9 +84,7 @@
         craneLib = crane.mkLib pkgs;
 
         # We use the latest nixpkgs `libclang`:
-        inherit (pkgs.llvmPackages)
-          libclang
-          ;
+        inherit (pkgs.llvmPackages) libclang;
 
         src = lib.sources.cleanSource ./.;
 
@@ -115,7 +118,7 @@
         cargoArtifacts = craneLib.buildDepsOnly (
           commonArgs
           // {
-            pname = "zebrad-workspace-dependency-artifacts";
+            pname = "${pname}-dependency-artifacts";
             version = "0.0.0";
           }
         );
@@ -217,8 +220,20 @@
           );
 
           # Check formatting
-          #
-          # TODO: Re-enable this in a PR that also fixes all formatting.
+          nixfmt-check = pkgs.runCommand "${pname}-nixmft" { buildInputs = [ nixfmt ]; } ''
+            set -efuo pipefail
+            exitcode=0
+            for f in $(find '${src}' -type f -name '*.nix')
+            do
+              cmd="nixfmt --check --strict \"$f\""
+              echo "+ $cmd"
+              eval "$cmd" || exitcode=1
+            done
+            [ "$exitcode" -eq 0 ] && touch "$out" # signal success to nix
+            exit "$exitcode"
+          '';
+
+          # TODO: Re-enable rust formatting after a flag-day commit that fixes all formatting, to remove excessive errors.
           #
           # my-workspace-fmt = craneLib.cargoFmt {
           #   inherit (zebrad) pname version;
@@ -271,22 +286,18 @@
         };
 
         apps = {
-          zebrad = flake-utils.lib.mkApp {
-            drv = zebrad;
-          };
+          zebrad = flake-utils.lib.mkApp { drv = zebrad; };
         };
 
         devShells.default = (
           let
-            mkClangShell = pkgs.mkShell.override {
-              inherit (pkgs.llvmPackages) stdenv;
-            };
+            mkClangShell = pkgs.mkShell.override { inherit (pkgs.llvmPackages) stdenv; };
 
             devShellInputs = with pkgs; [
               rustup
               mdbook
               mdbook-mermaid
-              nixfmt-rfc-style
+              nixfmt
             ];
 
             dynlibs = with pkgs; [
