@@ -36,9 +36,11 @@ use mal_system::*;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
 
-pub static TEST_INSTR_I: Mutex<usize> = Mutex::new(0);
+pub static TEST_INSTR_C: Mutex<usize> = Mutex::new(0);
 pub static TEST_MODE: Mutex<bool> = Mutex::new(false);
 pub static TEST_FAILED: Mutex<i32> = Mutex::new(0);
+pub static TEST_FAILED_INSTR_IDXS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+pub static TEST_CHECK_ASSERT: Mutex<bool> = Mutex::new(false);
 pub static TEST_INSTR_PATH: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
 pub static TEST_INSTR_BYTES: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 pub static TEST_INSTRS: Mutex<Vec<test_format::TFInstr>> = Mutex::new(Vec::new());
@@ -666,16 +668,25 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 }
 
                 eprintln!("\n\nInstruction sequence:");
-                let failed_instr_i = *TEST_INSTR_I.lock().unwrap();
+                let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+                let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+                if failed_instr_idxs.is_empty() {
+                    eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
+                }
+
+                let reached_instr_i = *TEST_INSTR_C.lock().unwrap();
+
+                let mut failed_instr_idx_i = 0;
                 let instrs_lock = TEST_INSTRS.lock().unwrap();
                 let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
                 let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
                 let bytes = bytes_lock.as_ref();
                 for instr_i in 0..instrs.len() {
-                    let col = if instr_i < failed_instr_i {
-                        "\x1b[92m" // green
-                    } else if instr_i == failed_instr_i {
+                    let col = if failed_instr_idx_i < failed_instr_idxs.len() && instr_i == failed_instr_idxs[failed_instr_idx_i] {
+                        failed_instr_idx_i += 1;
                         "\x1b[91m" // red
+                    } else if instr_i < reached_instr_i {
+                        "\x1b[92m" // green
                     } else {
                         "\x1b[37m" // grey
                     };

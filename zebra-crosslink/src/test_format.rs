@@ -318,6 +318,18 @@ impl TF {
     }
 }
 
+// TODO: macro for a stringified condition
+fn test_check(condition: bool, message: &str) {
+    if ! condition {
+        let test_instr_i = *TEST_INSTR_C.lock().unwrap();
+        TEST_FAILED_INSTR_IDXS.lock().unwrap().push(test_instr_i);
+
+        if *TEST_CHECK_ASSERT.lock().unwrap() {
+            panic!("test check failed (and TEST_CHECK_ASSERT == true), message:\n{}", message);
+        }
+    }
+}
+
 use crate::*;
 
 pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
@@ -380,7 +392,7 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // file.write_all(instr.data_slice(bytes));
 
             let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
-            assert!(pow_force_feed_ok);
+            test_check(pow_force_feed_ok, "PoW force feed failed");
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -390,7 +402,7 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
             let pos_force_feed_ok = (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            assert!(pos_force_feed_ok);
+            test_check(pos_force_feed_ok, "PoS force feed failed");
         }
 
         TestInstr::SetParams(_) => {
@@ -404,22 +416,22 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
                     .await
                     .expect("can read tip")
             {
-                assert_eq!(height.0 + 1, h); // TODO: maybe assert in test but recoverable error in-GUI
+                let expect = h;
+                let actual = height.0 + 1;
+                test_check(expect == actual, &format!("PoW chain length: expected {}, actually {}", expect, actual)); // TODO: maybe assert in test but recoverable error in-GUI
             }
         }
 
         TestInstr::ExpectPoSChainLength(h) => {
-            assert_eq!(
-                h as usize,
-                internal_handle.internal.lock().await.bft_blocks.len()
-            );
+            let expect = h as usize;
+            let actual = internal_handle.internal.lock().await.bft_blocks.len();
+            test_check(expect == actual, &format!("PoS chain length: expected {}, actually {}", expect, actual)); // TODO: maybe assert in test but recoverable error in-GUI
         }
 
         TestInstr::ExpectPoWBlockFinality(hash, f) => {
-            assert_eq!(
-                f,
-                tfl_block_finality_from_hash(internal_handle.clone(), hash).await.expect("valid response, even if None")
-            );
+            let expect = f;
+            let actual = tfl_block_finality_from_hash(internal_handle.clone(), hash).await.expect("valid response, even if None");
+            test_check(expect == actual, &format!("PoW block finality: expected {:?}, actually {:?}", expect, actual)); // TODO: maybe assert in test but recoverable error in-GUI
         }
     }
 }
@@ -437,10 +449,10 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs
         if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
             handle_instr(&internal_handle, bytes, instr, instr_i).await;
         } else {
-            panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
+            panic!("Failed to read {}", TFInstr::str_from_kind(instr_val.kind));
         }
 
-        *TEST_INSTR_I.lock().unwrap() = instr_i + 1; // accounts for end
+        *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
     }
 }
 
@@ -481,6 +493,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
+    assert!(TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty()); // make sure the test actually fails
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
     tokio::time::sleep(Duration::from_secs(120)).await;
