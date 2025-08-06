@@ -1873,6 +1873,19 @@ fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
     }
 }
 
+fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str, font_size: f32) {
+    ui.push_skin(&ui::Skin {
+        label_style: ui
+            .style_builder()
+            .font_size(font_size as u16)
+            .text_color(col)
+            .build(),
+            ..skin.clone()
+    });
+    ui.label(None, str);
+    ui.pop_skin();
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -3062,24 +3075,16 @@ pub async fn viz_main(
                 &world_camera,
                 vec2(click_node.pt.x - 350., click_node.pt.y),
                 vec2(72. * ch_w, 200.),
-                |ui| {
+                |mut ui| {
                     if let Some(hash_str) = click_node.hash_string() {
                         // draw emphasized/deemphasized hash string (unpleasant API!)
                         // TODO: different hash presentations?
                         let (remain_hash_str, unique_hash_str) =
                             str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
                         ui.label(None, "Hash: ");
-                        ui.push_skin(&ui::Skin {
-                            label_style: ui
-                                .style_builder()
-                                .font_size(font_size as u16)
-                                .text_color(GRAY)
-                                .build(),
-                            ..skin.clone()
-                        });
+
                         ui.same_line(0.);
-                        ui.label(None, remain_hash_str);
-                        ui.pop_skin();
+                        ui_color_label(&mut ui, &skin, GRAY, remain_hash_str, font_size);
 
                         // NOTE: unfortunately this sometimes offsets the text!
                         ui.same_line(0.);
