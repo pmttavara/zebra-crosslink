@@ -188,6 +188,7 @@ impl ZebradApp {
     }
 }
 
+/// Override for application config for use by crosslink tests.
 pub static CROSSLINK_TEST_CONFIG_OVERRIDE: std::sync::Mutex<Option<Arc<ZebradConfig>>> =
     std::sync::Mutex::new(None);
 

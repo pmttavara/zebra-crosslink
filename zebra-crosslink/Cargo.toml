@@ -116,9 +116,5 @@ git = "https://github.com/ShieldedLabs/malachite.git"
 rev = "4c2a9560ceb75868af23de388991a1eafc42ec9b"
 package = "informalsystems-malachitebft-sync"
 
-[[bin]]
-name = "viz_test_driver"
-path = "tests/bin/viz_test_driver.rs"
-
 [build-dependencies]
 prost-build = "0.13"

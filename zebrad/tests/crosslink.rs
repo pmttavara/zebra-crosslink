@@ -3,12 +3,12 @@
 #![cfg(test)]
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::Duration,
 };
 
 use zebra_chain::block::{
-    Block, Hash as BlockHash, Header as BlockHeader,
+    Block, Hash as BlockHash,
 };
 use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
 use zebra_chain::parameters::Network;
@@ -35,10 +35,12 @@ macro_rules! function_name {
     }};
 }
 
+/// Set the global state TEST_NAME
 pub fn set_test_name(name: &'static str) {
     *zebra_crosslink::TEST_NAME.lock().unwrap() = name;
 }
 
+/// Crosslink Test entrypoint
 pub fn test_start() {
     // init globals
     {
@@ -83,11 +85,13 @@ pub fn test_start() {
     ZebradApp::run(&APPLICATION, args);
 }
 
+/// Run a Crosslink Test from a dynamic byte array.
 pub fn test_bytes(bytes: Vec<u8>) {
     *zebra_crosslink::TEST_INSTR_BYTES.lock().unwrap() = bytes;
     test_start();
 }
 
+/// Run a Crosslink Test from a file path.
 pub fn test_path(path: PathBuf) {
     *zebra_crosslink::TEST_INSTR_PATH.lock().unwrap() = Some(path);
     test_start();

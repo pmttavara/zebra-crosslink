@@ -5,7 +5,7 @@
 use std::{num::ParseIntError, str::FromStr, sync::Arc};
 
 use zebra_chain::{
-    block::{self, Block, FatPointerToBftBlock, Height},
+    block::{self, Block, Height},
     parameters::NetworkUpgrade,
     serialization::{DateTime32, SerializationError, ZcashDeserializeInto},
     work::equihash::Solution,

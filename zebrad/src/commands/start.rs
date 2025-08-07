@@ -315,7 +315,7 @@ impl StartCmd {
                             .call(zebra_consensus::Request::Commit(block))
                             .await;
 
-                        let chain_error = match block_verifier_router_response {
+                        let _chain_error = match block_verifier_router_response {
                             // Currently, this match arm returns `null` (Accepted) for blocks committed
                             // to any chain, but Accepted is only for blocks in the best chain.
                             //

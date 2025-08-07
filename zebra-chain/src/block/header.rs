@@ -93,25 +93,32 @@ pub struct Header {
 /// A bundle of signed votes for a block
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FatPointerToBftBlock {
+    /// The fixed size portion of the the fat pointer.
     #[serde(with = "serde_big_array::BigArray")]
     pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
+    /// The array of signatures in the fat pointer.
     pub signatures: Vec<FatPointerSignature>,
 }
 
+/// A signature inside a fat pointer to a BFT Block.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FatPointerSignature {
+    /// The public key associated with this signature.
     pub public_key: [u8; 32],
     #[serde(with = "serde_big_array::BigArray")]
+    /// The actual ed25519 signature itself.
     pub vote_signature: [u8; 64],
 }
 
 impl FatPointerSignature {
+    /// Convert the fat pointer signature to a fixed size byte array.
     pub fn to_bytes(&self) -> [u8; 32 + 64] {
         let mut buf = [0_u8; 32 + 64];
         buf[0..32].copy_from_slice(&self.public_key);
         buf[32..32 + 64].copy_from_slice(&self.vote_signature);
         buf
     }
+    /// Convert a fixed size array of bytes into a fat pointer signature.
     pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature {
         Self {
             public_key: bytes[0..32].try_into().unwrap(),
@@ -121,6 +128,7 @@ impl FatPointerSignature {
 }
 
 impl FatPointerToBftBlock {
+    /// Shorthand for an all null bytes and zero signature count fat pointer.
     pub fn null() -> FatPointerToBftBlock {
         FatPointerToBftBlock {
             vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
@@ -128,6 +136,7 @@ impl FatPointerToBftBlock {
         }
     }
 
+    /// Serialize this fat pointer into a dynamically sized byte array.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
@@ -137,6 +146,7 @@ impl FatPointerToBftBlock {
         }
         buf
     }
+    /// Try to deserialize a fat pointer from the provided dynamic array of bytes.
     pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
         if bytes.len() < 76 - 32 + 2 {
             return None;
@@ -160,6 +170,7 @@ impl FatPointerToBftBlock {
     }
 
 
+    /// Get the blake3 hash bytes of the BFT block that this fat pointer points to.
     pub fn points_at_block_hash(&self) -> [u8; 32] {
         self.vote_for_block_without_finalizer_public_key[0..32]
             .try_into()

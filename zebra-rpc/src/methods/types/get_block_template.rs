@@ -195,7 +195,7 @@ pub struct GetBlockTemplate {
     #[serde(rename = "submitold")]
     pub submit_old: Option<bool>,
 
-    // New version 5 field for crosslink
+    /// New version 5 field for crosslink
     pub fat_pointer_to_bft_block: zebra_chain::block::FatPointerToBftBlock,
 }
 

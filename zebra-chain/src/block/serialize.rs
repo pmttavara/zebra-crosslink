@@ -14,8 +14,6 @@ use crate::{
     work::{difficulty::CompactDifficulty, equihash},
 };
 
-use super::FatPointerToBftBlock;
-
 /// The maximum size of a Zcash block, in bytes.
 ///
 /// Post-Sapling, this is also the maximum size of a transaction
