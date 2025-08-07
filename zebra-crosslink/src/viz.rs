@@ -22,7 +22,7 @@ use macroquad::{
 use static_assertions::*;
 use std::{
     cmp::{max, min},
-    collections::{ HashMap, HashSet },
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
@@ -537,7 +537,8 @@ pub struct VizGlobals {
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
-static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
+static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> =
+    std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -639,8 +640,7 @@ pub async fn service_viz_requests(
                     if let TestInstr::LoadPoW(block) = instr {
                         let hash = block.hash();
                         info!("trying to push {:?}", hash);
-                        if let Some(h) = block_height_from_hash(&call, hash).await
-                        {
+                        if let Some(h) = block_height_from_hash(&call, hash).await {
                             info!("pushing {:?}", (h, hash));
                             height_hashes.push((h, hash));
                             pow_blocks.push(Some(Arc::new(block)));
@@ -649,6 +649,8 @@ pub async fn service_viz_requests(
                 } else {
                     panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
                 }
+
+                *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
             }
 
             force_instrs.0 = Vec::new();
@@ -741,7 +743,11 @@ pub async fn service_viz_requests(
         // TODO: smarter caching
         let mut block_finalities = Vec::with_capacity(height_hashes.len());
         for i in 0..height_hashes.len() {
-            block_finalities.push(tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1).await.unwrap_or(None));
+            block_finalities.push(
+                tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1)
+                    .await
+                    .unwrap_or(None),
+            );
         }
 
         // BFT /////////////////////////////////////////////////////////////////////////
@@ -899,6 +905,17 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     }
 }
 
+fn pos_link_from_pow_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        _ => None,
+    }
+}
+
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftBlock(bft_block) => {
@@ -910,6 +927,25 @@ fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         }
 
         _ => None,
+    }
+}
+
+fn cross_chain_link_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BftBlock(bft_block) => {
+            if let Some(pow_block) = bft_block.block.headers.first() {
+                ctx.find_bc_node_by_hash(&pow_block.hash())
+            } else {
+                None
+            }
+        }
+
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        VizHeader::None => None,
     }
 }
 
@@ -1842,6 +1878,19 @@ fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
     }
 }
 
+fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str, font_size: f32) {
+    ui.push_skin(&ui::Skin {
+        label_style: ui
+            .style_builder()
+            .font_size(font_size as u16)
+            .text_color(col)
+            .build(),
+        ..skin.clone()
+    });
+    ui.label(None, str);
+    ui.pop_skin();
+}
+
 /// Viz implementation root
 pub async fn viz_main(
     png: image::DynamicImage,
@@ -2236,7 +2285,7 @@ pub async fn viz_main(
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
             let (scroll_x, scroll_y) = if mouse_is_over_ui {
-                (0.0,0.0)
+                (0.0, 0.0)
             } else {
                 mouse_wheel()
             };
@@ -2677,7 +2726,8 @@ pub async fn viz_main(
                             difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
                             nonce: zebra_chain::fmt::HexDebug([0; 32]),
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
-                            fat_pointer_to_bft_block: zebra_chain::block::FatPointerToBftBlock::null(),
+                            fat_pointer_to_bft_block:
+                                zebra_chain::block::FatPointerToBftBlock::null(),
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)
@@ -3031,24 +3081,16 @@ pub async fn viz_main(
                 &world_camera,
                 vec2(click_node.pt.x - 350., click_node.pt.y),
                 vec2(72. * ch_w, 200.),
-                |ui| {
+                |mut ui| {
                     if let Some(hash_str) = click_node.hash_string() {
                         // draw emphasized/deemphasized hash string (unpleasant API!)
                         // TODO: different hash presentations?
                         let (remain_hash_str, unique_hash_str) =
                             str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
                         ui.label(None, "Hash: ");
-                        ui.push_skin(&ui::Skin {
-                            label_style: ui
-                                .style_builder()
-                                .font_size(font_size as u16)
-                                .text_color(GRAY)
-                                .build(),
-                            ..skin.clone()
-                        });
+
                         ui.same_line(0.);
-                        ui.label(None, remain_hash_str);
-                        ui.pop_skin();
+                        ui_color_label(&mut ui, &skin, GRAY, remain_hash_str, font_size);
 
                         // NOTE: unfortunately this sometimes offsets the text!
                         ui.same_line(0.);
@@ -3072,7 +3114,9 @@ pub async fn viz_main(
                             loop {
                                 let mut buf = String::new();
                                 let mut got = iter.next();
-                                if got.is_none() { break; }
+                                if got.is_none() {
+                                    break;
+                                }
                                 let mut count = 0;
                                 while count < 70 && got.is_some() {
                                     buf.push_str(&got.unwrap().to_string());
@@ -3139,9 +3183,14 @@ pub async fn viz_main(
                 if let Some(link) = if false {
                     ctx.get_node(tfl_nominee_from_node(&ctx, node))
                 } else {
-                    ctx.get_node(tfl_finalized_from_node(&ctx, node))
+                    ctx.get_node(cross_chain_link_from_node(&ctx, node))
                 } {
-                    draw_arrow_between_circles(circle, link.circle(), 2., 9., PINK);
+                    let col = if node.kind == NodeKind::BFT {
+                        PINK
+                    } else {
+                        ORANGE
+                    };
+                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col);
                 }
             }
 
@@ -3384,11 +3433,14 @@ pub async fn viz_main(
                         .label("Load to")
                         .ui(ui, &mut config.node_load_kind);
 
-
                     if ui.button(None, "Load from serialization") {
-                         match TF::read_from_file(&path) {
+                        match TF::read_from_file(&path) {
                             Ok((bytes, tf)) => {
-                                info!("read {} bytes and {} instructions", bytes.len(), tf.instrs.len());
+                                info!(
+                                    "read {} bytes and {} instructions",
+                                    bytes.len(),
+                                    tf.instrs.len()
+                                );
                                 if config.node_load_kind == NODE_LOAD_ZEBRA {
                                     let mut lock = G_FORCE_INSTRS.lock();
                                     **lock.as_mut().unwrap() = (bytes.clone(), tf.instrs.clone());
@@ -3425,10 +3477,31 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |ui| {
+                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |mut ui| {
+                        let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+                        let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+                        let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+                        let mut failed_instr_idx_i = 0;
+
                         for instr_i in 0..edit_tf.1.len() {
+                            let col = if failed_instr_idx_i < failed_instr_idxs.len()
+                                && instr_i == failed_instr_idxs[failed_instr_idx_i]
+                            {
+                                failed_instr_idx_i += 1;
+                                RED
+                            } else if instr_i < done_instr_c {
+                                GREEN
+                            } else {
+                                GRAY
+                            };
                             let instr = &edit_tf.1[instr_i];
-                            ui.label(None, &TFInstr::string_from_instr(&edit_tf.0, instr));
+                            ui_color_label(
+                                &mut ui,
+                                &skin,
+                                col,
+                                &TFInstr::string_from_instr(&edit_tf.0, instr),
+                                font_size,
+                            );
                         }
                     });
                 },

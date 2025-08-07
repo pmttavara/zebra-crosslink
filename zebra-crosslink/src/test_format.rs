@@ -97,7 +97,9 @@ impl TFInstr {
             Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
             Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
-            Some(TestInstr::ExpectPoWBlockFinality(hash, f)) => str += &format!("{} => {:?}", hash, f),
+            Some(TestInstr::ExpectPoWBlockFinality(hash, f)) => {
+                str += &format!("{} => {:?}", hash, f)
+            }
             None => {}
         }
 
@@ -136,10 +138,9 @@ pub fn val_from_finality(val: Option<TFLBlockFinality>) -> [u64; 2] {
         Some(TFLBlockFinality::NotYetFinalized) => [1u64, test_format::TF_NOT_YET_FINALIZED],
         Some(TFLBlockFinality::Finalized) => [1u64, test_format::TF_FINALIZED],
         Some(TFLBlockFinality::CantBeFinalized) => [1u64, test_format::TF_CANT_BE_FINALIZED],
-        None => [0u64; 2]
+        None => [0u64; 2],
     }
 }
-
 
 impl TF {
     pub fn new(params: &ZcashCrosslinkParameters) -> TF {
@@ -267,8 +268,7 @@ impl TF {
     pub fn write_to_file(&self, path: &std::path::Path) -> bool {
         if let Ok(mut file) = std::fs::File::create(path) {
             self.write(&mut file)
-        }
-        else {
+        } else {
             false
         }
     }
@@ -318,6 +318,21 @@ impl TF {
     }
 }
 
+// TODO: macro for a stringified condition
+fn test_check(condition: bool, message: &str) {
+    if !condition {
+        let test_instr_i = *TEST_INSTR_C.lock().unwrap();
+        TEST_FAILED_INSTR_IDXS.lock().unwrap().push(test_instr_i);
+
+        if *TEST_CHECK_ASSERT.lock().unwrap() {
+            panic!(
+                "test check failed (and TEST_CHECK_ASSERT == true), message:\n{}",
+                message
+            );
+        }
+    }
+}
+
 use crate::*;
 
 pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
@@ -347,12 +362,15 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         }
         TFInstr::EXPECT_POS_CHAIN_LENGTH => Some(TestInstr::ExpectPoSChainLength(instr.val[0])),
 
-        TFInstr::EXPECT_POW_BLOCK_FINALITY => {
-            Some(TestInstr::ExpectPoWBlockFinality(
-                    BlockHash(instr.data_slice(bytes).try_into().expect("should be 32 bytes for hash")),
-                    finality_from_val(&instr.val)
-            ))
-        },
+        TFInstr::EXPECT_POW_BLOCK_FINALITY => Some(TestInstr::ExpectPoWBlockFinality(
+            BlockHash(
+                instr
+                    .data_slice(bytes)
+                    .try_into()
+                    .expect("should be 32 bytes for hash"),
+            ),
+            finality_from_val(&instr.val),
+        )),
 
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
@@ -371,7 +389,12 @@ pub(crate) enum TestInstr {
     ExpectPoWBlockFinality(BlockHash, Option<TFLBlockFinality>),
 }
 
-pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8], instr: TestInstr, instr_i: usize) {
+pub(crate) async fn handle_instr(
+    internal_handle: &TFLServiceHandle,
+    bytes: &[u8],
+    instr: TestInstr,
+    instr_i: usize,
+) {
     match instr {
         TestInstr::LoadPoW(block) => {
             // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
@@ -379,7 +402,8 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes));
 
-            (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+            let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+            test_check(pow_force_feed_ok, "PoW force feed failed");
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -388,7 +412,9 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
-            (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+            let pos_force_feed_ok =
+                (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+            test_check(pos_force_feed_ok, "PoS force feed failed");
         }
 
         TestInstr::SetParams(_) => {
@@ -402,22 +428,36 @@ pub(crate) async fn handle_instr(internal_handle: &TFLServiceHandle, bytes: &[u8
                     .await
                     .expect("can read tip")
             {
-                assert_eq!(height.0 + 1, h); // TODO: maybe assert in test but recoverable error in-GUI
+                let expect = h;
+                let actual = height.0 + 1;
+                test_check(
+                    expect == actual,
+                    &format!("PoW chain length: expected {}, actually {}", expect, actual),
+                ); // TODO: maybe assert in test but recoverable error in-GUI
             }
         }
 
         TestInstr::ExpectPoSChainLength(h) => {
-            assert_eq!(
-                h as usize,
-                internal_handle.internal.lock().await.bft_blocks.len()
-            );
+            let expect = h as usize;
+            let actual = internal_handle.internal.lock().await.bft_blocks.len();
+            test_check(
+                expect == actual,
+                &format!("PoS chain length: expected {}, actually {}", expect, actual),
+            ); // TODO: maybe assert in test but recoverable error in-GUI
         }
 
         TestInstr::ExpectPoWBlockFinality(hash, f) => {
-            assert_eq!(
-                f,
-                tfl_block_finality_from_hash(internal_handle.clone(), hash).await.expect("valid response, even if None")
-            );
+            let expect = f;
+            let actual = tfl_block_finality_from_hash(internal_handle.clone(), hash)
+                .await
+                .expect("valid response, even if None");
+            test_check(
+                expect == actual,
+                &format!(
+                    "PoW block finality: expected {:?}, actually {:?}",
+                    expect, actual
+                ),
+            ); // TODO: maybe assert in test but recoverable error in-GUI
         }
     }
 }
@@ -435,10 +475,10 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs
         if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
             handle_instr(&internal_handle, bytes, instr, instr_i).await;
         } else {
-            panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
+            panic!("Failed to read {}", TFInstr::str_from_kind(instr_val.kind));
         }
 
-        *TEST_INSTR_I.lock().unwrap() = instr_i + 1; // accounts for end
+        *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
     }
 }
 
@@ -479,6 +519,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
+    assert!(TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty()); // make sure the test actually fails
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
     tokio::time::sleep(Duration::from_secs(120)).await;

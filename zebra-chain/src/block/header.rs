@@ -169,7 +169,6 @@ impl FatPointerToBftBlock {
         })
     }
 
-
     /// Get the blake3 hash bytes of the BFT block that this fat pointer points to.
     pub fn points_at_block_hash(&self) -> [u8; 32] {
         self.vote_for_block_without_finalizer_public_key[0..32]
@@ -220,7 +219,9 @@ impl crate::serialization::ZcashSerialize for FatPointerToBftBlock {
 }
 
 impl crate::serialization::ZcashDeserialize for FatPointerToBftBlock {
-    fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, crate::serialization::SerializationError> {
+    fn zcash_deserialize<R: io::Read>(
+        mut reader: R,
+    ) -> Result<Self, crate::serialization::SerializationError> {
         let mut vote_for_block_without_finalizer_public_key = [0u8; 76 - 32];
         reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
 
@@ -238,7 +239,6 @@ impl crate::serialization::ZcashDeserialize for FatPointerToBftBlock {
         })
     }
 }
-
 
 /// TODO: Use this error as the source for zebra_consensus::error::BlockError::Time,
 /// and make `BlockError::Time` add additional context.

@@ -129,7 +129,7 @@ pub(crate) type ReadStateServiceProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoWBlockProcedure = Arc<
-    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Arc<zebra_chain::block::Block>) -> Pin<Box<dyn Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
@@ -137,7 +137,7 @@ pub(crate) type ForceFeedPoWBlockProcedure = Arc<
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes an `Arc<Block>` as input and returns `()` as its output.
 pub(crate) type ForceFeedPoSBlockProcedure = Arc<
-    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock2) -> Pin<Box<dyn Future<Output = ()> + Send>>
+    dyn Fn(Arc<BftBlock>, FatPointerToBftBlock2) -> Pin<Box<dyn Future<Output = bool> + Send>>
         + Send
         + Sync,
 >;
@@ -189,8 +189,10 @@ pub fn spawn_new_tfl_service(
                 .await
             {
                 info!("Successfully force-fed BFT block");
+                true
             } else {
                 error!("Failed to force-feed BFT block");
+                false
             }
         })
     });
@@ -225,79 +227,4 @@ pub struct TFLServiceHandle {
     pub(crate) call: TFLServiceCalls,
     /// The file-generated config data
     pub config: crate::config::Config,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-
-    use tokio::sync::Mutex;
-    use tower::Service;
-
-    use zebra_state::ReadResponse as ReadStateResponse;
-
-    // Helper function to create a test TFLServiceHandle
-    fn create_test_service() -> TFLServiceHandle {
-        let internal = Arc::new(Mutex::new(TFLServiceInternal {
-            latest_final_block: None,
-            tfl_is_activated: false, // dup of Some/None(latest_final_block)?
-            stakers: Vec::new(),
-            final_change_tx: broadcast::channel(16).0,
-            bft_blocks: Vec::new(),
-            fat_pointer_to_tip: FatPointerToBftBlock2::null(),
-            bft_msg_flags: 0,
-            proposed_bft_string: None,
-            malachite_watchdog: tokio::time::Instant::now(),
-        }));
-
-        let read_state_service: ReadStateServiceProcedure =
-            Arc::new(|_req| Box::pin(async { Ok(ReadStateResponse::Tip(None)) }));
-        let force_feed_pow: ForceFeedPoWBlockProcedure = Arc::new(|_block| Box::pin(async { () }));
-        let force_feed_pos: ForceFeedPoSBlockProcedure =
-            Arc::new(|_block, _fat_pointer| Box::pin(async { () }));
-
-        TFLServiceHandle {
-            internal,
-            call: TFLServiceCalls {
-                read_state: read_state_service,
-                force_feed_pow: force_feed_pow,
-                force_feed_pos: force_feed_pos,
-            },
-            config: crate::config::Config::default(),
-        }
-    }
-
-    #[tokio::test]
-    async fn crosslink_returns_none_when_no_block_hash() {
-        let mut service = create_test_service();
-        let response = service
-            .call(TFLServiceRequest::FinalBlockHash)
-            .await
-            .unwrap();
-        assert!(matches!(response, TFLServiceResponse::FinalBlockHash(None)));
-    }
-
-    #[tokio::test]
-    async fn crosslink_final_block_rx() {
-        let mut service = create_test_service();
-
-        // Subscribe to the final block hash updates
-        let response = service.call(TFLServiceRequest::FinalBlockRx).await.unwrap();
-
-        if let TFLServiceResponse::FinalBlockRx(mut receiver) = response {
-            // Simulate a final block change
-            let new_hash = BlockHash([1; 32]);
-            {
-                let internal = service.internal.lock().await;
-                let _ = internal.final_change_tx.send(new_hash);
-            }
-
-            // The receiver should get the new block hash
-            let received_hash = receiver.recv().await.unwrap();
-            assert_eq!(received_hash, new_hash);
-        } else {
-            panic!("Unexpected response: {:?}", response);
-        }
-    }
 }

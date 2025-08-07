@@ -35,7 +35,9 @@ use zcash_primitives::consensus::Parameters;
 
 use zebra_chain::{
     amount::{self, Amount, NonNegative},
-    block::{self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight},
+    block::{
+        self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight,
+    },
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
     parameters::{
@@ -2894,7 +2896,10 @@ where
             "selected transactions for the template from the mempool"
         );
 
-        let fat_pointer = self.get_tfl_fat_pointer_to_bft_chain_tip().await.expect("get fat pointer should never fail only return a null pointer");
+        let fat_pointer = self
+            .get_tfl_fat_pointer_to_bft_chain_tip()
+            .await
+            .expect("get fat pointer should never fail only return a null pointer");
 
         // - After this point, the template only depends on the previously fetched data.
 
