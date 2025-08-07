@@ -649,6 +649,8 @@ pub async fn service_viz_requests(
                 } else {
                     panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
                 }
+
+                *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
             }
 
             force_instrs.0 = Vec::new();
@@ -3466,10 +3468,23 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |ui| {
+                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |mut ui| {
+                        let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+                        let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+                        let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+                        let mut failed_instr_idx_i = 0;
+
                         for instr_i in 0..edit_tf.1.len() {
+                            let col = if failed_instr_idx_i < failed_instr_idxs.len() && instr_i == failed_instr_idxs[failed_instr_idx_i] {
+                                failed_instr_idx_i += 1;
+                                RED
+                            } else if instr_i < done_instr_c {
+                                GREEN
+                            } else {
+                                GRAY
+                            };
                             let instr = &edit_tf.1[instr_i];
-                            ui.label(None, &TFInstr::string_from_instr(&edit_tf.0, instr));
+                            ui_color_label(&mut ui, &skin, col, &TFInstr::string_from_instr(&edit_tf.0, instr), font_size);
                         }
                     });
                 },

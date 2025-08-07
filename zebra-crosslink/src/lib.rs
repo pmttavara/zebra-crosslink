@@ -674,7 +674,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
                 }
 
-                let reached_instr_i = *TEST_INSTR_C.lock().unwrap();
+                let done_instr_c = *TEST_INSTR_C.lock().unwrap();
 
                 let mut failed_instr_idx_i = 0;
                 let instrs_lock = TEST_INSTRS.lock().unwrap();
@@ -685,7 +685,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     let col = if failed_instr_idx_i < failed_instr_idxs.len() && instr_i == failed_instr_idxs[failed_instr_idx_i] {
                         failed_instr_idx_i += 1;
                         "\x1b[91m" // red
-                    } else if instr_i < reached_instr_i {
+                    } else if instr_i < done_instr_c {
                         "\x1b[92m" // green
                     } else {
                         "\x1b[37m" // grey
