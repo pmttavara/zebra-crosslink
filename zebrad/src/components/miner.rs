@@ -452,7 +452,10 @@ where
                 // We only need to check header equality, because the block data is bound to the
                 // header.
                 if has_changed
-                    && Some(old_header.clone()) != cancel_receiver.cloned_watch_data().map(|b| zebra_chain::block::Header::clone(&b.header))
+                    && Some(old_header.clone())
+                        != cancel_receiver
+                            .cloned_watch_data()
+                            .map(|b| zebra_chain::block::Header::clone(&b.header))
                 {
                     Err(SolverCancelled)
                 } else {

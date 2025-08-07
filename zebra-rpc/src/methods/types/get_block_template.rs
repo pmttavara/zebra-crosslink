@@ -340,7 +340,7 @@ impl GetBlockTemplate {
         GetBlockTemplate {
             capabilities,
 
-            version: ZCASH_BLOCK_VERSION+1, // TODO(Sam): Make more nuanced later.
+            version: ZCASH_BLOCK_VERSION + 1, // TODO(Sam): Make more nuanced later.
 
             previous_block_hash: GetBlockHash(chain_tip_and_local_time.tip_hash),
             block_commitments_hash: default_roots.block_commitments_hash,

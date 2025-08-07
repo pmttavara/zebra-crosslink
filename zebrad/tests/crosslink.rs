@@ -8,9 +8,7 @@ use std::{
     time::Duration,
 };
 
-use zebra_chain::block::{
-    Block, Hash as BlockHash, Header as BlockHeader,
-};
+use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader};
 use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
 use zebra_chain::parameters::Network;
 use zebra_chain::serialization::*;
@@ -100,15 +98,16 @@ fn read_from_file() {
     test_path("../crosslink-test-data/blocks.zeccltf".into());
 }
 
-const REGTEST_BLOCK_BYTES: &[&[u8]] = &[ //                                i   h
-    include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"),  //  0,  1: 02a610...
-    include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"),  //  1,  2: 02d711...
-    include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"),  //  2,  fork 3: 098207...
-    include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"),  //  3,  3: 0032241...
-    include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"),  //  4,  4: 0247f1a...
-    include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"),  //  5,  5: 0ab3a5d8...
-    include_bytes!("../../crosslink-test-data/test_pow_block_7.bin"),  //  6,  6
-    include_bytes!("../../crosslink-test-data/test_pow_block_9.bin"),  //  7,  7
+const REGTEST_BLOCK_BYTES: &[&[u8]] = &[
+    //                                                                     i   h
+    include_bytes!("../../crosslink-test-data/test_pow_block_0.bin"), //   0,  1: 02a610...
+    include_bytes!("../../crosslink-test-data/test_pow_block_1.bin"), //   1,  2: 02d711...
+    include_bytes!("../../crosslink-test-data/test_pow_block_2.bin"), //   2,  fork 3: 098207...
+    include_bytes!("../../crosslink-test-data/test_pow_block_3.bin"), //   3,  3: 0032241...
+    include_bytes!("../../crosslink-test-data/test_pow_block_4.bin"), //   4,  4: 0247f1a...
+    include_bytes!("../../crosslink-test-data/test_pow_block_6.bin"), //   5,  5: 0ab3a5d8...
+    include_bytes!("../../crosslink-test-data/test_pow_block_7.bin"), //   6,  6
+    include_bytes!("../../crosslink-test-data/test_pow_block_9.bin"), //   7,  7
     include_bytes!("../../crosslink-test-data/test_pow_block_10.bin"), //  8,  8
     include_bytes!("../../crosslink-test-data/test_pow_block_12.bin"), //  9,  9
     include_bytes!("../../crosslink-test-data/test_pow_block_13.bin"), // 10, 10
@@ -131,11 +130,12 @@ fn regtest_block_hashes() -> [BlockHash; REGTEST_BLOCK_BYTES_N] {
     let mut hashes = [BlockHash([0; 32]); REGTEST_BLOCK_BYTES_N];
     for i in 0..REGTEST_BLOCK_BYTES_N {
         // ALT: BlockHeader::
-        hashes[i] = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[i]).unwrap().hash();
+        hashes[i] = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[i])
+            .unwrap()
+            .hash();
     }
     hashes
 }
-
 
 const REGTEST_POS_BLOCK_BYTES: &[&[u8]] = &[
     include_bytes!("../../crosslink-test-data/test_pos_block_5.bin"),
@@ -147,15 +147,7 @@ const REGTEST_POS_BLOCK_BYTES: &[&[u8]] = &[
     include_bytes!("../../crosslink-test-data/test_pos_block_27.bin"),
 ];
 
-const REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK: &[usize] = &[
-    1,
-    4,
-    6,
-    10,
-    13,
-    16,
-    18,
-];
+const REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK: &[usize] = &[1, 4, 6, 10, 13, 16, 18];
 
 #[test]
 fn crosslink_expect_pos_height_on_boot() {
@@ -358,7 +350,7 @@ fn crosslink_test_basic_finality() {
             TFInstr::EXPECT_POW_BLOCK_FINALITY,
             0,
             &hashes[i2].0,
-            test_format::val_from_finality(None)
+            test_format::val_from_finality(None),
         );
     }
 
@@ -372,11 +364,13 @@ fn crosslink_test_basic_finality() {
                 TFInstr::EXPECT_POW_BLOCK_FINALITY,
                 0,
                 &hashes[i2].0,
-                test_format::val_from_finality(if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3){
-                    None
-                } else {
-                    Some(TFLBlockFinality::NotYetFinalized)
-                })
+                test_format::val_from_finality(
+                    if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3) {
+                        None
+                    } else {
+                        Some(TFLBlockFinality::NotYetFinalized)
+                    },
+                ),
             );
         }
     }
@@ -389,23 +383,21 @@ fn crosslink_test_basic_finality() {
                 TFInstr::EXPECT_POW_BLOCK_FINALITY,
                 0,
                 &hashes[i2].0,
-                test_format::val_from_finality(
-                    if i2 == 2 { // unpicked sidechain
-                                 // TFLBlockFinality::CantBeFinalized
-                        None
-                    } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
-                        Some(TFLBlockFinality::Finalized)
-                    } else {
-                        Some(TFLBlockFinality::NotYetFinalized)
-                    }
-                )
+                test_format::val_from_finality(if i2 == 2 {
+                    // unpicked sidechain
+                    // TFLBlockFinality::CantBeFinalized
+                    None
+                } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
+                    Some(TFLBlockFinality::Finalized)
+                } else {
+                    Some(TFLBlockFinality::NotYetFinalized)
+                }),
             );
         }
     }
 
     test_bytes(tf.write_to_bytes());
 }
-
 
 #[ignore]
 #[test]
@@ -417,10 +409,17 @@ fn reject_pos_block_with_lt_sigma_headers() {
         tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
     }
 
-    let mut bft_block_and_fat_ptr = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
-    bft_block_and_fat_ptr.block.headers.truncate(bft_block_and_fat_ptr.block.headers.len()-1);
+    let mut bft_block_and_fat_ptr =
+        BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
+    bft_block_and_fat_ptr
+        .block
+        .headers
+        .truncate(bft_block_and_fat_ptr.block.headers.len() - 1);
     let new_bytes = bft_block_and_fat_ptr.zcash_serialize_to_vec().unwrap();
-    assert!(&new_bytes != REGTEST_POS_BLOCK_BYTES[0], "test invalidated if the serialization has not been changed");
+    assert!(
+        &new_bytes != REGTEST_POS_BLOCK_BYTES[0],
+        "test invalidated if the serialization has not been changed"
+    );
 
     tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
     tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
@@ -443,11 +442,18 @@ fn crosslink_test_pow_to_pos_link() {
     tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
     let pos_0 = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
     let pos_0_fat_ptr = zebra_chain::block::FatPointerToBftBlock {
-        vote_for_block_without_finalizer_public_key: pos_0.fat_ptr.vote_for_block_without_finalizer_public_key,
-        signatures: pos_0.fat_ptr.signatures.iter().map(|sig| zebra_chain::block::FatPointerSignature {
-            public_key: sig.public_key,
-            vote_signature: sig.vote_signature,
-        }).collect(),
+        vote_for_block_without_finalizer_public_key: pos_0
+            .fat_ptr
+            .vote_for_block_without_finalizer_public_key,
+        signatures: pos_0
+            .fat_ptr
+            .signatures
+            .iter()
+            .map(|sig| zebra_chain::block::FatPointerSignature {
+                public_key: sig.public_key,
+                vote_signature: sig.vote_signature,
+            })
+            .collect(),
     };
 
     let mut pow_5 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[5]).unwrap();
@@ -459,16 +465,15 @@ fn crosslink_test_pow_to_pos_link() {
     let pow_5_hash = pow_5.hash();
     tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_5);
 
-//     let mut pow_6 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[6]).unwrap();
-//     pow_6.header = Arc::new(BlockHeader {
-//         version: 5,
-//         fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
-//         previous_block_hash: pow_5_hash,
-//         ..*pow_6.header
-//     });
-//     // let pow5_hash = pow_5.hash();
-//     tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_6);
-
+    // let mut pow_6 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[6]).unwrap();
+    // pow_6.header = Arc::new(BlockHeader {
+    //     version: 5,
+    //     fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
+    //     previous_block_hash: pow_5_hash,
+    //     ..*pow_6.header
+    // });
+    // // let pow5_hash = pow_5.hash();
+    // tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_6);
 
     tf.write_to_file(&Path::new(&format!("{}.zeccltf", function_name!())));
     test_bytes(tf.write_to_bytes());

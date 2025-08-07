@@ -22,7 +22,7 @@ use macroquad::{
 use static_assertions::*;
 use std::{
     cmp::{max, min},
-    collections::{ HashMap, HashSet },
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
@@ -537,7 +537,8 @@ pub struct VizGlobals {
 static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
-static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
+static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> =
+    std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -639,8 +640,7 @@ pub async fn service_viz_requests(
                     if let TestInstr::LoadPoW(block) = instr {
                         let hash = block.hash();
                         info!("trying to push {:?}", hash);
-                        if let Some(h) = block_height_from_hash(&call, hash).await
-                        {
+                        if let Some(h) = block_height_from_hash(&call, hash).await {
                             info!("pushing {:?}", (h, hash));
                             height_hashes.push((h, hash));
                             pow_blocks.push(Some(Arc::new(block)));
@@ -743,7 +743,11 @@ pub async fn service_viz_requests(
         // TODO: smarter caching
         let mut block_finalities = Vec::with_capacity(height_hashes.len());
         for i in 0..height_hashes.len() {
-            block_finalities.push(tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1).await.unwrap_or(None));
+            block_finalities.push(
+                tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1)
+                    .await
+                    .unwrap_or(None),
+            );
         }
 
         // BFT /////////////////////////////////////////////////////////////////////////
@@ -900,7 +904,6 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         _ => None,
     }
 }
-
 
 fn pos_link_from_pow_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
@@ -1882,7 +1885,7 @@ fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str
             .font_size(font_size as u16)
             .text_color(col)
             .build(),
-            ..skin.clone()
+        ..skin.clone()
     });
     ui.label(None, str);
     ui.pop_skin();
@@ -2282,7 +2285,7 @@ pub async fn viz_main(
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
             let (scroll_x, scroll_y) = if mouse_is_over_ui {
-                (0.0,0.0)
+                (0.0, 0.0)
             } else {
                 mouse_wheel()
             };
@@ -2723,7 +2726,8 @@ pub async fn viz_main(
                             difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
                             nonce: zebra_chain::fmt::HexDebug([0; 32]),
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
-                            fat_pointer_to_bft_block: zebra_chain::block::FatPointerToBftBlock::null(),
+                            fat_pointer_to_bft_block:
+                                zebra_chain::block::FatPointerToBftBlock::null(),
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)
@@ -3110,7 +3114,9 @@ pub async fn viz_main(
                             loop {
                                 let mut buf = String::new();
                                 let mut got = iter.next();
-                                if got.is_none() { break; }
+                                if got.is_none() {
+                                    break;
+                                }
                                 let mut count = 0;
                                 while count < 70 && got.is_some() {
                                     buf.push_str(&got.unwrap().to_string());
@@ -3427,11 +3433,14 @@ pub async fn viz_main(
                         .label("Load to")
                         .ui(ui, &mut config.node_load_kind);
 
-
                     if ui.button(None, "Load from serialization") {
-                         match TF::read_from_file(&path) {
+                        match TF::read_from_file(&path) {
                             Ok((bytes, tf)) => {
-                                info!("read {} bytes and {} instructions", bytes.len(), tf.instrs.len());
+                                info!(
+                                    "read {} bytes and {} instructions",
+                                    bytes.len(),
+                                    tf.instrs.len()
+                                );
                                 if config.node_load_kind == NODE_LOAD_ZEBRA {
                                     let mut lock = G_FORCE_INSTRS.lock();
                                     **lock.as_mut().unwrap() = (bytes.clone(), tf.instrs.clone());
@@ -3475,7 +3484,9 @@ pub async fn viz_main(
                         let mut failed_instr_idx_i = 0;
 
                         for instr_i in 0..edit_tf.1.len() {
-                            let col = if failed_instr_idx_i < failed_instr_idxs.len() && instr_i == failed_instr_idxs[failed_instr_idx_i] {
+                            let col = if failed_instr_idx_i < failed_instr_idxs.len()
+                                && instr_i == failed_instr_idxs[failed_instr_idx_i]
+                            {
                                 failed_instr_idx_i += 1;
                                 RED
                             } else if instr_i < done_instr_c {
@@ -3484,7 +3495,13 @@ pub async fn viz_main(
                                 GRAY
                             };
                             let instr = &edit_tf.1[instr_i];
-                            ui_color_label(&mut ui, &skin, col, &TFInstr::string_from_instr(&edit_tf.0, instr), font_size);
+                            ui_color_label(
+                                &mut ui,
+                                &skin,
+                                col,
+                                &TFInstr::string_from_instr(&edit_tf.0, instr),
+                                font_size,
+                            );
                         }
                     });
                 },
