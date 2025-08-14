@@ -332,6 +332,11 @@ async fn propose_new_bft_block(
     tfl_handle: &TFLServiceHandle,
     my_public_key: &MalPublicKey,
 ) -> Option<BftBlock> {
+    #[cfg(feature = "viz_gui")]
+    if let Some(state) = viz::VIZ_G.lock().unwrap().as_ref() {
+        if state.bft_pause_button { return None; }
+    }
+
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
     let (tip_height, tip_hash) =

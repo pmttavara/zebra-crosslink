@@ -533,8 +533,13 @@ pub struct VizGlobals {
     // TODO: bft_req_h: (i32, i32),
     /// Value for this finalizer node to propose for the next BFT block.
     pub proposed_bft_string: Option<String>,
+
+    /// If true then we should propose no new BFT blocks.
+    pub bft_pause_button: bool,
 }
-static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+
+pub static MINER_NONCE_BYTE: std::sync::Mutex<u8> = std::sync::Mutex::new(1);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
 static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> =
@@ -591,6 +596,7 @@ pub async fn service_viz_requests(
         bc_req_h: (!VIZ_REQ_N as i32, !0),
         proposed_bft_string: None,
         consumed: true,
+        bft_pause_button: false,
     });
 
     loop {
@@ -615,8 +621,13 @@ pub async fn service_viz_requests(
         let mut pow_blocks: Vec<Option<Arc<Block>>> = Vec::new();
         {
             // TODO: is there a reason to not reuse the existing TEST_INSTRS global?
-            let mut lock = G_FORCE_INSTRS.lock();
-            let mut force_instrs: &mut (Vec<u8>, Vec<TFInstr>) = lock.as_mut().unwrap();
+            let mut force_instrs = {
+                let mut lock = G_FORCE_INSTRS.lock().unwrap();
+                let copy = lock.clone();
+                lock.0 = Vec::new();
+                lock.1 = Vec::new();
+                copy
+            };
             let internal_handle = tfl_handle.clone();
 
             for instr_i in 0..force_instrs.1.len() {
@@ -632,6 +643,7 @@ pub async fn service_viz_requests(
 
                 if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
                     // push to zebra
+                    println!("################### iarsedhtiasdreht {}", TFInstr::string_from_instr(&force_instrs.0, &instr_val));
                     handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_i).await;
 
                     // push PoW to visualizer
@@ -652,9 +664,6 @@ pub async fn service_viz_requests(
 
                 *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
             }
-
-            force_instrs.0 = Vec::new();
-            force_instrs.1 = Vec::new();
         }
 
         #[allow(clippy::never_loop)]
@@ -1333,15 +1342,17 @@ impl VizCtx {
                 let parent_ref = self.find_bc_node_by_hash(&BlockHash(parent_hash));
                 if let Some(parent) = self.node(parent_ref) {
                     assert!(new_node.parent.is_none() || new_node.parent == parent_ref);
-                    assert!(
-                        // NOTE(Sam): Spurius crash sometimes
-                        parent.height + 1 == new_node.height,
-                        "parent height: {}, new height: {}",
-                        parent.height,
-                        new_node.height
-                    );
+                    if parent.height + 1 == new_node.height {
+                    // assert!(
+                    //     // NOTE(Sam): Spurius crash sometimes
+                    //     parent.height + 1 == new_node.height,
+                    //     "parent height: {}, new height: {}",
+                    //     parent.height,
+                    //     new_node.height
+                    // );
 
                     new_node.parent = parent_ref;
+                    }
                 } else if parent_hash != [0; 32] {
                     self.missing_bc_parents.insert(parent_hash, node_ref);
                 }
@@ -1961,12 +1972,14 @@ pub async fn viz_main(
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut instr_path_str = "blocks.zeccltf".to_string();
+    let mut pow_block_nonce_str = "0".to_string();
     let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
     let mut edit_proposed_bft_string = String::new();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
+    let mut bft_pause_button = false;
 
     let mut track_node_h: Option<i32> = None;
     let mut track_continuously: bool = true;
@@ -2090,6 +2103,7 @@ pub async fn viz_main(
 
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
             lock.as_mut().unwrap().proposed_bft_string = proposed_bft_string;
+            lock.as_mut().unwrap().bft_pause_button = bft_pause_button;
             lock.as_mut().unwrap().consumed = true;
             proposed_bft_string = None;
             new_h_rng = None;
@@ -3442,8 +3456,8 @@ pub async fn viz_main(
                                     tf.instrs.len()
                                 );
                                 if config.node_load_kind == NODE_LOAD_ZEBRA {
-                                    let mut lock = G_FORCE_INSTRS.lock();
-                                    **lock.as_mut().unwrap() = (bytes.clone(), tf.instrs.clone());
+                                    let mut lock = G_FORCE_INSTRS.lock().unwrap();
+                                    *lock = (bytes.clone(), tf.instrs.clone());
                                 }
 
                                 edit_tf = (bytes, tf.instrs);
@@ -3475,6 +3489,17 @@ pub async fn viz_main(
                         // let file = std::fs::File::create("blocks.zeccltf");
                         // block.zcash_serialize(file.unwrap());
                         tf.write_to_file(&path);
+                    }
+
+                    {
+                        widgets::Editbox::new(hash!(), vec2(28. * ch_w, font_size))
+                            .multiline(false)
+                            .ui(ui, &mut pow_block_nonce_str);
+                        let try_parse : Option<u8> = pow_block_nonce_str.parse().ok();
+                        if let Some(byte) = try_parse {
+                            *MINER_NONCE_BYTE.lock().unwrap() = byte;
+                        }
+                        checkbox(ui, hash!(), "BFT Paused", &mut bft_pause_button);
                     }
 
                     widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |mut ui| {

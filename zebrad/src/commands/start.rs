@@ -90,8 +90,12 @@ use crate::{
 use abscissa_core::{config, Command, FrameworkError};
 use color_eyre::eyre::{eyre, Report};
 use futures::FutureExt;
-use std::sync::Arc;
-use tokio::{pin, select, sync::oneshot};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    pin, select,
+    sync::oneshot,
+    time::{sleep, timeout},
+};
 use tower::{builder::ServiceBuilder, util::BoxService, ServiceExt};
 use tracing_futures::Instrument;
 use zebra_chain::block::genesis::regtest_genesis_block;
@@ -298,57 +302,76 @@ impl StartCmd {
                 }),
                 Arc::new(move |block| {
                     let gbt = Arc::clone(&gbt_for_force_feeding_pow);
+
                     Box::pin(async move {
-                        let mut block_verifier_router = gbt.block_verifier_router();
+                        let attempt_result = timeout(Duration::from_millis(100), async move {
+                            let mut block_verifier_router = gbt.block_verifier_router();
 
-                        let height = block
-                            .coinbase_height()
-                            // .ok_or_error(0, "coinbase height not found")?;
-                            .unwrap();
-                        let block_hash = block.hash();
+                            let height = block
+                                .coinbase_height()
+                                // .ok_or_error(0, "coinbase height not found")?;
+                                .unwrap();
+                            let block_hash = block.hash();
 
-                        let block_verifier_router_response = block_verifier_router
-                            .ready()
-                            .await
-                            // .map_err(|error| ErrorObject::owned(0, error.to_string(), None::<()>))?
-                            .unwrap()
-                            .call(zebra_consensus::Request::Commit(block))
-                            .await;
-
-                        match block_verifier_router_response {
-                            // Currently, this match arm returns `null` (Accepted) for blocks committed
-                            // to any chain, but Accepted is only for blocks in the best chain.
-                            //
-                            // TODO (#5487):
-                            // - Inconclusive: check if the block is on a side-chain
-                            // The difference is important to miners, because they want to mine on the best chain.
-                            Ok(hash) => {
-                                tracing::info!(?hash, ?height, "submit block accepted");
-
-                                gbt.advertise_mined_block(hash, height)
-                                    // .map_error_with_prefix(0, "failed to send mined block")?;
-                                    .unwrap();
-
-                                // return Ok(submit_block::Response::Accepted);
-                                true
+                            let block_verifier_router_response =
+                                block_verifier_router.ready().await;
+                            if block_verifier_router_response.is_err() {
+                                return false;
                             }
+                            let block_verifier_router_response =
+                                block_verifier_router_response.unwrap();
 
-                            // Turns BoxError into Result<VerifyChainError, BoxError>,
-                            // by downcasting from Any to VerifyChainError.
-                            Err(box_error) => {
-                                let error = box_error
-                                    .downcast::<zebra_consensus::RouterError>()
-                                    .map(|boxed_chain_error| *boxed_chain_error);
+                            // .map_err(|error| ErrorObject::owned(0, error.to_string(), None::<()>))?
+                            let block_verifier_router_response = block_verifier_router_response
+                                .call(zebra_consensus::Request::Commit(block))
+                                .await;
 
-                                tracing::error!(
-                                    ?error,
-                                    ?block_hash,
-                                    ?height,
-                                    "submit block failed verification"
-                                );
+                            match block_verifier_router_response {
+                                // Currently, this match arm returns `null` (Accepted) for blocks committed
+                                // to any chain, but Accepted is only for blocks in the best chain.
+                                //
+                                // TODO (#5487):
+                                // - Inconclusive: check if the block is on a side-chain
+                                // The difference is important to miners, because they want to mine on the best chain.
+                                Ok(hash) => {
+                                    tracing::info!(?hash, ?height, "submit block accepted");
 
-                                // error
-                                false
+                                    // gbt.advertise_mined_block(hash, height)
+                                    //     // .map_error_with_prefix(0, "failed to send mined block")?;
+                                    //     .unwrap();
+
+                                    // return Ok(submit_block::Response::Accepted);
+                                    true
+                                }
+
+                                // Turns BoxError into Result<VerifyChainError, BoxError>,
+                                // by downcasting from Any to VerifyChainError.
+                                Err(box_error) => {
+                                    let error = box_error
+                                        .downcast::<zebra_consensus::RouterError>()
+                                        .map(|boxed_chain_error| *boxed_chain_error);
+
+                                    tracing::error!(
+                                        ?error,
+                                        ?block_hash,
+                                        ?height,
+                                        "submit block failed verification"
+                                    );
+
+                                    // error
+                                    false
+                                }
+                            }
+                        })
+                        .await;
+
+                        match attempt_result {
+                            Ok(success) => {
+                                return success;
+                            }
+                            Err(_) => {
+                                tracing::error!("submit block timed out");
+                                return false;
                             }
                         }
                     })
