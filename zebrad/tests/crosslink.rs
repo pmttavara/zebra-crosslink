@@ -205,7 +205,7 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
-        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], SHOULD_FAIL);
         tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0,
         );
     }
@@ -226,7 +226,7 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
     tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], SHOULD_FAIL);
         tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
     }
 
@@ -238,7 +238,7 @@ fn crosslink_expect_pos_not_pushed_if_pow_blocks_not_present() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], SHOULD_FAIL);
     tf.push_instr_expect_pos_chain_length(0, 0);
 
     test_bytes(tf.write_to_bytes());
@@ -272,7 +272,7 @@ fn crosslink_expect_pos_out_of_order() {
     }
 
     tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
-    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[2], 0);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[2], SHOULD_FAIL);
     tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[1], 0);
     tf.push_instr_expect_pos_chain_length(2, 0);
 
@@ -288,7 +288,7 @@ fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
         tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
     tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
-    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], SHOULD_FAIL);
     tf.push_instr_expect_pos_chain_length(1, 0);
 
     test_bytes(tf.write_to_bytes());
@@ -316,7 +316,7 @@ fn crosslink_reject_pos_with_signature_on_different_data() {
         "test invalidated if the serialization has not been changed"
     );
 
-    tf.push_instr_load_pos_bytes(&new_bytes, 0);
+    tf.push_instr_load_pos_bytes(&new_bytes, SHOULD_FAIL);
     tf.push_instr_expect_pos_chain_length(0, 0);
 
     test_bytes(tf.write_to_bytes());

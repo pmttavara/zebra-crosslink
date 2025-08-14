@@ -111,6 +111,9 @@ impl TFInstr {
     }
 }
 
+// Flags
+pub const SHOULD_FAIL: u32 = 1 << 0;
+
 pub struct TF {
     pub instrs: Vec<TFInstr>,
     pub data: Vec<u8>,
@@ -420,8 +423,11 @@ pub(crate) async fn handle_instr(
     internal_handle: &TFLServiceHandle,
     bytes: &[u8],
     instr: TestInstr,
+    flags: u32,
     instr_i: usize,
 ) {
+    const SUCCESS_STRS: [&str; 2] = [ "failed", "succeeded" ];
+
     match instr {
         TestInstr::LoadPoW(block) => {
             // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
@@ -429,8 +435,10 @@ pub(crate) async fn handle_instr(
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes));
 
+            let should_succeed = (flags & SHOULD_FAIL) == 0;
             let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
-            test_check(pow_force_feed_ok, "PoW force feed failed");
+            test_check(pow_force_feed_ok == should_succeed,
+                &format!("PoW force feed unexpectedly {}", SUCCESS_STRS[pow_force_feed_ok as usize]));
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -439,9 +447,11 @@ pub(crate) async fn handle_instr(
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
+            let should_succeed = (flags & SHOULD_FAIL) == 0;
             let pos_force_feed_ok =
                 (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            test_check(pos_force_feed_ok, "PoS force feed failed");
+            test_check(pos_force_feed_ok == should_succeed,
+                &format!("PoS force feed unexpectedly {}", SUCCESS_STRS[pos_force_feed_ok as usize]));
         }
 
         TestInstr::SetParams(_) => {
@@ -500,7 +510,7 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs
         // );
 
         if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
-            handle_instr(&internal_handle, bytes, instr, instr_i).await;
+            handle_instr(&internal_handle, bytes, instr, instrs[instr_i].flags, instr_i).await;
         } else {
             panic!("Failed to read {}", TFInstr::str_from_kind(instr_val.kind));
         }
