@@ -29,12 +29,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: protobuf-compiler
+          packages: protobuf-compiler libasound2-dev
           version: 1.0
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-binstall
+      - run: cargo binstall cargo-nextest
+      - run: cargo run generate > zebrad.toml
+      - name: Configure Regtest network
+        run: |
+          sed -i -E 's/^([[:space:]]*ephemeral[[:space:]]*=[[:space:]]*)false/\1true/' zebrad.toml
+          sed -i -E 's/^([[:space:]]*network[[:space:]]*=[[:space:]]*)"Mainnet"/\1"Regtest"/' zebrad.toml
+          mkdir -p ~/.config
+          mv zebrad.toml ~/.config/zebrad.toml
       - name: Build Test Binary
-        run: cargo test --locked --workspace crosslink
+        run: cargo test --locked --workspace --no-run --all-features
+      - name: Run Crosslink tests
+        run: cargo nextest run --manifest-path=zebrad/Cargo.toml -- crosslink_
       - name: Regression tests # mostly
         if: github.ref == 'refs/heads/main'
         run: cargo test
@@ -46,14 +57,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: protobuf-compiler
+          packages: protobuf-compiler libasound2-dev
           version: 1.0
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - name: Static Analysis
-        run: |
-          cargo fmt --check
-          cargo clippy --locked --workspace
+      - run: cargo fmt --check
+      - run: cargo clippy --all-features --locked --workspace
       - name: Ensure Crosslink docs generate
         run: cd zebra-crosslink && cargo doc --lib
       - name: Ensure all docs generate

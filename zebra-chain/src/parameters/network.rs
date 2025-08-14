@@ -5,8 +5,10 @@ use std::{fmt, str::FromStr, sync::Arc};
 use thiserror::Error;
 
 use crate::{
+    amount::{Amount, NonNegative},
     block::{self, Height},
     parameters::NetworkUpgrade,
+    transparent,
 };
 
 pub mod magic;
@@ -34,8 +36,14 @@ pub enum NetworkKind {
 }
 
 impl From<Network> for NetworkKind {
-    fn from(network: Network) -> Self {
-        network.kind()
+    fn from(net: Network) -> Self {
+        NetworkKind::from(&net)
+    }
+}
+
+impl From<&Network> for NetworkKind {
+    fn from(net: &Network) -> Self {
+        net.kind()
     }
 }
 
@@ -82,6 +90,16 @@ impl NetworkKind {
             "main".to_string()
         } else {
             "test".to_string()
+        }
+    }
+
+    /// Returns the 2 bytes prefix for Bech32m-encoded transparent TEX
+    /// payment addresses for the network as defined in [ZIP-320](https://zips.z.cash/zip-0320.html).
+    pub fn tex_address_prefix(self) -> [u8; 2] {
+        // TODO: Add this bytes to `zcash_primitives::constants`?
+        match self {
+            Self::Mainnet => [0x1c, 0xb8],
+            Self::Testnet | Self::Regtest => [0x1d, 0x25],
         }
     }
 }
@@ -263,6 +281,50 @@ impl Network {
         super::NetworkUpgrade::Sapling
             .activation_height(self)
             .expect("Sapling activation height needs to be set")
+    }
+
+    /// Returns the expected total value of the sum of all NU6.1 one-time lockbox disbursement output values for this network at
+    /// the provided height.
+    pub fn lockbox_disbursement_total_amount(&self, height: Height) -> Amount<NonNegative> {
+        if Some(height) != NetworkUpgrade::Nu6_1.activation_height(self) {
+            return Amount::zero();
+        };
+
+        match self {
+            Self::Mainnet => subsidy::EXPECTED_NU6_1_LOCKBOX_DISBURSEMENTS_TOTAL_MAINNET,
+            Self::Testnet(params) if params.is_default_testnet() => {
+                subsidy::EXPECTED_NU6_1_LOCKBOX_DISBURSEMENTS_TOTAL_TESTNET
+            }
+            Self::Testnet(params) => params.lockbox_disbursement_total_amount(),
+        }
+    }
+
+    /// Returns the expected NU6.1 lockbox disbursement outputs for this network at the provided height.
+    pub fn lockbox_disbursements(
+        &self,
+        height: Height,
+    ) -> Vec<(transparent::Address, Amount<NonNegative>)> {
+        if Some(height) != NetworkUpgrade::Nu6_1.activation_height(self) {
+            return Vec::new();
+        };
+
+        let expected_lockbox_disbursements = match self {
+            Self::Mainnet => subsidy::NU6_1_LOCKBOX_DISBURSEMENTS_MAINNET.to_vec(),
+            Self::Testnet(params) if params.is_default_testnet() => {
+                subsidy::NU6_1_LOCKBOX_DISBURSEMENTS_TESTNET.to_vec()
+            }
+            Self::Testnet(params) => return params.lockbox_disbursements(),
+        };
+
+        expected_lockbox_disbursements
+            .into_iter()
+            .map(|(addr, amount)| {
+                (
+                    addr.parse().expect("hard-coded address must deserialize"),
+                    amount,
+                )
+            })
+            .collect()
     }
 }
 

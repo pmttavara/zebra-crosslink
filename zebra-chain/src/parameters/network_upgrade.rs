@@ -15,7 +15,7 @@ use hex::{FromHex, ToHex};
 use proptest_derive::Arbitrary;
 
 /// A list of network upgrades in the order that they must be activated.
-const NETWORK_UPGRADES_IN_ORDER: [NetworkUpgrade; 10] = [
+const NETWORK_UPGRADES_IN_ORDER: &[NetworkUpgrade] = &[
     Genesis,
     BeforeOverwinter,
     Overwinter,
@@ -25,6 +25,8 @@ const NETWORK_UPGRADES_IN_ORDER: [NetworkUpgrade; 10] = [
     Canopy,
     Nu5,
     Nu6,
+    Nu6_1,
+    #[cfg(any(test, feature = "zebra-test"))]
     Nu7,
 ];
 
@@ -62,6 +64,9 @@ pub enum NetworkUpgrade {
     /// The Zcash protocol after the NU6 upgrade.
     #[serde(rename = "NU6")]
     Nu6,
+    /// The Zcash protocol after the NU6.1 upgrade.
+    #[serde(rename = "NU6.1")]
+    Nu6_1,
     /// The Zcash protocol after the NU7 upgrade.
     #[serde(rename = "NU7")]
     Nu7,
@@ -120,8 +125,14 @@ const FAKE_MAINNET_ACTIVATION_HEIGHTS: &[(block::Height, NetworkUpgrade)] = &[
     (block::Height(30), Canopy),
     (block::Height(35), Nu5),
     (block::Height(40), Nu6),
-    (block::Height(45), Nu7),
+    (block::Height(45), Nu6_1),
+    (block::Height(50), Nu7),
 ];
+
+/// The block height at which NU6.1 activates on the default Testnet.
+// See NU6.1 Testnet activation height in zcashd:
+// <https://github.com/zcash/zcash/blob/b65b008a7b334a2f7c2eaae1b028e011f2e21dd1/src/chainparams.cpp#L472>
+pub const NU6_1_ACTIVATION_HEIGHT_TESTNET: block::Height = block::Height(3_536_500);
 
 /// Testnet network upgrade activation heights.
 ///
@@ -143,6 +154,7 @@ pub(super) const TESTNET_ACTIVATION_HEIGHTS: &[(block::Height, NetworkUpgrade)] 
     (block::Height(1_028_500), Canopy),
     (block::Height(1_842_420), Nu5),
     (block::Height(2_976_000), Nu6),
+    (NU6_1_ACTIVATION_HEIGHT_TESTNET, Nu6_1),
 ];
 
 /// Fake testnet network upgrade activation heights, used in tests.
@@ -157,6 +169,8 @@ const FAKE_TESTNET_ACTIVATION_HEIGHTS: &[(block::Height, NetworkUpgrade)] = &[
     (block::Height(30), Canopy),
     (block::Height(35), Nu5),
     (block::Height(40), Nu6),
+    (block::Height(45), Nu6_1),
+    (block::Height(50), Nu7),
 ];
 
 /// The Consensus Branch Id, used to bind transactions and blocks to a
@@ -248,6 +262,8 @@ pub(crate) const CONSENSUS_BRANCH_IDS: &[(NetworkUpgrade, ConsensusBranchId)] = 
     (Canopy, ConsensusBranchId(0xe9ff75a6)),
     (Nu5, ConsensusBranchId(0xc2d6d0b4)),
     (Nu6, ConsensusBranchId(0xc8e71055)),
+    (Nu6_1, ConsensusBranchId(0x4dec4df0)),
+    #[cfg(any(test, feature = "zebra-test"))]
     (Nu7, ConsensusBranchId(0x77190ad8)),
 ];
 
@@ -324,8 +340,8 @@ impl Network {
     /// in ascending height order.
     pub fn full_activation_list(&self) -> Vec<(block::Height, NetworkUpgrade)> {
         NETWORK_UPGRADES_IN_ORDER
-            .into_iter()
-            .map_while(|nu| Some((NetworkUpgrade::activation_height(&nu, self)?, nu)))
+            .iter()
+            .map_while(|&nu| Some((NetworkUpgrade::activation_height(&nu, self)?, nu)))
             .collect()
     }
 }
@@ -437,7 +453,7 @@ impl NetworkUpgrade {
     pub fn target_spacing(&self) -> Duration {
         let spacing_seconds = match self {
             Genesis | BeforeOverwinter | Overwinter | Sapling => PRE_BLOSSOM_POW_TARGET_SPACING,
-            Blossom | Heartwood | Canopy | Nu5 | Nu6 | Nu7 => {
+            Blossom | Heartwood | Canopy | Nu5 | Nu6 | Nu6_1 | Nu7 => {
                 POST_BLOSSOM_POW_TARGET_SPACING.into()
             }
         };
@@ -544,7 +560,7 @@ impl NetworkUpgrade {
 
     /// Returns an iterator over [`NetworkUpgrade`] variants.
     pub fn iter() -> impl DoubleEndedIterator<Item = NetworkUpgrade> {
-        NETWORK_UPGRADES_IN_ORDER.into_iter()
+        NETWORK_UPGRADES_IN_ORDER.iter().copied()
     }
 }
 
@@ -558,6 +574,7 @@ impl From<zcash_protocol::consensus::NetworkUpgrade> for NetworkUpgrade {
             zcash_protocol::consensus::NetworkUpgrade::Canopy => Self::Canopy,
             zcash_protocol::consensus::NetworkUpgrade::Nu5 => Self::Nu5,
             zcash_protocol::consensus::NetworkUpgrade::Nu6 => Self::Nu6,
+            zcash_protocol::consensus::NetworkUpgrade::Nu6_1 => Self::Nu6_1,
             // zcash_protocol::consensus::NetworkUpgrade::Nu7 => Self::Nu7,
         }
     }

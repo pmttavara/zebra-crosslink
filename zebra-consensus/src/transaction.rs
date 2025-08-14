@@ -37,7 +37,7 @@ use zebra_chain::{
 };
 
 use zebra_node_services::mempool;
-use zebra_script::CachedFfiTransaction;
+use zebra_script::{CachedFfiTransaction, Sigops};
 use zebra_state as zs;
 
 use crate::{error::TransactionError, groth16::DescriptionWrapper, primitives, script, BoxError};
@@ -202,7 +202,7 @@ pub enum Response {
 
         /// The number of legacy signature operations in this transaction's
         /// transparent inputs and outputs.
-        legacy_sigop_count: u64,
+        sigops: u32,
     },
 
     /// A response to a mempool transaction verification request.
@@ -343,12 +343,10 @@ impl Response {
 
     /// The number of legacy transparent signature operations in this transaction's
     /// inputs and outputs.
-    pub fn legacy_sigop_count(&self) -> u64 {
+    pub fn sigops(&self) -> u32 {
         match self {
-            Response::Block {
-                legacy_sigop_count, ..
-            } => *legacy_sigop_count,
-            Response::Mempool { transaction, .. } => transaction.legacy_sigop_count,
+            Response::Block { sigops, .. } => *sigops,
+            Response::Mempool { transaction, .. } => transaction.sigops,
         }
     }
 
@@ -408,7 +406,7 @@ where
                 return Ok(Response::Block {
                     tx_id,
                     miner_fee: Some(verified_tx.miner_fee),
-                    legacy_sigop_count: verified_tx.legacy_sigop_count
+                    sigops: verified_tx.sigops
                 });
             }
 
@@ -489,8 +487,9 @@ where
                 Self::check_maturity_height(&network, &req, &spent_utxos)?;
             }
 
+            let nu = req.upgrade(&network);
             let cached_ffi_transaction =
-                Arc::new(CachedFfiTransaction::new(tx.clone(), spent_outputs));
+                Arc::new(CachedFfiTransaction::new(tx.clone(), Arc::new(spent_outputs), nu).map_err(|_| TransactionError::UnsupportedByNetworkUpgrade(tx.version(), nu))?);
 
             tracing::trace!(?tx_id, "got state UTXOs");
 
@@ -580,24 +579,24 @@ where
                 };
             }
 
-            let legacy_sigop_count = cached_ffi_transaction.legacy_sigop_count()?;
+            let sigops = tx.sigops().map_err(zebra_script::Error::from)?;
 
             let rsp = match req {
                 Request::Block { .. } => Response::Block {
                     tx_id,
                     miner_fee,
-                    legacy_sigop_count,
+                    sigops,
                 },
                 Request::Mempool { transaction: tx, .. } => {
                     let transaction = VerifiedUnminedTx::new(
                         tx,
                         miner_fee.expect("fee should have been checked earlier"),
-                        legacy_sigop_count,
+                        sigops,
                     )?;
 
                     if let Some(mut mempool) = mempool {
                         tokio::spawn(async move {
-                            // Best-effort poll of the mempool to provide a timely response to 
+                            // Best-effort poll of the mempool to provide a timely response to
                             // `sendrawtransaction` RPC calls or `AwaitOutput` mempool calls.
                             tokio::time::sleep(POLL_MEMPOOL_DELAY).await;
                             let _ = mempool
@@ -889,16 +888,12 @@ where
 
         Self::verify_v4_transaction_network_upgrade(&tx, nu)?;
 
-        let shielded_sighash = tx.sighash(
-            nu,
-            HashType::ALL,
-            cached_ffi_transaction.all_previous_outputs(),
-            None,
-        );
+        let shielded_sighash = cached_ffi_transaction
+            .sighasher()
+            .sighash(HashType::ALL, None);
 
         Ok(Self::verify_transparent_inputs_and_outputs(
             request,
-            network,
             script_verifier,
             cached_ffi_transaction,
         )?
@@ -939,6 +934,7 @@ where
             | NetworkUpgrade::Canopy
             | NetworkUpgrade::Nu5
             | NetworkUpgrade::Nu6
+            | NetworkUpgrade::Nu6_1
             | NetworkUpgrade::Nu7 => Ok(()),
 
             // Does not support V4 transactions
@@ -984,16 +980,12 @@ where
 
         Self::verify_v5_transaction_network_upgrade(&transaction, nu)?;
 
-        let shielded_sighash = transaction.sighash(
-            nu,
-            HashType::ALL,
-            cached_ffi_transaction.all_previous_outputs(),
-            None,
-        );
+        let shielded_sighash = cached_ffi_transaction
+            .sighasher()
+            .sighash(HashType::ALL, None);
 
         Ok(Self::verify_transparent_inputs_and_outputs(
             request,
-            network,
             script_verifier,
             cached_ffi_transaction,
         )?
@@ -1025,7 +1017,10 @@ where
             //
             // Note: Here we verify the transaction version number of the above rule, the group
             // id is checked in zebra-chain crate, in the transaction serialize.
-            NetworkUpgrade::Nu5 | NetworkUpgrade::Nu6 | NetworkUpgrade::Nu7 => Ok(()),
+            NetworkUpgrade::Nu5
+            | NetworkUpgrade::Nu6
+            | NetworkUpgrade::Nu6_1
+            | NetworkUpgrade::Nu7 => Ok(()),
 
             // Does not support V5 transactions
             NetworkUpgrade::Genesis
@@ -1067,7 +1062,6 @@ where
     /// Returns script verification responses via the `utxo_sender`.
     fn verify_transparent_inputs_and_outputs(
         request: &Request,
-        network: &Network,
         script_verifier: script::Verifier,
         cached_ffi_transaction: Arc<CachedFfiTransaction>,
     ) -> Result<AsyncChecks, TransactionError> {
@@ -1079,14 +1073,11 @@ where
             Ok(AsyncChecks::new())
         } else {
             // feed all of the inputs to the script verifier
-            // the script_verifier also checks transparent sighashes, using its own implementation
             let inputs = transaction.inputs();
-            let upgrade = request.upgrade(network);
 
             let script_checks = (0..inputs.len())
                 .map(move |input_index| {
                     let request = script::Request {
-                        upgrade,
                         cached_ffi_transaction: cached_ffi_transaction.clone(),
                         input_index,
                     };

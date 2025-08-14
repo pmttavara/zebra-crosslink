@@ -1,21 +1,12 @@
 //! Inbound service tests with a fake peer set.
 
-use crate::{
-    components::{
-        inbound::{downloads::MAX_INBOUND_CONCURRENCY, Inbound, InboundSetupData},
-        mempool::{
-            gossip_mempool_transaction_id, Config as MempoolConfig, Mempool, MempoolError,
-            SameEffectsChainRejectionError, UnboxMempoolError,
-        },
-        sync::{self, BlockGossipError, SyncStatus, PEER_GOSSIP_DELAY},
-    },
-    BoxError,
-};
-use futures::FutureExt;
 use std::{collections::HashSet, iter, net::SocketAddr, str::FromStr, sync::Arc, time::Duration};
+
+use futures::FutureExt;
 use tokio::{sync::oneshot, task::JoinHandle, time::timeout};
 use tower::{buffer::Buffer, builder::ServiceBuilder, util::BoxService, Service, ServiceExt};
 use tracing::{Instrument, Span};
+
 use zebra_chain::{
     amount::Amount,
     block::{Block, Height},
@@ -33,9 +24,22 @@ use zebra_network::{
     AddressBook, InventoryResponse, Request, Response,
 };
 use zebra_node_services::mempool;
-use zebra_rpc::methods::types::submit_block::SubmitBlockChannel;
+use zebra_rpc::SubmitBlockChannel;
 use zebra_state::{ChainTipChange, Config as StateConfig, CHAIN_TIP_UPDATE_WAIT_LIMIT};
 use zebra_test::mock_service::{MockService, PanicAssertion};
+
+use crate::{
+    components::{
+        inbound::{downloads::MAX_INBOUND_CONCURRENCY, Inbound, InboundSetupData},
+        mempool::{
+            gossip_mempool_transaction_id, Config as MempoolConfig, Mempool, MempoolError,
+            SameEffectsChainRejectionError, UnboxMempoolError,
+        },
+        sync::{self, BlockGossipError, SyncStatus, PEER_GOSSIP_DELAY},
+    },
+    BoxError,
+};
+
 use InventoryResponse::*;
 
 /// Maximum time to wait for a network service request.
@@ -963,7 +967,7 @@ async fn setup(
     // which is called by the gossip_best_tip_block_hashes task once the chain tip changes.
 
     let (misbehavior_tx, _misbehavior_rx) = tokio::sync::mpsc::channel(1);
-    let (mut mempool_service, transaction_receiver) = Mempool::new(
+    let (mut mempool_service, transaction_subscriber) = Mempool::new(
         &MempoolConfig::default(),
         buffered_peer_set.clone(),
         state_service.clone(),
@@ -989,7 +993,7 @@ async fn setup(
     );
 
     let tx_gossip_task_handle = tokio::spawn(gossip_mempool_transaction_id(
-        transaction_receiver,
+        transaction_subscriber.subscribe(),
         peer_set.clone(),
     ));
 

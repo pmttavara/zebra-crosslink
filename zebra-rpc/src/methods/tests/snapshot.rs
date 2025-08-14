@@ -18,22 +18,23 @@ use insta::{dynamic_redaction, Settings};
 use jsonrpsee::core::RpcResult as Result;
 use tower::{buffer::Buffer, util::BoxService, Service};
 
+use zcash_address::{ToAddress, ZcashAddress};
+use zcash_protocol::consensus::NetworkType;
 use zebra_chain::{
     block::{Block, Hash},
     chain_sync_status::MockSyncStatus,
     chain_tip::mock::MockChainTip,
     orchard,
     parameters::{
-        subsidy::POST_NU6_FUNDING_STREAMS_TESTNET,
+        subsidy::FUNDING_STREAMS_TESTNET,
         testnet::{self, ConfiguredActivationHeights, Parameters},
         Network::{self, Mainnet},
-        NetworkUpgrade,
+        NetworkKind, NetworkUpgrade,
     },
     sapling,
     serialization::{DateTime32, ZcashDeserializeInto},
     subtree::NoteCommitmentSubtreeData,
     transaction::Transaction,
-    transparent,
     work::difficulty::CompactDifficulty,
 };
 use zebra_consensus::Request;
@@ -52,15 +53,12 @@ use crate::methods::{
     hex_data::HexData,
     tests::utils::fake_history_tree,
     types::{
-        get_block_template::{self, GetBlockTemplateRequestMode},
-        get_mining_info,
+        get_block_template::GetBlockTemplateRequestMode,
         long_poll::{LongPollId, LONG_POLL_ID_LENGTH},
         peer_info::PeerInfo,
-        submit_block,
-        subsidy::BlockSubsidy,
-        unified_address, validate_address, z_validate_address,
+        subsidy::GetBlockSubsidyResponse,
     },
-    GetBlockHash,
+    GetBlockHashResponse,
 };
 
 use super::super::*;
@@ -78,7 +76,7 @@ async fn test_rpc_response_data() {
         .with_network_name("NU6Testnet")
         .with_activation_heights(ConfiguredActivationHeights {
             blossom: Some(584_000),
-            nu6: Some(POST_NU6_FUNDING_STREAMS_TESTNET.height_range().start.0),
+            nu6: Some(FUNDING_STREAMS_TESTNET[1].height_range().start.0),
             ..Default::default()
         })
         .to_network();
@@ -136,7 +134,8 @@ async fn test_z_get_treestate() {
         .map(|(_, block_bytes)| block_bytes.zcash_deserialize_into().unwrap())
         .collect();
 
-    let (_, state, tip, _) = zebra_state::populated_state(blocks.clone(), &custom_testnet).await;
+    let (state, read_state, tip, _) =
+        zebra_state::populated_state(blocks.clone(), &custom_testnet).await;
     let (_tx, rx) = tokio::sync::watch::channel(None);
     let (rpc, _) = RpcImpl::new(
         custom_testnet,
@@ -147,6 +146,7 @@ async fn test_z_get_treestate() {
         Buffer::new(MockService::build().for_unit_tests::<_, _, BoxError>(), 1),
         Buffer::new(MockService::build().for_unit_tests::<_, _, BoxError>(), 1),
         state,
+        read_state,
         Buffer::new(MockService::build().for_unit_tests::<_, _, BoxError>(), 1),
         MockSyncStatus::default(),
         tip,
@@ -207,8 +207,8 @@ async fn test_rpc_response_data_for_network(network: &Network) {
     let block_data = network.blockchain_map();
 
     let blocks: Vec<Arc<Block>> = block_data
-        .iter()
-        .map(|(_height, block_bytes)| block_bytes.zcash_deserialize_into().unwrap())
+        .values()
+        .map(|block_bytes| block_bytes.zcash_deserialize_into().unwrap())
         .collect();
 
     let mut mempool: MockService<_, _, _, zebra_node_services::BoxError> =
@@ -232,6 +232,7 @@ async fn test_rpc_response_data_for_network(network: &Network) {
     test_mining_rpcs(
         network,
         mempool.clone(),
+        state.clone(),
         read_state.clone(),
         block_verifier_router.clone(),
         settings.clone(),
@@ -248,6 +249,7 @@ async fn test_rpc_response_data_for_network(network: &Network) {
         "RPC test",
         Buffer::new(mempool.clone(), 1),
         Buffer::new(crosslink.clone(), 1),
+        state,
         read_state,
         block_verifier_router,
         MockSyncStatus::default(),
@@ -430,7 +432,6 @@ async fn test_rpc_response_data_for_network(network: &Network) {
     // - a request to get all mempool transactions will be made by `getrawmempool` behind the scenes.
     // - as we have the mempool mocked we need to expect a request and wait for a response,
     // which will be an empty mempool in this case.
-    // Note: this depends on `SHOULD_USE_ZCASHD_ORDER` being true.
     let mempool_req = mempool
         .expect_request_that(|request| matches!(request, mempool::Request::FullTransactions))
         .map(|responder| {
@@ -441,16 +442,29 @@ async fn test_rpc_response_data_for_network(network: &Network) {
             });
         });
 
-    // make the api call
-    let get_raw_mempool = rpc.get_raw_mempool(None);
-    let (response, _) = futures::join!(get_raw_mempool, mempool_req);
-    let GetRawMempool::TxIds(get_raw_mempool) =
-        response.expect("We should have a GetRawTransaction struct")
-    else {
-        panic!("should return TxIds for non verbose");
-    };
+    let (rsp, _) = futures::join!(rpc.get_raw_mempool(Some(true)), mempool_req);
 
-    snapshot_rpc_getrawmempool(get_raw_mempool, &settings);
+    match rsp {
+        Ok(GetRawMempoolResponse::Verbose(rsp)) => {
+            settings.bind(|| insta::assert_json_snapshot!("get_raw_mempool_verbose", rsp));
+        }
+        _ => panic!("getrawmempool RPC must return `GetRawMempool::Verbose`"),
+    }
+
+    let mempool_req = mempool
+        .expect_request_that(|request| matches!(request, mempool::Request::TransactionIds))
+        .map(|responder| {
+            responder.respond(mempool::Response::TransactionIds(Default::default()));
+        });
+
+    let (rsp, _) = futures::join!(rpc.get_raw_mempool(Some(false)), mempool_req);
+
+    match rsp {
+        Ok(GetRawMempoolResponse::TxIds(ref rsp)) => {
+            settings.bind(|| insta::assert_json_snapshot!("get_raw_mempool", rsp));
+        }
+        _ => panic!("getrawmempool RPC must return `GetRawMempool::TxIds`"),
+    }
 
     // `getrawtransaction` verbosity=0
     //
@@ -467,7 +481,7 @@ async fn test_rpc_response_data_for_network(network: &Network) {
 
     let txid = first_block_first_tx.hash().encode_hex::<String>();
 
-    let rpc_req = rpc.get_raw_transaction(txid.clone(), Some(0u8));
+    let rpc_req = rpc.get_raw_transaction(txid.clone(), Some(0u8), None);
     let (rsp, _) = futures::join!(rpc_req, mempool_req);
     settings.bind(|| insta::assert_json_snapshot!(format!("getrawtransaction_verbosity=0"), rsp));
     mempool.expect_no_requests().await;
@@ -481,7 +495,7 @@ async fn test_rpc_response_data_for_network(network: &Network) {
             responder.respond(mempool::Response::Transactions(vec![]));
         });
 
-    let rpc_req = rpc.get_raw_transaction(txid, Some(1u8));
+    let rpc_req = rpc.get_raw_transaction(txid, Some(1u8), None);
     let (rsp, _) = futures::join!(rpc_req, mempool_req);
     settings.bind(|| insta::assert_json_snapshot!(format!("getrawtransaction_verbosity=1"), rsp));
     mempool.expect_no_requests().await;
@@ -495,14 +509,15 @@ async fn test_rpc_response_data_for_network(network: &Network) {
             responder.respond(mempool::Response::Transactions(vec![]));
         });
 
-    let rpc_req = rpc.get_raw_transaction(transaction::Hash::from([0; 32]).encode_hex(), Some(1));
+    let rpc_req =
+        rpc.get_raw_transaction(transaction::Hash::from([0; 32]).encode_hex(), Some(1), None);
     let (rsp, _) = futures::join!(rpc_req, mempool_req);
     settings.bind(|| insta::assert_json_snapshot!(format!("getrawtransaction_unknown_txid"), rsp));
     mempool.expect_no_requests().await;
 
     // `getrawtransaction` with an invalid TXID
     let rsp = rpc
-        .get_raw_transaction("aBadC0de".to_owned(), Some(1))
+        .get_raw_transaction("aBadC0de".to_owned(), Some(1), None)
         .await;
     settings.bind(|| insta::assert_json_snapshot!(format!("getrawtransaction_invalid_txid"), rsp));
     mempool.expect_no_requests().await;
@@ -575,6 +590,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
     let mut state = MockService::build().for_unit_tests();
     let mempool = MockService::build().for_unit_tests();
     let tfl_service = MockService::build().for_unit_tests();
+    let mut read_state = MockService::build().for_unit_tests();
 
     let (_tx, rx) = tokio::sync::watch::channel(None);
     let (rpc, _) = RpcImpl::new(
@@ -586,6 +602,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
         mempool,
         tfl_service,
         state.clone(),
+        read_state.clone(),
         MockService::build().for_unit_tests(),
         MockSyncStatus::default(),
         latest_chain_tip,
@@ -606,7 +623,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
     }
 
     // Prepare the response.
-    let rsp = state
+    let rsp = read_state
         .expect_request_that(|req| matches!(req, ReadRequest::SaplingSubtrees { .. }))
         .map(|responder| responder.respond(ReadResponse::SaplingSubtrees(subtrees)));
 
@@ -634,7 +651,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
     }
 
     // Prepare the response.
-    let rsp = state
+    let rsp = read_state
         .expect_request_that(|req| matches!(req, ReadRequest::OrchardSubtrees { .. }))
         .map(|responder| responder.respond(ReadResponse::OrchardSubtrees(subtrees)));
 
@@ -652,7 +669,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
 }
 
 /// Snapshot `getinfo` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getinfo(info: GetInfo, settings: &insta::Settings) {
+fn snapshot_rpc_getinfo(info: GetInfoResponse, settings: &insta::Settings) {
     settings.bind(|| {
         insta::assert_json_snapshot!("get_info", info, {
             ".subversion" => dynamic_redaction(|value, _path| {
@@ -671,7 +688,7 @@ fn snapshot_rpc_getinfo(info: GetInfo, settings: &insta::Settings) {
 /// Snapshot `getblockchaininfo` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_getblockchaininfo(
     variant_suffix: &str,
-    info: GetBlockChainInfo,
+    info: GetBlockchainInfoResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -693,7 +710,10 @@ fn snapshot_rpc_getblockchaininfo(
 }
 
 /// Snapshot `getaddressbalance` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getaddressbalance(address_balance: AddressBalance, settings: &insta::Settings) {
+fn snapshot_rpc_getaddressbalance(
+    address_balance: GetAddressBalanceResponse,
+    settings: &insta::Settings,
+) {
     settings.bind(|| insta::assert_json_snapshot!("get_address_balance", address_balance));
 }
 
@@ -703,7 +723,7 @@ fn snapshot_rpc_getaddressbalance(address_balance: AddressBalance, settings: &in
 /// The snapshot file does not contain any data, but it does enforce the response format.
 fn snapshot_rpc_getblock_data(
     variant: &'static str,
-    block: GetBlock,
+    block: GetBlockResponse,
     expected_block_data: &[u8],
     settings: &insta::Settings,
 ) {
@@ -724,7 +744,7 @@ fn snapshot_rpc_getblock_data(
 /// Check valid `getblock` response with verbosity=1, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_getblock_verbose(
     variant: &'static str,
-    block: GetBlock,
+    block: GetBlockResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| insta::assert_json_snapshot!(format!("get_block_verbose_{variant}"), block));
@@ -733,7 +753,7 @@ fn snapshot_rpc_getblock_verbose(
 /// Check valid `getblockheader` response using `cargo insta`.
 fn snapshot_rpc_getblockheader(
     variant: &'static str,
-    block: GetBlockHeader,
+    block: GetBlockHeaderResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| insta::assert_json_snapshot!(format!("get_block_header_{variant}"), block));
@@ -742,7 +762,7 @@ fn snapshot_rpc_getblockheader(
 /// Check invalid height `getblock` response using `cargo insta`.
 fn snapshot_rpc_getblock_invalid(
     variant: &'static str,
-    response: Result<GetBlock>,
+    response: Result<GetBlockResponse>,
     settings: &insta::Settings,
 ) {
     settings
@@ -750,13 +770,8 @@ fn snapshot_rpc_getblock_invalid(
 }
 
 /// Snapshot `getbestblockhash` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getbestblockhash(tip_hash: GetBlockHash, settings: &insta::Settings) {
+fn snapshot_rpc_getbestblockhash(tip_hash: GetBlockHashResponse, settings: &insta::Settings) {
     settings.bind(|| insta::assert_json_snapshot!("get_best_block_hash", tip_hash));
-}
-
-/// Snapshot `getrawmempool` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getrawmempool(raw_mempool: Vec<String>, settings: &insta::Settings) {
-    settings.bind(|| insta::assert_json_snapshot!("get_raw_mempool", raw_mempool));
 }
 
 /// Snapshot valid `getaddressbalance` response, using `cargo insta` and JSON serialization.
@@ -785,7 +800,7 @@ fn snapshot_rpc_getaddresstxids_invalid(
 }
 
 /// Snapshot `getaddressutxos` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getaddressutxos(utxos: Vec<GetAddressUtxos>, settings: &insta::Settings) {
+fn snapshot_rpc_getaddressutxos(utxos: Vec<Utxo>, settings: &insta::Settings) {
     settings.bind(|| insta::assert_json_snapshot!("get_address_utxos", utxos));
 }
 
@@ -795,14 +810,14 @@ fn snapshot_rpc_getblockcount(block_count: u32, settings: &insta::Settings) {
 }
 
 /// Snapshot valid `getblockhash` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getblockhash_valid(block_hash: GetBlockHash, settings: &insta::Settings) {
+fn snapshot_rpc_getblockhash_valid(block_hash: GetBlockHashResponse, settings: &insta::Settings) {
     settings.bind(|| insta::assert_json_snapshot!("get_block_hash_valid", block_hash));
 }
 
 /// Snapshot invalid `getblockhash` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_getblockhash_invalid(
     variant: &'static str,
-    block_hash: Result<GetBlockHash>,
+    block_hash: Result<GetBlockHashResponse>,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -813,7 +828,7 @@ fn snapshot_rpc_getblockhash_invalid(
 /// Snapshot `getblocktemplate` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_getblocktemplate(
     variant: &'static str,
-    block_template: get_block_template::Response,
+    block_template: GetBlockTemplateResponse,
     coinbase_tx: Option<Transaction>,
     settings: &insta::Settings,
 ) {
@@ -833,7 +848,7 @@ fn snapshot_rpc_getblocktemplate(
 
 /// Snapshot `submitblock` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_submit_block_invalid(
-    submit_block_response: submit_block::Response,
+    submit_block_response: SubmitBlockResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -842,17 +857,14 @@ fn snapshot_rpc_submit_block_invalid(
 }
 
 /// Snapshot `getmininginfo` response, using `cargo insta` and JSON serialization.
-fn snapshot_rpc_getmininginfo(
-    get_mining_info: get_mining_info::Response,
-    settings: &insta::Settings,
-) {
+fn snapshot_rpc_getmininginfo(get_mining_info: GetMiningInfoResponse, settings: &insta::Settings) {
     settings.bind(|| insta::assert_json_snapshot!("get_mining_info", get_mining_info));
 }
 
 /// Snapshot `getblocksubsidy` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_getblocksubsidy(
     variant: &'static str,
-    get_block_subsidy: BlockSubsidy,
+    get_block_subsidy: GetBlockSubsidyResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -873,7 +885,7 @@ fn snapshot_rpc_getnetworksolps(get_network_sol_ps: u64, settings: &insta::Setti
 /// Snapshot `validateaddress` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_validateaddress(
     variant: &'static str,
-    validate_address: validate_address::Response,
+    validate_address: ValidateAddressResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -884,7 +896,7 @@ fn snapshot_rpc_validateaddress(
 /// Snapshot `z_validateaddress` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_z_validateaddress(
     variant: &'static str,
-    z_validate_address: z_validate_address::Response,
+    z_validate_address: ZValidateAddressResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -906,7 +918,7 @@ fn snapshot_rpc_getdifficulty_valid(
 /// Snapshot `snapshot_rpc_z_listunifiedreceivers` response, using `cargo insta` and JSON serialization.
 fn snapshot_rpc_z_listunifiedreceivers(
     variant: &'static str,
-    response: unified_address::Response,
+    response: ZListUnifiedReceiversResponse,
     settings: &insta::Settings,
 ) {
     settings.bind(|| {
@@ -921,7 +933,7 @@ fn network_string(network: &Network) -> String {
     net_suffix
 }
 
-pub async fn test_mining_rpcs<ReadState>(
+pub async fn test_mining_rpcs<State, ReadState>(
     network: &Network,
     mempool: MockService<
         mempool::Request,
@@ -929,10 +941,20 @@ pub async fn test_mining_rpcs<ReadState>(
         PanicAssertion,
         zebra_node_services::BoxError,
     >,
+    state: State,
     read_state: ReadState,
     block_verifier_router: Buffer<BoxService<Request, Hash, RouterError>, Request>,
     settings: Settings,
 ) where
+    State: Service<
+            zebra_state::Request,
+            Response = zebra_state::Response,
+            Error = zebra_state::BoxError,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+    <State as Service<zebra_state::Request>>::Future: Send,
     ReadState: Service<
             zebra_state::ReadRequest,
             Response = zebra_state::ReadResponse,
@@ -948,12 +970,11 @@ pub async fn test_mining_rpcs<ReadState>(
 
     #[allow(clippy::unnecessary_struct_initialization)]
     let mining_conf = crate::config::mining::Config {
-        miner_address: Some(transparent::Address::from_script_hash(
-            network.kind(),
-            [0xad; 20],
+        miner_address: Some(ZcashAddress::from_transparent_p2sh(
+            NetworkType::from(NetworkKind::from(network)),
+            [0x7e; 20],
         )),
         extra_coinbase_data: None,
-        debug_like_zcashd: true,
         // TODO: Use default field values when optional features are enabled in tests #8183
         internal_miner: true,
     };
@@ -1003,6 +1024,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "RPC test",
         Buffer::new(mempool.clone(), 1),
         mock_tfl_service,
+        state,
         read_state,
         block_verifier_router.clone(),
         mock_sync_status.clone(),
@@ -1093,6 +1115,7 @@ pub async fn test_mining_rpcs<ReadState>(
     // `getblocktemplate` - the following snapshots use a mock read_state
 
     // get a new empty state
+    let state = MockService::build().for_unit_tests();
     let read_state = MockService::build().for_unit_tests();
 
     let make_mock_read_state_request_handler = || {
@@ -1142,6 +1165,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "RPC test",
         Buffer::new(mempool.clone(), 1),
         mock_tfl_service,
+        state.clone(),
         read_state.clone(),
         block_verifier_router,
         mock_sync_status.clone(),
@@ -1165,7 +1189,7 @@ pub async fn test_mining_rpcs<ReadState>(
         mock_read_state_request_handler,
     );
 
-    let get_block_template::Response::TemplateMode(get_block_template) =
+    let GetBlockTemplateResponse::TemplateMode(get_block_template) =
         get_block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
         panic!(
@@ -1199,7 +1223,7 @@ pub async fn test_mining_rpcs<ReadState>(
     let mock_mempool_request_handler = make_mock_mempool_request_handler();
 
     let get_block_template_fut = rpc_mock_state.get_block_template(
-        get_block_template::JsonParameters {
+        GetBlockTemplateParameters {
             long_poll_id: long_poll_id.into(),
             ..Default::default()
         }
@@ -1212,7 +1236,7 @@ pub async fn test_mining_rpcs<ReadState>(
         mock_read_state_request_handler,
     );
 
-    let get_block_template::Response::TemplateMode(get_block_template) =
+    let GetBlockTemplateResponse::TemplateMode(get_block_template) =
         get_block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
         panic!(
@@ -1236,12 +1260,11 @@ pub async fn test_mining_rpcs<ReadState>(
 
     // `getblocktemplate` proposal mode variant
 
-    let get_block_template =
-        rpc_mock_state.get_block_template(Some(get_block_template::JsonParameters {
-            mode: GetBlockTemplateRequestMode::Proposal,
-            data: Some(HexData("".into())),
-            ..Default::default()
-        }));
+    let get_block_template = rpc_mock_state.get_block_template(Some(GetBlockTemplateParameters {
+        mode: GetBlockTemplateRequestMode::Proposal,
+        data: Some(HexData("".into())),
+        ..Default::default()
+    }));
 
     let get_block_template = get_block_template
         .await
@@ -1261,6 +1284,7 @@ pub async fn test_mining_rpcs<ReadState>(
         "RPC test",
         Buffer::new(mempool, 1),
         mock_tfl_service,
+        state.clone(),
         read_state.clone(),
         mock_block_verifier_router.clone(),
         mock_sync_status,
@@ -1271,7 +1295,7 @@ pub async fn test_mining_rpcs<ReadState>(
     );
 
     let get_block_template_fut =
-        rpc_mock_state_verifier.get_block_template(Some(get_block_template::JsonParameters {
+        rpc_mock_state_verifier.get_block_template(Some(GetBlockTemplateParameters {
             mode: GetBlockTemplateRequestMode::Proposal,
             data: Some(HexData(BLOCK_MAINNET_1_BYTES.to_vec())),
             ..Default::default()

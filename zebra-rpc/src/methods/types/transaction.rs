@@ -1,40 +1,49 @@
 //! Transaction-related types.
 
-use super::zec::Zec;
-use chrono::{DateTime, Utc};
-use hex::ToHex;
 use std::sync::Arc;
+
+use crate::methods::arrayhex;
+use chrono::{DateTime, Utc};
+use derive_getters::Getters;
+use derive_new::new;
+use hex::ToHex;
+
 use zebra_chain::{
     amount::{self, Amount, NegativeOrZero, NonNegative},
-    block,
-    block::merkle::AUTH_DIGEST_PLACEHOLDER,
+    block::{self, merkle::AUTH_DIGEST_PLACEHOLDER, Height},
     parameters::Network,
+    primitives::ed25519,
     sapling::NotSmallOrderValueCommitment,
     transaction::{self, SerializedTransaction, Transaction, UnminedTx, VerifiedUnminedTx},
     transparent::Script,
 };
 use zebra_consensus::groth16::Description;
-use zebra_script::CachedFfiTransaction;
+use zebra_script::Sigops;
 use zebra_state::IntoDisk;
 
+use super::super::opthex;
+use super::zec::Zec;
+
 /// Transaction data and fields needed to generate blocks using the `getblocktemplate` RPC.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 #[serde(bound = "FeeConstraint: amount::Constraint + Clone")]
 pub struct TransactionTemplate<FeeConstraint>
 where
-    FeeConstraint: amount::Constraint + Clone,
+    FeeConstraint: amount::Constraint + Clone + Copy,
 {
     /// The hex-encoded serialized data for this transaction.
     #[serde(with = "hex")]
-    pub data: SerializedTransaction,
+    pub(crate) data: SerializedTransaction,
 
     /// The transaction ID of this transaction.
     #[serde(with = "hex")]
+    #[getter(copy)]
     pub(crate) hash: transaction::Hash,
 
     /// The authorizing data digest of a v5 transaction, or a placeholder for older versions.
     #[serde(rename = "authdigest")]
     #[serde(with = "hex")]
+    #[getter(copy)]
     pub(crate) auth_digest: transaction::AuthDigest,
 
     /// The transactions in this block template that this transaction depends upon.
@@ -50,10 +59,11 @@ where
     /// Non-coinbase transactions must be `NonNegative`.
     /// The Coinbase transaction `fee` is the negative sum of the fees of the transactions in
     /// the block, so their fee must be `NegativeOrZero`.
+    #[getter(copy)]
     pub(crate) fee: Amount<FeeConstraint>,
 
     /// The number of transparent signature operations in this transaction.
-    pub(crate) sigops: u64,
+    pub(crate) sigops: u32,
 
     /// Is this transaction required in the block?
     ///
@@ -83,7 +93,7 @@ impl From<&VerifiedUnminedTx> for TransactionTemplate<NonNegative> {
 
             fee: tx.miner_fee,
 
-            sigops: tx.legacy_sigop_count,
+            sigops: tx.sigops,
 
             // Zebra does not require any transactions except the coinbase transaction.
             required: false,
@@ -114,13 +124,6 @@ impl TransactionTemplate<NegativeOrZero> {
             .constrain()
             .expect("negating a NonNegative amount always results in a valid NegativeOrZero");
 
-        let legacy_sigop_count = CachedFfiTransaction::new(tx.transaction.clone(), Vec::new())
-            .legacy_sigop_count()
-            .expect(
-                "invalid generated coinbase transaction: \
-                 failure in zcash_script sigop count",
-            );
-
         Self {
             data: tx.transaction.as_ref().into(),
             hash: tx.id.mined_id(),
@@ -131,7 +134,7 @@ impl TransactionTemplate<NegativeOrZero> {
 
             fee: miner_fee,
 
-            sigops: legacy_sigop_count,
+            sigops: tx.sigops().expect("sigops count should be valid"),
 
             // Zcash requires a coinbase transaction.
             required: true,
@@ -141,60 +144,158 @@ impl TransactionTemplate<NegativeOrZero> {
 
 /// A Transaction object as returned by `getrawtransaction` and `getblock` RPC
 /// requests.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct TransactionObject {
+    /// Whether specified block is in the active chain or not (only present with
+    /// explicit "blockhash" argument)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[getter(copy)]
+    pub(crate) in_active_chain: Option<bool>,
     /// The raw transaction, encoded as hex bytes.
     #[serde(with = "hex")]
-    pub hex: SerializedTransaction,
+    pub(crate) hex: SerializedTransaction,
     /// The height of the block in the best chain that contains the tx or `None` if the tx is in
     /// the mempool.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub height: Option<u32>,
+    #[getter(copy)]
+    pub(crate) height: Option<u32>,
     /// The height diff between the block containing the tx and the best chain tip + 1 or `None`
     /// if the tx is in the mempool.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub confirmations: Option<u32>,
+    #[getter(copy)]
+    pub(crate) confirmations: Option<u32>,
 
     /// Transparent inputs of the transaction.
-    #[serde(rename = "vin", skip_serializing_if = "Option::is_none")]
-    pub inputs: Option<Vec<Input>>,
+    #[serde(rename = "vin")]
+    pub(crate) inputs: Vec<Input>,
 
     /// Transparent outputs of the transaction.
-    #[serde(rename = "vout", skip_serializing_if = "Option::is_none")]
-    pub outputs: Option<Vec<Output>>,
+    #[serde(rename = "vout")]
+    pub(crate) outputs: Vec<Output>,
 
     /// Sapling spends of the transaction.
-    #[serde(rename = "vShieldedSpend", skip_serializing_if = "Option::is_none")]
-    pub shielded_spends: Option<Vec<ShieldedSpend>>,
+    #[serde(rename = "vShieldedSpend")]
+    pub(crate) shielded_spends: Vec<ShieldedSpend>,
 
     /// Sapling outputs of the transaction.
-    #[serde(rename = "vShieldedOutput", skip_serializing_if = "Option::is_none")]
-    pub shielded_outputs: Option<Vec<ShieldedOutput>>,
+    #[serde(rename = "vShieldedOutput")]
+    pub(crate) shielded_outputs: Vec<ShieldedOutput>,
+
+    /// Sapling binding signature of the transaction.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "opthex",
+        default,
+        rename = "bindingSig"
+    )]
+    #[getter(copy)]
+    pub(crate) binding_sig: Option<[u8; 64]>,
+
+    /// JoinSplit public key of the transaction.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "opthex",
+        default,
+        rename = "joinSplitPubKey"
+    )]
+    #[getter(copy)]
+    pub(crate) joinsplit_pub_key: Option<[u8; 32]>,
+
+    /// JoinSplit signature of the transaction.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "opthex",
+        default,
+        rename = "joinSplitSig"
+    )]
+    #[getter(copy)]
+    pub(crate) joinsplit_sig: Option<[u8; ed25519::Signature::BYTE_SIZE]>,
 
     /// Orchard actions of the transaction.
     #[serde(rename = "orchard", skip_serializing_if = "Option::is_none")]
-    pub orchard: Option<Orchard>,
+    pub(crate) orchard: Option<Orchard>,
 
     /// The net value of Sapling Spends minus Outputs in ZEC
     #[serde(rename = "valueBalance", skip_serializing_if = "Option::is_none")]
-    pub value_balance: Option<f64>,
+    #[getter(copy)]
+    pub(crate) value_balance: Option<f64>,
 
     /// The net value of Sapling Spends minus Outputs in zatoshis
     #[serde(rename = "valueBalanceZat", skip_serializing_if = "Option::is_none")]
-    pub value_balance_zat: Option<i64>,
+    #[getter(copy)]
+    pub(crate) value_balance_zat: Option<i64>,
 
     /// The size of the transaction in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<i64>,
+    #[getter(copy)]
+    pub(crate) size: Option<i64>,
 
     /// The time the transaction was included in a block.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub time: Option<i64>,
+    #[getter(copy)]
+    pub(crate) time: Option<i64>,
+
+    /// The transaction identifier, encoded as hex bytes.
+    #[serde(with = "hex")]
+    #[getter(copy)]
+    pub txid: transaction::Hash,
+
     // TODO: some fields not yet supported
+    //
+    /// The transaction's auth digest. For pre-v5 transactions this will be
+    /// ffff..ffff
+    #[serde(
+        rename = "authdigest",
+        with = "opthex",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    #[getter(copy)]
+    pub(crate) auth_digest: Option<transaction::AuthDigest>,
+
+    /// Whether the overwintered flag is set
+    pub(crate) overwintered: bool,
+
+    /// The version of the transaction.
+    pub(crate) version: u32,
+
+    /// The version group ID.
+    #[serde(
+        rename = "versiongroupid",
+        with = "opthex",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub(crate) version_group_id: Option<Vec<u8>>,
+
+    /// The lock time
+    #[serde(rename = "locktime")]
+    pub(crate) lock_time: u32,
+
+    /// The block height after which the transaction expires
+    #[serde(rename = "expiryheight", skip_serializing_if = "Option::is_none")]
+    #[getter(copy)]
+    pub(crate) expiry_height: Option<Height>,
+
+    /// The block hash
+    #[serde(
+        rename = "blockhash",
+        with = "opthex",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    #[getter(copy)]
+    pub(crate) block_hash: Option<block::Hash>,
+
+    /// The block height after which the transaction expires
+    #[serde(rename = "blocktime", skip_serializing_if = "Option::is_none")]
+    #[getter(copy)]
+    pub(crate) block_time: Option<i64>,
 }
 
 /// The transparent input of a transaction.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum Input {
     /// A coinbase input.
@@ -212,14 +313,15 @@ pub enum Input {
         /// The vout index.
         vout: u32,
         /// The script.
+        #[serde(rename = "scriptSig")]
         script_sig: ScriptSig,
         /// The script sequence number.
         sequence: u32,
         /// The value of the output being spent in ZEC.
         #[serde(skip_serializing_if = "Option::is_none")]
         value: Option<f64>,
-        /// The value of the output being spent, in zats.
-        #[serde(rename = "valueZat", skip_serializing_if = "Option::is_none")]
+        /// The value of the output being spent, in zats, named to match zcashd.
+        #[serde(rename = "valueSat", skip_serializing_if = "Option::is_none")]
         value_zat: Option<i64>,
         /// The address of the output being spent.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -228,7 +330,7 @@ pub enum Input {
 }
 
 /// The transparent output of a transaction.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct Output {
     /// The value in ZEC.
     value: f64,
@@ -243,7 +345,7 @@ pub struct Output {
 }
 
 /// The scriptPubKey of a transaction output.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct ScriptPubKey {
     /// the asm.
     // #9330: The `asm` field is not currently populated.
@@ -253,53 +355,64 @@ pub struct ScriptPubKey {
     hex: Script,
     /// The required sigs.
     #[serde(rename = "reqSigs")]
-    req_sigs: u32,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[getter(copy)]
+    req_sigs: Option<u32>,
     /// The type, eg 'pubkeyhash'.
     // #9330: The `type` field is not currently populated.
     r#type: String,
     /// The addresses.
-    addresses: Vec<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    addresses: Option<Vec<String>>,
 }
 
 /// The scriptSig of a transaction input.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct ScriptSig {
     /// The asm.
     // #9330: The `asm` field is not currently populated.
     asm: String,
     /// The hex.
-    #[serde(with = "hex")]
     hex: Script,
 }
 
 /// A Sapling spend of a transaction.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct ShieldedSpend {
     /// Value commitment to the input note.
     #[serde(with = "hex")]
+    #[getter(copy)]
     cv: NotSmallOrderValueCommitment,
     /// Merkle root of the Sapling note commitment tree.
     #[serde(with = "hex")]
+    #[getter(copy)]
     anchor: [u8; 32],
     /// The nullifier of the input note.
     #[serde(with = "hex")]
+    #[getter(copy)]
     nullifier: [u8; 32],
     /// The randomized public key for spendAuthSig.
     #[serde(with = "hex")]
+    #[getter(copy)]
     rk: [u8; 32],
     /// A zero-knowledge proof using the Sapling Spend circuit.
     #[serde(with = "hex")]
+    #[getter(copy)]
     proof: [u8; 192],
     /// A signature authorizing this Spend.
     #[serde(rename = "spendAuthSig", with = "hex")]
+    #[getter(copy)]
     spend_auth_sig: [u8; 64],
 }
 
 /// A Sapling output of a transaction.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct ShieldedOutput {
     /// Value commitment to the input note.
     #[serde(with = "hex")]
+    #[getter(copy)]
     cv: NotSmallOrderValueCommitment,
     /// The u-coordinate of the note commitment for the output note.
     #[serde(rename = "cmu", with = "hex")]
@@ -308,7 +421,7 @@ pub struct ShieldedOutput {
     #[serde(rename = "ephemeralKey", with = "hex")]
     ephemeral_key: [u8; 32],
     /// The output note encrypted to the recipient.
-    #[serde(rename = "encCiphertext", with = "hex")]
+    #[serde(rename = "encCiphertext", with = "arrayhex")]
     enc_ciphertext: [u8; 580],
     /// A ciphertext enabling the sender to recover the output note.
     #[serde(rename = "outCiphertext", with = "hex")]
@@ -319,7 +432,7 @@ pub struct ShieldedOutput {
 }
 
 /// Object with Orchard-specific information.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct Orchard {
     /// Array of Orchard actions.
     actions: Vec<OrchardAction>,
@@ -332,7 +445,8 @@ pub struct Orchard {
 }
 
 /// The Orchard action of a transaction.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, Getters, new)]
 pub struct OrchardAction {
     /// A value commitment to the net value of the input note minus the output note.
     #[serde(with = "hex")]
@@ -350,7 +464,7 @@ pub struct OrchardAction {
     #[serde(rename = "ephemeralKey", with = "hex")]
     ephemeral_key: [u8; 32],
     /// The output note encrypted to the recipient.
-    #[serde(rename = "encCiphertext", with = "hex")]
+    #[serde(rename = "encCiphertext", with = "arrayhex")]
     enc_ciphertext: [u8; 580],
     /// A ciphertext enabling the sender to recover the output note.
     #[serde(rename = "spendAuthSig", with = "hex")]
@@ -368,15 +482,28 @@ impl Default for TransactionObject {
             ),
             height: Option::default(),
             confirmations: Option::default(),
-            inputs: None,
-            outputs: None,
-            shielded_spends: None,
-            shielded_outputs: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            shielded_spends: Vec::new(),
+            shielded_outputs: Vec::new(),
             orchard: None,
+            binding_sig: None,
+            joinsplit_pub_key: None,
+            joinsplit_sig: None,
             value_balance: None,
             value_balance_zat: None,
             size: None,
             time: None,
+            txid: transaction::Hash::from([0u8; 32]),
+            in_active_chain: None,
+            auth_digest: None,
+            overwintered: false,
+            version: 4,
+            version_group_id: None,
+            lock_time: 0,
+            expiry_height: None,
+            block_hash: None,
+            block_time: None,
         }
     }
 }
@@ -384,120 +511,124 @@ impl Default for TransactionObject {
 impl TransactionObject {
     /// Converts `tx` and `height` into a new `GetRawTransaction` in the `verbose` format.
     #[allow(clippy::unwrap_in_result)]
-    pub(crate) fn from_transaction(
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_transaction(
         tx: Arc<Transaction>,
         height: Option<block::Height>,
         confirmations: Option<u32>,
         network: &Network,
         block_time: Option<DateTime<Utc>>,
+        block_hash: Option<block::Hash>,
+        in_active_chain: Option<bool>,
+        txid: transaction::Hash,
     ) -> Self {
+        let block_time = block_time.map(|bt| bt.timestamp());
         Self {
             hex: tx.clone().into(),
             height: height.map(|height| height.0),
             confirmations,
-            inputs: Some(
-                tx.inputs()
-                    .iter()
-                    .map(|input| match input {
-                        zebra_chain::transparent::Input::Coinbase { sequence, .. } => {
-                            Input::Coinbase {
-                                coinbase: input
-                                    .coinbase_script()
-                                    .expect("we know it is a valid coinbase script"),
-                                sequence: *sequence,
-                            }
-                        }
-                        zebra_chain::transparent::Input::PrevOut {
-                            sequence,
-                            unlock_script,
-                            outpoint,
-                        } => Input::NonCoinbase {
-                            txid: outpoint.hash.encode_hex(),
-                            vout: outpoint.index,
-                            script_sig: ScriptSig {
-                                asm: "".to_string(),
-                                hex: unlock_script.clone(),
-                            },
-                            sequence: *sequence,
-                            value: None,
-                            value_zat: None,
-                            address: None,
+            inputs: tx
+                .inputs()
+                .iter()
+                .map(|input| match input {
+                    zebra_chain::transparent::Input::Coinbase { sequence, .. } => Input::Coinbase {
+                        coinbase: input
+                            .coinbase_script()
+                            .expect("we know it is a valid coinbase script"),
+                        sequence: *sequence,
+                    },
+                    zebra_chain::transparent::Input::PrevOut {
+                        sequence,
+                        unlock_script,
+                        outpoint,
+                    } => Input::NonCoinbase {
+                        txid: outpoint.hash.encode_hex(),
+                        vout: outpoint.index,
+                        script_sig: ScriptSig {
+                            asm: "".to_string(),
+                            hex: unlock_script.clone(),
                         },
-                    })
-                    .collect(),
-            ),
-            outputs: Some(
-                tx.outputs()
-                    .iter()
-                    .enumerate()
-                    .map(|output| {
-                        let addresses = match output.1.address(network) {
-                            Some(address) => vec![address.to_string()],
-                            None => vec![],
-                        };
+                        sequence: *sequence,
+                        value: None,
+                        value_zat: None,
+                        address: None,
+                    },
+                })
+                .collect(),
+            outputs: tx
+                .outputs()
+                .iter()
+                .enumerate()
+                .map(|output| {
+                    // Parse the scriptPubKey to find destination addresses.
+                    let (addresses, req_sigs) = output
+                        .1
+                        .address(network)
+                        .map(|address| (vec![address.to_string()], 1))
+                        .unzip();
 
-                        Output {
-                            value: Zec::from(output.1.value).lossy_zec(),
-                            value_zat: output.1.value.zatoshis(),
-                            n: output.0 as u32,
-                            script_pub_key: ScriptPubKey {
-                                asm: "".to_string(),
-                                hex: output.1.lock_script.clone(),
-                                req_sigs: addresses.len() as u32,
-                                r#type: "".to_string(),
-                                addresses,
-                            },
-                        }
-                    })
-                    .collect(),
-            ),
-            shielded_spends: Some(
-                tx.sapling_spends_per_anchor()
-                    .map(|spend| {
-                        let mut anchor = spend.per_spend_anchor.as_bytes();
-                        anchor.reverse();
+                    Output {
+                        value: Zec::from(output.1.value).lossy_zec(),
+                        value_zat: output.1.value.zatoshis(),
+                        n: output.0 as u32,
+                        script_pub_key: ScriptPubKey {
+                            // TODO: Fill this out.
+                            asm: "".to_string(),
+                            hex: output.1.lock_script.clone(),
+                            req_sigs,
+                            // TODO: Fill this out.
+                            r#type: "".to_string(),
+                            addresses,
+                        },
+                    }
+                })
+                .collect(),
+            shielded_spends: tx
+                .sapling_spends_per_anchor()
+                .map(|spend| {
+                    let mut anchor = spend.per_spend_anchor.as_bytes();
+                    anchor.reverse();
 
-                        let mut nullifier = spend.nullifier.as_bytes();
-                        nullifier.reverse();
+                    let mut nullifier = spend.nullifier.as_bytes();
+                    nullifier.reverse();
 
-                        let mut rk: [u8; 32] = spend.clone().rk.into();
-                        rk.reverse();
+                    let mut rk: [u8; 32] = spend.clone().rk.into();
+                    rk.reverse();
 
-                        let spend_auth_sig: [u8; 64] = spend.spend_auth_sig.into();
+                    let spend_auth_sig: [u8; 64] = spend.spend_auth_sig.into();
 
-                        ShieldedSpend {
-                            cv: spend.cv,
-                            anchor,
-                            nullifier,
-                            rk,
-                            proof: spend.proof().0,
-                            spend_auth_sig,
-                        }
-                    })
-                    .collect(),
-            ),
-            shielded_outputs: Some(
-                tx.sapling_outputs()
-                    .map(|output| {
-                        let mut ephemeral_key: [u8; 32] = output.ephemeral_key.into();
-                        ephemeral_key.reverse();
-                        let enc_ciphertext: [u8; 580] = output.enc_ciphertext.into();
-                        let out_ciphertext: [u8; 80] = output.out_ciphertext.into();
+                    ShieldedSpend {
+                        cv: spend.cv,
+                        anchor,
+                        nullifier,
+                        rk,
+                        proof: spend.proof().0,
+                        spend_auth_sig,
+                    }
+                })
+                .collect(),
+            shielded_outputs: tx
+                .sapling_outputs()
+                .map(|output| {
+                    let mut cm_u: [u8; 32] = output.cm_u.to_bytes();
+                    cm_u.reverse();
+                    let mut ephemeral_key: [u8; 32] = output.ephemeral_key.into();
+                    ephemeral_key.reverse();
+                    let enc_ciphertext: [u8; 580] = output.enc_ciphertext.into();
+                    let out_ciphertext: [u8; 80] = output.out_ciphertext.into();
 
-                        ShieldedOutput {
-                            cv: output.cv,
-                            cm_u: output.cm_u.to_bytes(),
-                            ephemeral_key,
-                            enc_ciphertext,
-                            out_ciphertext,
-                            proof: output.proof().0,
-                        }
-                    })
-                    .collect(),
-            ),
+                    ShieldedOutput {
+                        cv: output.cv,
+                        cm_u,
+                        ephemeral_key,
+                        enc_ciphertext,
+                        out_ciphertext,
+                        proof: output.proof().0,
+                    }
+                })
+                .collect(),
             value_balance: Some(Zec::from(tx.sapling_value_balance().sapling_amount()).lossy_zec()),
             value_balance_zat: Some(tx.sapling_value_balance().sapling_amount().zatoshis()),
-
             orchard: if !tx.has_orchard_shielded_data() {
                 None
             } else {
@@ -547,8 +678,26 @@ impl TransactionObject {
                     value_balance_zat: tx.orchard_value_balance().orchard_amount().zatoshis(),
                 })
             },
+            binding_sig: tx.sapling_binding_sig().map(|raw_sig| raw_sig.into()),
+            joinsplit_pub_key: tx.joinsplit_pub_key().map(|raw_key| {
+                // Display order is reversed in the RPC output.
+                let mut key: [u8; 32] = raw_key.into();
+                key.reverse();
+                key
+            }),
+            joinsplit_sig: tx.joinsplit_sig().map(|raw_sig| raw_sig.into()),
             size: tx.as_bytes().len().try_into().ok(),
-            time: block_time.map(|bt| bt.timestamp()),
+            time: block_time,
+            txid,
+            in_active_chain,
+            auth_digest: tx.auth_digest(),
+            overwintered: tx.is_overwintered(),
+            version: tx.version(),
+            version_group_id: tx.version_group_id().map(|id| id.to_be_bytes().to_vec()),
+            lock_time: tx.raw_lock_time(),
+            expiry_height: tx.expiry_height(),
+            block_hash,
+            block_time,
         }
     }
 }

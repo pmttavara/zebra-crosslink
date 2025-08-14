@@ -26,32 +26,29 @@
 //! This file has sync tests that are marked as ignored because they take too much time to run.
 //! Some of them require environment variables or directories to be present:
 //!
-//! - `FULL_SYNC_MAINNET_TIMEOUT_MINUTES` env variable: The total number of minutes we
+//! - `SYNC_FULL_MAINNET_TIMEOUT_MINUTES` env variable: The total number of minutes we
 //!   will allow this test to run or give up. Value for the Mainnet full sync tests.
-//! - `FULL_SYNC_TESTNET_TIMEOUT_MINUTES` env variable: The total number of minutes we
+//! - `SYNC_FULL_TESTNET_TIMEOUT_MINUTES` env variable: The total number of minutes we
 //!   will allow this test to run or give up. Value for the Testnet full sync tests.
 //! - `ZEBRA_CACHE_DIR` env variable: The path to a Zebra cached state directory.
 //!   If not set, it defaults to `/zebrad-cache`. For some sync tests, this directory needs to be
 //!   created in the file system with write permissions.
 //!
-//! Here are some examples on how to run each of the tests:
+//! Here are some examples on how to run each of the tests using nextest profiles:
 //!
 //! ```console
-//! $ cargo test sync_large_checkpoints_mainnet -- --ignored --nocapture
+//! $ cargo nextest run --profile sync-large-checkpoints-empty
 //!
-//! $ cargo test sync_large_checkpoints_mempool_mainnet -- --ignored --nocapture
+//! $ ZEBRA_CACHE_DIR="/zebrad-cache" cargo nextest run --profile sync-full-mainnet
 //!
+//! $ ZEBRA_CACHE_DIR="/zebrad-cache" cargo nextest run --profile sync-full-testnet
+//! ```
+//!
+//! For tests that require a cache directory, you may need to create it first:
+//! ```console
 //! $ export ZEBRA_CACHE_DIR="/zebrad-cache"
 //! $ sudo mkdir -p "$ZEBRA_CACHE_DIR"
 //! $ sudo chmod 777 "$ZEBRA_CACHE_DIR"
-//! $ export FULL_SYNC_MAINNET_TIMEOUT_MINUTES=600
-//! $ cargo test full_sync_mainnet -- --ignored --nocapture
-//!
-//! $ export ZEBRA_CACHE_DIR="/zebrad-cache"
-//! $ sudo mkdir -p "$ZEBRA_CACHE_DIR"
-//! $ sudo chmod 777 "$ZEBRA_CACHE_DIR"
-//! $ export FULL_SYNC_TESTNET_TIMEOUT_MINUTES=600
-//! $ cargo test full_sync_testnet -- --ignored --nocapture
 //! ```
 //!
 //! Please refer to the documentation of each test for more information.
@@ -59,73 +56,51 @@
 //! ## Lightwalletd tests
 //!
 //! The lightwalletd software is an interface service that uses zebrad or zcashd RPC methods to serve wallets or other applications with blockchain content in an efficient manner.
-//! There are several versions of lightwalled in the form of different forks. The original
-//! repo is <https://github.com/zcash/lightwalletd>, zecwallet Lite uses a custom fork: <https://github.com/adityapk00/lightwalletd>.
-//! Initially this tests were made with `adityapk00/lightwalletd` fork but changes for fast spendability support had
-//! been made to `zcash/lightwalletd` only.
 //!
-//! We expect `adityapk00/lightwalletd` to remain working with Zebra but for this tests we are using `zcash/lightwalletd`.
+//! Zebra's lightwalletd tests are executed using nextest profiles.
+//! Some tests require environment variables to be set:
 //!
-//! Zebra lightwalletd tests are not all marked as ignored but none will run unless
-//! at least the `ZEBRA_TEST_LIGHTWALLETD` environment variable is present:
-//!
-//! - `ZEBRA_TEST_LIGHTWALLETD` env variable: Needs to be present to run any of the lightwalletd tests.
-//! - `ZEBRA_CACHE_DIR` env variable: The path to a Zebra cached state directory.
-//!   If not set, it defaults to `/zebrad-cache`.
-//! - `LWD_CACHE_DIR` env variable: The path to a lightwalletd database.
-//! - `--features lightwalletd-grpc-tests` cargo flag: The flag given to cargo to build the source code of the running test.
+//! - `ZEBRA_TEST_LIGHTWALLETD`: Must be set to run any of the lightwalletd tests.
+//! - `ZEBRA_CACHE_DIR`: The path to a Zebra cached state directory.
+//! - `LWD_CACHE_DIR`: The path to a lightwalletd database.
 //!
 //! Here are some examples of running each test:
 //!
 //! ```console
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ cargo test lightwalletd_integration -- --nocapture
+//! # Run the lightwalletd integration test
+//! $ ZEBRA_TEST_LIGHTWALLETD=1 cargo nextest run --profile lwd-integration
 //!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ export ZEBRA_CACHE_DIR="/path/to/zebra/state"
-//! $ export LWD_CACHE_DIR="/path/to/lightwalletd/database"
-//! $ cargo test lightwalletd_update_sync -- --nocapture
+//! # Run the lightwalletd update sync test
+//! $ ZEBRA_TEST_LIGHTWALLETD=1 ZEBRA_CACHE_DIR="/path/to/zebra/state" LWD_CACHE_DIR="/path/to/lightwalletd/database" cargo nextest run --profile lwd-sync-update
 //!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ export ZEBRA_CACHE_DIR="/path/to/zebra/state"
-//! $ cargo test lightwalletd_full_sync -- --ignored --nocapture
+//! # Run the lightwalletd full sync test
+//! $ ZEBRA_TEST_LIGHTWALLETD=1 ZEBRA_CACHE_DIR="/path/to/zebra/state" cargo nextest run --profile lwd-sync-full
 //!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ cargo test lightwalletd_test_suite -- --ignored --nocapture
+//! # Run the lightwalletd gRPC wallet test (requires --features lightwalletd-grpc-tests)
+//! $ ZEBRA_TEST_LIGHTWALLETD=1 ZEBRA_CACHE_DIR="/path/to/zebra/state" LWD_CACHE_DIR="/path/to/lightwalletd/database" cargo nextest run --profile lwd-grpc-wallet --features lightwalletd-grpc-tests
 //!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ export ZEBRA_CACHE_DIR="/path/to/zebra/state"
-//! $ cargo test fully_synced_rpc_test -- --ignored --nocapture
-//!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ export ZEBRA_CACHE_DIR="/path/to/zebra/state"
-//! $ export LWD_CACHE_DIR="/path/to/lightwalletd/database"
-//! $ cargo test sending_transactions_using_lightwalletd --features lightwalletd-grpc-tests -- --ignored --nocapture
-//!
-//! $ export ZEBRA_TEST_LIGHTWALLETD=true
-//! $ export ZEBRA_CACHE_DIR="/path/to/zebra/state"
-//! $ export LWD_CACHE_DIR="/path/to/lightwalletd/database"
-//! $ cargo test lightwalletd_wallet_grpc_tests --features lightwalletd-grpc-tests -- --ignored --nocapture
+//! # Run the lightwalletd send transaction test (requires --features lightwalletd-grpc-tests)
+//! $ ZEBRA_TEST_LIGHTWALLETD=1 ZEBRA_CACHE_DIR="/path/to/zebra/state" LWD_CACHE_DIR="/path/to/lightwalletd/database" cargo nextest run --profile lwd-rpc-send-tx --features lightwalletd-grpc-tests
 //! ```
 //!
 //! ## Getblocktemplate tests
 //!
-//! Example of how to run the get_block_template test:
+//! Example of how to run the rpc_get_block_template test:
 //!
 //! ```console
-//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test get_block_template --release -- --ignored --nocapture
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo nextest run --profile rpc-get-block-template
 //! ```
 //!
-//! Example of how to run the submit_block test:
+//! Example of how to run the rpc_submit_block test:
 //!
 //! ```console
-//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test submit_block --release -- --ignored --nocapture
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo nextest run --profile rpc-submit-block
 //! ```
 //!
-//! Example of how to run the has_spending_transaction_ids test:
+//! Example of how to run the has_spending_transaction_ids test (requires indexer feature):
 //!
 //! ```console
-//! RUST_LOG=info ZEBRA_CACHE_DIR=/path/to/zebra/state cargo test has_spending_transaction_ids --features "indexer" --release -- --ignored --nocapture
+//! RUST_LOG=info ZEBRA_CACHE_DIR=/path/to/zebra/state cargo nextest run --profile indexer-has-spending-transaction-ids --features "indexer"
 //! ```
 //!
 //! Please refer to the documentation of each test for more information.
@@ -134,8 +109,16 @@
 //!
 //! Generate checkpoints on mainnet and testnet using a cached state:
 //! ```console
-//! GENERATE_CHECKPOINTS_MAINNET=1 FEATURES=zebra-checkpoints ZEBRA_CACHE_DIR=/path/to/zebra/state docker/entrypoint.sh
-//! GENERATE_CHECKPOINTS_TESTNET=1 FEATURES=zebra-checkpoints ZEBRA_CACHE_DIR=/path/to/zebra/state docker/entrypoint.sh
+//! # Generate checkpoints for mainnet:
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo nextest run --profile generate-checkpoints-mainnet
+//!
+//! # Generate checkpoints for testnet:
+//! ZEBRA_CACHE_DIR=/path/to/zebra/state cargo nextest run --profile generate-checkpoints-testnet
+//! ```
+//!
+//! You can also use the entrypoint script directly:
+//! ```console
+//! FEATURES=zebra-checkpoints ZEBRA_CACHE_DIR=/path/to/zebra/state docker/entrypoint.sh
 //! ```
 //!
 //! ## Disk Space for Testing
@@ -147,6 +130,8 @@
 //! ```sh
 //! export TMPDIR=/path/to/disk/directory
 //! ```
+
+mod common;
 
 use std::{
     cmp::Ordering,
@@ -164,43 +149,44 @@ use semver::Version;
 use serde_json::Value;
 use tower::ServiceExt;
 
+use zcash_keys::address::Address;
+
 use zebra_chain::{
-    block::{self, genesis::regtest_genesis_block, Height},
-    parameters::Network::{self, *},
+    block::{self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash, Height},
+    parameters::{
+        Network::{self, *},
+        NetworkUpgrade,
+    },
 };
 use zebra_consensus::ParameterCheckpoint;
 use zebra_node_services::rpc_client::RpcRequestClient;
 use zebra_rpc::{
-    methods::{
-        types::{
-            get_block_template::{
-                self, fetch_state_tip_and_local_time, generate_coinbase_and_roots,
-                proposal::proposal_block_from_template, GetBlockTemplate,
-                GetBlockTemplateRequestMode,
-            },
-            submit_block::{self, SubmitBlockChannel},
-        },
-        RpcImpl, RpcServer,
+    client::{
+        BlockTemplateResponse, GetBlockTemplateParameters, GetBlockTemplateRequestMode,
+        GetBlockTemplateResponse, SubmitBlockErrorResponse, SubmitBlockResponse,
     },
+    fetch_state_tip_and_local_time, generate_coinbase_and_roots,
+    methods::{RpcImpl, RpcServer},
+    proposal_block_from_template,
     server::OPENED_RPC_ENDPOINT_MSG,
+    SubmitBlockChannel,
 };
 use zebra_state::{constants::LOCK_FILE_ERROR, state_database_format_version_in_code};
-
-#[cfg(not(target_os = "windows"))]
-use zebra_network::constants::PORT_IN_USE_ERROR;
-
 use zebra_test::{
     args,
     command::{to_regex::CollectRegexSet, ContextFrom},
+    net::random_known_port,
     prelude::*,
 };
 
 #[cfg(not(target_os = "windows"))]
-use zebra_test::net::random_known_port;
-
-mod common;
+use zebra_network::constants::PORT_IN_USE_ERROR;
 
 use common::{
+    cached_state::{
+        wait_for_state_version_message, wait_for_state_version_upgrade,
+        DATABASE_FORMAT_UPGRADE_IS_LONG,
+    },
     check::{is_zebrad_version, EphemeralCheck, EphemeralConfig},
     config::{
         config_file_full_path, configs_dir, default_test_config, external_address_test_config,
@@ -221,19 +207,12 @@ use common::{
     test_type::TestType::{self, *},
 };
 
-use crate::common::cached_state::{
-    wait_for_state_version_message, wait_for_state_version_upgrade, DATABASE_FORMAT_UPGRADE_IS_LONG,
-};
-
 /// The maximum amount of time that we allow the creation of a future to block the `tokio` executor.
 ///
 /// This should be larger than the amount of time between thread time slices on a busy test VM.
 ///
 /// This limit only applies to some tests.
 pub const MAX_ASYNC_BLOCKING_TIME: Duration = zebra_test::mock_service::DEFAULT_MAX_REQUEST_DELAY;
-
-/// The test config file prefix for `--feature shielded-scan` configs.
-pub const SHIELDED_SCAN_CONFIG_PREFIX: &str = "shieldedscan-";
 
 #[test]
 fn generate_no_args() -> Result<()> {
@@ -959,13 +938,6 @@ fn stored_configs_parsed_correctly() -> Result<()> {
             continue;
         }
 
-        // ignore files starting with shieldedscan prefix
-        // if we were not built with the shielded-scan feature.
-        if config_file_name.starts_with(SHIELDED_SCAN_CONFIG_PREFIX) {
-            tracing::info!(?config_file_path, "skipping shielded-scan config file path");
-            continue;
-        }
-
         tracing::info!(
             ?config_file_path,
             "testing old config can be parsed by current zebrad"
@@ -1021,10 +993,7 @@ fn stored_configs_work() -> Result<()> {
 
         let success_regexes = [
             // When logs are sent to the terminal, we see the config loading message and path.
-            format!(
-                "loaded zebrad config.*config_path.*=.*{}",
-                regex::escape(config_file_name)
-            ),
+            format!("Using config file at:.*{}", regex::escape(config_file_name)),
             // If they are sent to a file, we see a log file message on stdout,
             // and a logo, welcome message, and progress bar on stderr.
             "Sending logs to".to_string(),
@@ -1168,7 +1137,14 @@ fn activate_mempool_mainnet() -> Result<()> {
 /// our 10 second target time for default tests.
 #[test]
 #[ignore]
-fn sync_large_checkpoints_mainnet() -> Result<()> {
+fn sync_large_checkpoints_empty() -> Result<()> {
+    if std::env::var("ZEBRA_TEST_LARGE_CHECKPOINTS").is_err() {
+        tracing::warn!(
+            "Skipped sync_large_checkpoints_empty, set the ZEBRA_TEST_LARGE_CHECKPOINTS environmental variable to run the test"
+        );
+        return Ok(());
+    }
+
     let reuse_tempdir = sync_until(
         LARGE_CHECKPOINT_TEST_HEIGHT,
         &Mainnet,
@@ -1196,7 +1172,7 @@ fn sync_large_checkpoints_mainnet() -> Result<()> {
     Ok(())
 }
 
-// TODO: We had `sync_large_checkpoints_testnet` and `sync_large_checkpoints_mempool_testnet`,
+// TODO: We had `sync_large_checkpoints_empty` and `sync_large_checkpoints_mempool_testnet`,
 // but they were removed because the testnet is unreliable (#1222).
 // We should re-add them after we have more testnet instances (#1791).
 
@@ -1279,7 +1255,7 @@ fn full_sync_test(network: Network, timeout_argument_name: &str) -> Result<()> {
             SYNC_FINISHED_REGEX,
         )
     } else {
-        eprintln!(
+        tracing::warn!(
             "Skipped full sync test for {network}, \
             set the {timeout_argument_name:?} environmental variable to run the test",
         );
@@ -1296,20 +1272,28 @@ fn full_sync_test(network: Network, timeout_argument_name: &str) -> Result<()> {
 // and then use them to more quickly run the sync_past_mandatory_checkpoint tests.
 
 /// Sync up to the mandatory checkpoint height on mainnet and stop.
-#[allow(dead_code)]
-#[cfg_attr(feature = "test_sync_to_mandatory_checkpoint_mainnet", test)]
+#[test]
+#[ignore]
 fn sync_to_mandatory_checkpoint_mainnet() -> Result<()> {
-    let _init_guard = zebra_test::init();
-    let network = Mainnet;
-    create_cached_database(network)
+    sync_to_mandatory_checkpoint_for_network(Mainnet)
 }
 
 /// Sync to the mandatory checkpoint height testnet and stop.
-#[allow(dead_code)]
-#[cfg_attr(feature = "test_sync_to_mandatory_checkpoint_testnet", test)]
+#[test]
+#[ignore]
 fn sync_to_mandatory_checkpoint_testnet() -> Result<()> {
+    sync_to_mandatory_checkpoint_for_network(Network::new_default_testnet())
+}
+
+/// Helper function for sync to checkpoint tests
+fn sync_to_mandatory_checkpoint_for_network(network: Network) -> Result<()> {
+    use std::env;
+
+    if env::var("ZEBRA_TEST_SYNC_TO_CHECKPOINT").is_err() {
+        return Ok(());
+    }
+
     let _init_guard = zebra_test::init();
-    let network = Network::new_default_testnet();
     create_cached_database(network)
 }
 
@@ -1319,8 +1303,14 @@ fn sync_to_mandatory_checkpoint_testnet() -> Result<()> {
 /// activation on mainnet. If the state has already synced past the mandatory checkpoint
 /// activation by 1200 blocks, it will fail.
 #[allow(dead_code)]
-#[cfg_attr(feature = "test_sync_past_mandatory_checkpoint_mainnet", test)]
+#[test]
 fn sync_past_mandatory_checkpoint_mainnet() -> Result<()> {
+    if std::env::var("ZEBRA_TEST_SYNC_PAST_CHECKPOINT").is_err() {
+        tracing::warn!(
+            "Skipped sync_past_mandatory_checkpoint_mainnet, set the ZEBRA_TEST_SYNC_PAST_CHECKPOINT environmental variable to run the test"
+        );
+        return Ok(());
+    }
     let _init_guard = zebra_test::init();
     let network = Mainnet;
     sync_past_mandatory_checkpoint(network)
@@ -1332,8 +1322,14 @@ fn sync_past_mandatory_checkpoint_mainnet() -> Result<()> {
 /// activation on testnet. If the state has already synced past the mandatory checkpoint
 /// activation by 1200 blocks, it will fail.
 #[allow(dead_code)]
-#[cfg_attr(feature = "test_sync_past_mandatory_checkpoint_testnet", test)]
+#[test]
 fn sync_past_mandatory_checkpoint_testnet() -> Result<()> {
+    if std::env::var("ZEBRA_TEST_SYNC_PAST_CHECKPOINT").is_err() {
+        tracing::warn!(
+            "Skipped sync_past_mandatory_checkpoint_testnet, set the ZEBRA_TEST_SYNC_PAST_CHECKPOINT environmental variable to run the test"
+        );
+        return Ok(());
+    }
     let _init_guard = zebra_test::init();
     let network = Network::new_default_testnet();
     sync_past_mandatory_checkpoint(network)
@@ -1342,27 +1338,27 @@ fn sync_past_mandatory_checkpoint_testnet() -> Result<()> {
 /// Test if `zebrad` can fully sync the chain on mainnet.
 ///
 /// This test takes a long time to run, so we don't run it by default. This test is only executed
-/// if there is an environment variable named `FULL_SYNC_MAINNET_TIMEOUT_MINUTES` set with the number
+/// if there is an environment variable named `SYNC_FULL_MAINNET_TIMEOUT_MINUTES` set with the number
 /// of minutes to wait for synchronization to complete before considering that the test failed.
 #[test]
 #[ignore]
-fn full_sync_mainnet() -> Result<()> {
+fn sync_full_mainnet() -> Result<()> {
     // TODO: add "ZEBRA" at the start of this env var, to avoid clashes
-    full_sync_test(Mainnet, "FULL_SYNC_MAINNET_TIMEOUT_MINUTES")
+    full_sync_test(Mainnet, "SYNC_FULL_MAINNET_TIMEOUT_MINUTES")
 }
 
 /// Test if `zebrad` can fully sync the chain on testnet.
 ///
 /// This test takes a long time to run, so we don't run it by default. This test is only executed
-/// if there is an environment variable named `FULL_SYNC_TESTNET_TIMEOUT_MINUTES` set with the number
+/// if there is an environment variable named `SYNC_FULL_TESTNET_TIMEOUT_MINUTES` set with the number
 /// of minutes to wait for synchronization to complete before considering that the test failed.
 #[test]
 #[ignore]
-fn full_sync_testnet() -> Result<()> {
+fn sync_full_testnet() -> Result<()> {
     // TODO: add "ZEBRA" at the start of this env var, to avoid clashes
     full_sync_test(
         Network::new_default_testnet(),
-        "FULL_SYNC_TESTNET_TIMEOUT_MINUTES",
+        "SYNC_FULL_TESTNET_TIMEOUT_MINUTES",
     )
 }
 
@@ -1775,8 +1771,8 @@ fn non_blocking_logger() -> Result<()> {
 /// This test doesn't work on Windows, so it is always skipped on that platform.
 #[test]
 #[cfg(not(target_os = "windows"))]
-fn lightwalletd_integration() -> Result<()> {
-    lightwalletd_integration_test(LaunchWithEmptyState {
+fn lwd_integration() -> Result<()> {
+    lwd_integration_test(LaunchWithEmptyState {
         launches_lightwalletd: true,
     })
 }
@@ -1787,8 +1783,8 @@ fn lightwalletd_integration() -> Result<()> {
 ///
 /// This test might work on Windows.
 #[test]
-fn zebrad_update_sync() -> Result<()> {
-    lightwalletd_integration_test(UpdateZebraCachedStateNoRpc)
+fn sync_update_mainnet() -> Result<()> {
+    lwd_integration_test(UpdateZebraCachedStateNoRpc)
 }
 
 /// Make sure `lightwalletd` can sync from Zebra, in update sync mode.
@@ -1802,8 +1798,8 @@ fn zebrad_update_sync() -> Result<()> {
 #[test]
 #[cfg(not(target_os = "windows"))]
 #[cfg(feature = "lightwalletd-grpc-tests")]
-fn lightwalletd_update_sync() -> Result<()> {
-    lightwalletd_integration_test(UpdateCachedState)
+fn lwd_sync_update() -> Result<()> {
+    lwd_integration_test(UpdateCachedState)
 }
 
 /// Make sure `lightwalletd` can fully sync from genesis using Zebra.
@@ -1818,8 +1814,8 @@ fn lightwalletd_update_sync() -> Result<()> {
 #[ignore]
 #[cfg(not(target_os = "windows"))]
 #[cfg(feature = "lightwalletd-grpc-tests")]
-fn lightwalletd_full_sync() -> Result<()> {
-    lightwalletd_integration_test(FullSyncFromGenesis {
+fn lwd_sync_full() -> Result<()> {
+    lwd_integration_test(FullSyncFromGenesis {
         allow_lightwalletd_cached_state: false,
     })
 }
@@ -1842,12 +1838,12 @@ fn lightwalletd_full_sync() -> Result<()> {
 #[ignore]
 #[cfg(not(target_os = "windows"))]
 async fn lightwalletd_test_suite() -> Result<()> {
-    lightwalletd_integration_test(LaunchWithEmptyState {
+    lwd_integration_test(LaunchWithEmptyState {
         launches_lightwalletd: true,
     })?;
 
     // Only runs when ZEBRA_CACHE_DIR is set.
-    lightwalletd_integration_test(UpdateZebraCachedStateNoRpc)?;
+    lwd_integration_test(UpdateZebraCachedStateNoRpc)?;
 
     // These tests need the compile-time gRPC feature
     #[cfg(feature = "lightwalletd-grpc-tests")]
@@ -1855,7 +1851,7 @@ async fn lightwalletd_test_suite() -> Result<()> {
         // Do the quick tests first
 
         // Only runs when LWD_CACHE_DIR and ZEBRA_CACHE_DIR are set
-        lightwalletd_integration_test(UpdateCachedState)?;
+        lwd_integration_test(UpdateCachedState)?;
 
         // Only runs when LWD_CACHE_DIR and ZEBRA_CACHE_DIR are set
         common::lightwalletd::wallet_grpc_test::run().await?;
@@ -1864,7 +1860,7 @@ async fn lightwalletd_test_suite() -> Result<()> {
 
         // Only runs when ZEBRA_CACHE_DIR is set.
         // When manually running the test suite, allow cached state in the full sync test.
-        lightwalletd_integration_test(FullSyncFromGenesis {
+        lwd_integration_test(FullSyncFromGenesis {
             allow_lightwalletd_cached_state: true,
         })?;
 
@@ -1892,13 +1888,13 @@ async fn lightwalletd_test_suite() -> Result<()> {
 /// If the `test_type` requires `--features=lightwalletd-grpc-tests`,
 /// but Zebra was not compiled with that feature.
 #[tracing::instrument]
-fn lightwalletd_integration_test(test_type: TestType) -> Result<()> {
+fn lwd_integration_test(test_type: TestType) -> Result<()> {
     let _init_guard = zebra_test::init();
 
     // We run these sync tests with a network connection, for better test coverage.
     let use_internet_connection = true;
     let network = Mainnet;
-    let test_name = "lightwalletd_integration_test";
+    let test_name = "lwd_integration_test";
 
     if test_type.launches_lightwalletd() && !can_spawn_lightwalletd_for_rpc(test_name, test_type) {
         tracing::info!("skipping test due to missing lightwalletd network or cached state");
@@ -1938,28 +1934,30 @@ fn lightwalletd_integration_test(test_type: TestType) -> Result<()> {
     //
     // If incompletely upgraded states get written to the CI cache,
     // change DATABASE_FORMAT_UPGRADE_IS_LONG to true.
-    if test_type.launches_lightwalletd() && !DATABASE_FORMAT_UPGRADE_IS_LONG {
-        tracing::info!(
-            ?test_type,
-            ?zebra_rpc_address,
-            "waiting for zebrad to open its RPC port..."
-        );
-        wait_for_state_version_upgrade(
-            &mut zebrad,
-            &state_version_message,
-            state_database_format_version_in_code(),
-            [format!(
-                "Opened RPC endpoint at {}",
-                zebra_rpc_address.expect("lightwalletd test must have RPC port")
-            )],
-        )?;
-    } else {
-        wait_for_state_version_upgrade(
-            &mut zebrad,
-            &state_version_message,
-            state_database_format_version_in_code(),
-            None,
-        )?;
+    if !DATABASE_FORMAT_UPGRADE_IS_LONG {
+        if test_type.launches_lightwalletd() {
+            tracing::info!(
+                ?test_type,
+                ?zebra_rpc_address,
+                "waiting for zebrad to open its RPC port..."
+            );
+            wait_for_state_version_upgrade(
+                &mut zebrad,
+                &state_version_message,
+                state_database_format_version_in_code(),
+                [format!(
+                    "Opened RPC endpoint at {}",
+                    zebra_rpc_address.expect("lightwalletd test must have RPC port")
+                )],
+            )?;
+        } else {
+            wait_for_state_version_upgrade(
+                &mut zebrad,
+                &state_version_message,
+                state_database_format_version_in_code(),
+                None,
+            )?;
+        }
     }
 
     // Wait for zebrad to sync the genesis block before launching lightwalletd,
@@ -2394,7 +2392,7 @@ where
 
 #[tokio::test]
 #[ignore]
-async fn fully_synced_rpc_test() -> Result<()> {
+async fn lwd_rpc_test() -> Result<()> {
     let _init_guard = zebra_test::init();
 
     // We're only using cached Zebra state here, so this test type is the most similar
@@ -2402,7 +2400,7 @@ async fn fully_synced_rpc_test() -> Result<()> {
     let network = Network::Mainnet;
 
     let (mut zebrad, zebra_rpc_address) = if let Some(zebrad_and_address) =
-        spawn_zebrad_for_rpc(network, "fully_synced_rpc_test", test_type, false)?
+        spawn_zebrad_for_rpc(network, "lwd_rpc_test", test_type, false)?
     {
         tracing::info!("running fully synced zebrad RPC test");
 
@@ -2519,7 +2517,7 @@ fn delete_old_databases() -> Result<()> {
 #[ignore]
 #[cfg(feature = "lightwalletd-grpc-tests")]
 #[cfg(not(target_os = "windows"))]
-async fn sending_transactions_using_lightwalletd() -> Result<()> {
+async fn lwd_rpc_send_tx() -> Result<()> {
     common::lightwalletd::send_transaction_test::run().await
 }
 
@@ -2532,7 +2530,7 @@ async fn sending_transactions_using_lightwalletd() -> Result<()> {
 #[ignore]
 #[cfg(feature = "lightwalletd-grpc-tests")]
 #[cfg(not(target_os = "windows"))]
-async fn lightwalletd_wallet_grpc_tests() -> Result<()> {
+async fn lwd_grpc_wallet() -> Result<()> {
     common::lightwalletd::wallet_grpc_test::run().await
 }
 
@@ -2548,7 +2546,7 @@ async fn get_peer_info() -> Result<()> {
 ///
 /// See [`common::get_block_template_rpcs::get_block_template`] for more information.
 #[tokio::test]
-async fn get_block_template() -> Result<()> {
+async fn rpc_get_block_template() -> Result<()> {
     common::get_block_template_rpcs::get_block_template::run().await
 }
 
@@ -2556,7 +2554,7 @@ async fn get_block_template() -> Result<()> {
 ///
 /// See [`common::get_block_template_rpcs::submit_block`] for more information.
 #[tokio::test]
-async fn submit_block() -> Result<()> {
+async fn rpc_submit_block() -> Result<()> {
     common::get_block_template_rpcs::submit_block::run().await
 }
 
@@ -2812,7 +2810,7 @@ async fn state_format_test(
 
 /// Snapshot the `z_getsubtreesbyindex` method in a synchronized chain.
 ///
-/// This test name must have the same prefix as the `fully_synced_rpc_test`, so they can be run in the same test job.
+/// This test name must have the same prefix as the `lwd_rpc_test`, so they can be run in the same test job.
 #[tokio::test]
 #[ignore]
 async fn fully_synced_rpc_z_getsubtreesbyindex_snapshot_test() -> Result<()> {
@@ -2975,25 +2973,26 @@ async fn regtest_block_templates_are_valid_block_submissions() -> Result<()> {
 async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
     use std::sync::Arc;
 
-    use common::regtest::MiningRpcMethods;
     use eyre::Error;
     use tokio::time::timeout;
-    use zebra_chain::{
-        chain_tip::ChainTip, parameters::NetworkUpgrade,
-        primitives::byte_array::increment_big_endian,
-    };
-    use zebra_rpc::methods::GetBlockHash;
+    use zebra_chain::{chain_tip::ChainTip, primitives::byte_array::increment_big_endian};
+    use zebra_rpc::methods::GetBlockHashResponse;
     use zebra_state::{ReadResponse, Response};
 
+    use common::regtest::MiningRpcMethods;
+
     let _init_guard = zebra_test::init();
-    let mut config = os_assigned_rpc_port_config(false, &Network::new_regtest(Default::default()))?;
+
+    let net = Network::new_regtest(Default::default());
+    let mut config = os_assigned_rpc_port_config(false, &net)?;
+
     config.state.ephemeral = false;
-    let network = config.network.network.clone();
+    config.rpc.indexer_listen_addr = Some(std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
 
     let test_dir = testdir()?.with_config(&mut config)?;
-
     let mut child = test_dir.spawn_child(args!["start"])?;
     let rpc_address = read_listen_addr_from_logs(&mut child, OPENED_RPC_ENDPOINT_MSG)?;
+    let indexer_listen_addr = read_listen_addr_from_logs(&mut child, OPENED_RPC_ENDPOINT_MSG)?;
 
     tracing::info!("waiting for Zebra state cache to be opened");
 
@@ -3005,7 +3004,7 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
         zebra_rpc::sync::init_read_state_with_syncer(
             config.state,
             &config.network.network,
-            rpc_address,
+            indexer_listen_addr,
         )
         .await?
         .map_err(|err| eyre!(err))?;
@@ -3024,7 +3023,10 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
     let rpc_client = RpcRequestClient::new(rpc_address);
     let mut blocks = Vec::new();
     for _ in 0..10 {
-        let (block, height) = rpc_client.submit_block_from_template().await?;
+        let (block, height) = rpc_client.block_from_template(&net).await?;
+
+        rpc_client.submit_block(block.clone()).await?;
+
         blocks.push(block);
         let tip_action = timeout(
             Duration::from_secs(1),
@@ -3071,29 +3073,21 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
     }
 
     tracing::info!("getting next block template");
-    let (block_11, _) = rpc_client.block_from_template(Height(100)).await?;
-    let next_blocks: Vec<_> = blocks
-        .split_off(5)
-        .into_iter()
-        .chain(std::iter::once(block_11))
-        .collect();
+    let (block_11, _) = rpc_client.block_from_template(&net).await?;
+    blocks.push(block_11);
+    let next_blocks: Vec<_> = blocks.split_off(5);
 
     tracing::info!("creating populated state");
     let genesis_block = regtest_genesis_block();
     let (state2, read_state2, latest_chain_tip2, _chain_tip_change2) =
         zebra_state::populated_state(
             std::iter::once(genesis_block).chain(blocks.iter().cloned().map(Arc::new)),
-            &network,
+            &net,
         )
         .await;
 
     tracing::info!("attempting to trigger a best chain change");
     for mut block in next_blocks {
-        let is_chain_history_activation_height = NetworkUpgrade::Heartwood
-            .activation_height(&network)
-            == Some(block.coinbase_height().unwrap());
-        let header = Arc::make_mut(&mut block.header);
-        increment_big_endian(header.nonce.as_mut());
         let ReadResponse::ChainInfo(chain_info) = read_state2
             .clone()
             .oneshot(zebra_state::ReadRequest::ChainInfo)
@@ -3103,13 +3097,29 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
             unreachable!("wrong response variant");
         };
 
+        let height = block.coinbase_height().unwrap();
+        let auth_root = block.auth_data_root();
+        let hist_root = chain_info.chain_history_root.unwrap_or_default();
+        let header = Arc::make_mut(&mut block.header);
+
+        header.commitment_bytes = match NetworkUpgrade::current(&net, height) {
+            NetworkUpgrade::Canopy => hist_root.bytes_in_serialized_order(),
+            NetworkUpgrade::Nu5
+            | NetworkUpgrade::Nu6
+            | NetworkUpgrade::Nu6_1
+            | NetworkUpgrade::Nu7 => {
+                ChainHistoryBlockTxAuthCommitmentHash::from_commitments(&hist_root, &auth_root)
+                    .bytes_in_serialized_order()
+            }
+            _ => Err(eyre!(
+                "Zebra does not support generating pre-Canopy block templates"
+            ))?,
+        }
+        .into();
+
+        increment_big_endian(header.nonce.as_mut());
+
         header.previous_block_hash = chain_info.tip_hash;
-        header.commitment_bytes = chain_info
-            .chain_history_root
-            .or(is_chain_history_activation_height.then_some([0; 32].into()))
-            .expect("history tree can't be empty")
-            .bytes_in_serialized_order()
-            .into();
 
         let Response::Committed(block_hash) = state2
             .clone()
@@ -3129,12 +3139,12 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
 
         rpc_client.submit_block(block.clone()).await?;
         blocks.push(block);
-        let GetBlockHash(best_block_hash) = rpc_client
+        let best_block_hash: GetBlockHashResponse = rpc_client
             .json_result_from_call("getbestblockhash", "[]")
             .await
             .map_err(|err| eyre!(err))?;
 
-        if block_hash == best_block_hash {
+        if block_hash == best_block_hash.hash() {
             break;
         }
     }
@@ -3199,8 +3209,11 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
 
     let mut config = random_known_rpc_port_config(false, &Network::Mainnet)?;
     config.state.ephemeral = false;
-    let rpc_address = config.rpc.listen_addr.unwrap();
-
+    config.rpc.indexer_listen_addr = Some(std::net::SocketAddr::from((
+        [127, 0, 0, 1],
+        random_known_port(),
+    )));
+    let indexer_listen_addr = config.rpc.indexer_listen_addr.unwrap();
     let test_dir = testdir()?.with_config(&mut config)?;
 
     let _child = test_dir.spawn_child(args!["start"])?;
@@ -3215,7 +3228,7 @@ async fn trusted_chain_sync_handles_forks_correctly() -> Result<()> {
         zebra_rpc::sync::init_read_state_with_syncer(
             config.state,
             &config.network.network,
-            rpc_address,
+            indexer_listen_addr,
         )
         .await?
         .map_err(|err| eyre!(err))?;
@@ -3254,16 +3267,14 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
                 self, ConfiguredActivationHeights, ConfiguredFundingStreamRecipient,
                 ConfiguredFundingStreams,
             },
-            NetworkUpgrade,
         },
         serialization::ZcashSerialize,
         work::difficulty::U256,
     };
     use zebra_network::address_book_peers::MockAddressBookPeers;
     use zebra_node_services::mempool;
-    use zebra_rpc::methods::hex_data::HexData;
+    use zebra_rpc::client::HexData;
     use zebra_test::mock_service::MockService;
-
     let _init_guard = zebra_test::init();
 
     tracing::info!("running nu6_funding_streams_and_coinbase_balance test");
@@ -3281,27 +3292,36 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     let network = base_network_params
         .clone()
-        .with_post_nu6_funding_streams(ConfiguredFundingStreams {
+        .with_funding_streams(vec![ConfiguredFundingStreams {
             // Start checking funding streams from block height 1
             height_range: Some(Height(1)..Height(100)),
             // Use default post-NU6 recipients
             recipients: None,
-        })
+        }])
         .to_network();
 
     tracing::info!("built configured Testnet, starting state service and block verifier");
 
     let default_test_config = default_test_config(&network)?;
     let mining_config = default_test_config.mining;
-    let miner_address = mining_config
-        .miner_address
-        .clone()
-        .expect("hard-coded config should have a miner address");
+    let miner_address = Address::try_from_zcash_address(
+        &network,
+        mining_config
+            .miner_address
+            .clone()
+            .expect("mining address should be configured"),
+    )
+    .expect("configured mining address should be valid");
 
     let (state, read_state, latest_chain_tip, _chain_tip_change) =
         zebra_state::init_test_services(&network);
 
-    let (block_verifier_router, _, _, _) = zebra_consensus::router::init_test(
+    let (
+        block_verifier_router,
+        _transaction_verifier,
+        _parameter_download_task_handle,
+        _max_checkpoint_height,
+    ) = zebra_consensus::router::init_test(
         zebra_consensus::Config::default(),
         &network,
         state.clone(),
@@ -3328,13 +3348,14 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let (_tx, rx) = tokio::sync::watch::channel(None);
 
     let (rpc, _) = RpcImpl::new(
-        network,
+        network.clone(),
         mining_config,
         false,
         "0.0.1",
         "Zebra tests",
         mempool.clone(),
         mock_tfl_service,
+        state.clone(),
         read_state.clone(),
         block_verifier_router,
         mock_sync_status,
@@ -3359,7 +3380,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let block_template_fut = rpc.get_block_template(None);
     let mock_mempool_request_handler = make_mock_mempool_request_handler.clone()();
     let (block_template, _) = tokio::join!(block_template_fut, mock_mempool_request_handler);
-    let get_block_template::Response::TemplateMode(block_template) =
+    let GetBlockTemplateResponse::TemplateMode(block_template) =
         block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
         panic!(
@@ -3367,16 +3388,18 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         )
     };
 
-    let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
+    let proposal_block = proposal_block_from_template(&block_template, None, &network)?;
     let hex_proposal_block = HexData(proposal_block.zcash_serialize_to_vec()?);
 
     // Check that the block template is a valid block proposal
-    let get_block_template::Response::ProposalMode(block_proposal_result) = rpc
-        .get_block_template(Some(get_block_template::JsonParameters {
-            mode: GetBlockTemplateRequestMode::Proposal,
-            data: Some(hex_proposal_block),
-            ..Default::default()
-        }))
+    let GetBlockTemplateResponse::ProposalMode(block_proposal_result) = rpc
+        .get_block_template(Some(GetBlockTemplateParameters::new(
+            GetBlockTemplateRequestMode::Proposal,
+            Some(hex_proposal_block),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )))
         .await?
     else {
         panic!(
@@ -3396,7 +3419,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     assert_eq!(
         submit_block_response,
-        submit_block::Response::Accepted,
+        SubmitBlockResponse::Accepted,
         "valid block should be accepted"
     );
 
@@ -3436,7 +3459,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
     let block_template_fut = rpc.get_block_template(None);
     let mock_mempool_request_handler = make_mock_mempool_request_handler.clone()();
     let (block_template, _) = tokio::join!(block_template_fut, mock_mempool_request_handler);
-    let get_block_template::Response::TemplateMode(block_template) =
+    let GetBlockTemplateResponse::TemplateMode(block_template) =
         block_template.expect("unexpected error in getblocktemplate RPC call")
     else {
         panic!(
@@ -3452,32 +3475,47 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     let network = base_network_params
         .clone()
-        .with_post_nu6_funding_streams(ConfiguredFundingStreams {
+        .with_funding_streams(vec![ConfiguredFundingStreams {
             height_range: Some(Height(1)..Height(100)),
             recipients: make_configured_recipients_with_lockbox_numerator(0),
-        })
+        }])
         .to_network();
 
     let (coinbase_txn, default_roots) = generate_coinbase_and_roots(
         &network,
-        Height(block_template.height),
+        Height(block_template.height()),
         &miner_address,
         &[],
         chain_history_root,
-        true,
         vec![],
+    )
+    .expect("coinbase transaction should be valid under the given parameters");
+
+    let block_template = BlockTemplateResponse::new(
+        block_template.capabilities().clone(),
+        block_template.version(),
+        block_template.previous_block_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots,
+        block_template.transactions().clone(),
+        coinbase_txn,
+        block_template.long_poll_id(),
+        block_template.target(),
+        block_template.min_time(),
+        block_template.mutable().clone(),
+        block_template.nonce_range().clone(),
+        block_template.sigop_limit(),
+        block_template.size_limit(),
+        block_template.cur_time(),
+        block_template.bits(),
+        block_template.height(),
+        block_template.max_time(),
+        block_template.submit_old(),
     );
 
-    let block_template = GetBlockTemplate {
-        coinbase_txn,
-        block_commitments_hash: default_roots.block_commitments_hash,
-        light_client_root_hash: default_roots.block_commitments_hash,
-        final_sapling_root_hash: default_roots.block_commitments_hash,
-        default_roots,
-        ..(*block_template)
-    };
-
-    let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
+    let proposal_block = proposal_block_from_template(&block_template, None, &network)?;
 
     // Submit the invalid block with an excessive coinbase output value
     let submit_block_response = rpc
@@ -3488,39 +3526,54 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     assert_eq!(
         submit_block_response,
-        submit_block::Response::ErrorResponse(submit_block::ErrorResponse::Rejected),
+        SubmitBlockResponse::ErrorResponse(SubmitBlockErrorResponse::Rejected),
         "invalid block with excessive coinbase output value should be rejected"
     );
 
     // Use an invalid coinbase transaction (with an output value less than the `block_subsidy + miner_fees - expected_lockbox_funding_stream`)
     let network = base_network_params
         .clone()
-        .with_post_nu6_funding_streams(ConfiguredFundingStreams {
+        .with_funding_streams(vec![ConfiguredFundingStreams {
             height_range: Some(Height(1)..Height(100)),
             recipients: make_configured_recipients_with_lockbox_numerator(20),
-        })
+        }])
         .to_network();
 
     let (coinbase_txn, default_roots) = generate_coinbase_and_roots(
         &network,
-        Height(block_template.height),
+        Height(block_template.height()),
         &miner_address,
         &[],
         chain_history_root,
-        true,
         vec![],
+    )
+    .expect("coinbase transaction should be valid under the given parameters");
+
+    let block_template = BlockTemplateResponse::new(
+        block_template.capabilities().clone(),
+        block_template.version(),
+        block_template.previous_block_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots.block_commitments_hash(),
+        default_roots,
+        block_template.transactions().clone(),
+        coinbase_txn,
+        block_template.long_poll_id(),
+        block_template.target(),
+        block_template.min_time(),
+        block_template.mutable().clone(),
+        block_template.nonce_range().clone(),
+        block_template.sigop_limit(),
+        block_template.size_limit(),
+        block_template.cur_time(),
+        block_template.bits(),
+        block_template.height(),
+        block_template.max_time(),
+        block_template.submit_old(),
     );
 
-    let block_template = GetBlockTemplate {
-        coinbase_txn,
-        block_commitments_hash: default_roots.block_commitments_hash,
-        light_client_root_hash: default_roots.block_commitments_hash,
-        final_sapling_root_hash: default_roots.block_commitments_hash,
-        default_roots,
-        ..block_template
-    };
-
-    let proposal_block = proposal_block_from_template(&block_template, None, NetworkUpgrade::Nu6)?;
+    let proposal_block = proposal_block_from_template(&block_template, None, &network)?;
 
     // Submit the invalid block with an excessive coinbase input value
     let submit_block_response = rpc
@@ -3531,20 +3584,21 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
 
     assert_eq!(
         submit_block_response,
-        submit_block::Response::ErrorResponse(submit_block::ErrorResponse::Rejected),
+        SubmitBlockResponse::ErrorResponse(SubmitBlockErrorResponse::Rejected),
         "invalid block with insufficient coinbase output value should be rejected"
     );
 
     // Check that the original block template can be submitted successfully
     let proposal_block =
-        proposal_block_from_template(&valid_original_block_template, None, NetworkUpgrade::Nu6)?;
+        proposal_block_from_template(&valid_original_block_template, None, &network)?;
+
     let submit_block_response = rpc
         .submit_block(HexData(proposal_block.zcash_serialize_to_vec()?), None)
         .await?;
 
     assert_eq!(
         submit_block_response,
-        submit_block::Response::Accepted,
+        SubmitBlockResponse::Accepted,
         "valid block should be accepted"
     );
 
@@ -3696,10 +3750,95 @@ async fn has_spending_transaction_ids() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn invalidate_and_reconsider_block() -> Result<()> {
+    use std::sync::Arc;
+
+    use common::regtest::MiningRpcMethods;
+
+    let _init_guard = zebra_test::init();
+    let net = Network::new_regtest(Default::default());
+    let mut config = os_assigned_rpc_port_config(false, &net)?;
+    config.state.ephemeral = false;
+
+    let test_dir = testdir()?.with_config(&mut config)?;
+
+    let mut child = test_dir.spawn_child(args!["start"])?;
+    let rpc_address = read_listen_addr_from_logs(&mut child, OPENED_RPC_ENDPOINT_MSG)?;
+
+    tracing::info!("waiting for Zebra state cache to be opened");
+
+    tokio::time::sleep(LAUNCH_DELAY).await;
+
+    let rpc_client = RpcRequestClient::new(rpc_address);
+    let mut blocks = Vec::new();
+    for _ in 0..50 {
+        let (block, _) = rpc_client.block_from_template(&net).await?;
+
+        rpc_client.submit_block(block.clone()).await?;
+        blocks.push(block);
+    }
+
+    tracing::info!("checking that read state has the new non-finalized best chain blocks");
+    for expected_block in blocks.clone() {
+        let height = expected_block.coinbase_height().unwrap();
+        let zebra_block = rpc_client
+            .get_block(height.0 as i32)
+            .await
+            .map_err(|err| eyre!(err))?
+            .expect("Zebra test child should have the expected block");
+
+        assert_eq!(
+            zebra_block,
+            Arc::new(expected_block),
+            "Zebra should have the same block"
+        );
+    }
+
+    tracing::info!("invalidating blocks");
+
+    // Note: This is the block at height 7, it's the 6th generated block.
+    let block_6_hash = blocks.get(5).expect("should have 50 blocks").hash();
+    let params = serde_json::to_string(&vec![block_6_hash]).expect("should serialize successfully");
+
+    let _: () = rpc_client
+        .json_result_from_call("invalidateblock", &params)
+        .await
+        .map_err(|err| eyre!(err))?;
+
+    let expected_reconsidered_hashes = blocks
+        .iter()
+        .skip(5)
+        .map(|block| block.hash())
+        .collect::<Vec<_>>();
+
+    tracing::info!("reconsidering blocks");
+
+    let reconsidered_hashes: Vec<block::Hash> = rpc_client
+        .json_result_from_call("reconsiderblock", &params)
+        .await
+        .map_err(|err| eyre!(err))?;
+
+    assert_eq!(
+        reconsidered_hashes, expected_reconsidered_hashes,
+        "reconsidered hashes should match expected hashes"
+    );
+
+    child.kill(false)?;
+    let output = child.wait_with_output()?;
+
+    // Make sure the command was killed
+    output.assert_was_killed()?;
+
+    output.assert_failure()?;
+
+    Ok(())
+}
+
 /// Check that Zebra does not depend on any crates from git sources.
 #[test]
 #[ignore]
-fn check_no_git_refs_in_cargo_lock() {
+fn check_no_git_dependencies() {
     let cargo_lock_contents =
         fs::read_to_string("../Cargo.lock").expect("should have Cargo.lock file in root dir");
 
