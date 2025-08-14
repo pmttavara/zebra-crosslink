@@ -226,6 +226,33 @@ impl TF {
         self.push_instr_serialize_ex(kind, 0, data, [0; 2])
     }
 
+
+    pub fn push_instr_load_pow(&mut self, data: &Block, flags: u32) {
+        self.push_instr_serialize_ex(TFInstr::LOAD_POW, flags, data, [0; 2])
+    }
+    pub fn push_instr_load_pow_bytes(&mut self, data: &[u8], flags: u32) {
+        self.push_instr_ex(TFInstr::LOAD_POW, flags, data, [0; 2])
+    }
+
+    pub fn push_instr_load_pos(&mut self, data: &BftBlockAndFatPointerToIt, flags: u32) {
+        self.push_instr_serialize_ex(TFInstr::LOAD_POS, flags, data, [0; 2])
+    }
+    pub fn push_instr_load_pos_bytes(&mut self, data: &[u8], flags: u32) {
+        self.push_instr_ex(TFInstr::LOAD_POS, flags, data, [0; 2])
+    }
+
+    pub fn push_instr_expect_pow_chain_length(&mut self, length: usize, flags: u32) {
+        self.push_instr_ex(TFInstr::EXPECT_POW_CHAIN_LENGTH, flags, &[0; 0], [length as u64, 0])
+    }
+
+    pub fn push_instr_expect_pos_chain_length(&mut self, length: usize, flags: u32) {
+        self.push_instr_ex(TFInstr::EXPECT_POS_CHAIN_LENGTH, flags, &[0; 0], [length as u64, 0])
+    }
+
+    pub fn push_instr_expect_pow_block_finality(&mut self, pow_hash: &BlockHash, finality: Option<TFLBlockFinality>, flags: u32) {
+        self.push_instr_ex(TFInstr::EXPECT_POW_BLOCK_FINALITY, flags, &pow_hash.0, test_format::val_from_finality(finality))
+    }
+
     fn is_a_power_of_2(v: usize) -> bool {
         v != 0 && ((v & (v - 1)) == 0)
     }
@@ -519,7 +546,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
-    assert!(TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty()); // make sure the test actually fails
+    // make sure the test as a whole actually fails for failed instructions
+    assert!(TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty(), "failed test {}", TEST_NAME.lock().unwrap());
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
     tokio::time::sleep(Duration::from_secs(120)).await;
