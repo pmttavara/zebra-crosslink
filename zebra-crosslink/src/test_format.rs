@@ -103,7 +103,17 @@ impl TFInstr {
             None => {}
         }
 
-        str + ")"
+        str += ")";
+
+        if instr.flags != 0 {
+            str += " [";
+            if (instr.flags & SHOULD_FAIL) != 0{
+                str += " SHOULD_FAIL";
+            }
+            str += " ]";
+        }
+
+        str
     }
 
     pub fn data_slice<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
