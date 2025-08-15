@@ -33,8 +33,6 @@ jobs:
           version: 1.0
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-binstall
-      - run: cargo binstall cargo-nextest
       - run: cargo run generate > zebrad.toml
       - name: Configure Regtest network
         run: |
@@ -44,8 +42,11 @@ jobs:
           mv zebrad.toml ~/.config/zebrad.toml
       - name: Build Test Binary
         run: cargo test --locked --workspace --no-run --all-features
-      - name: Run Crosslink tests
-        run: cargo nextest run --manifest-path=zebrad/Cargo.toml -- crosslink_
+      - name: Run Crosslink tests with nextest
+        run: |
+          cargo install cargo-binstall
+          cargo binstall cargo-nextest --force
+          cargo nextest run --locked --workspace --manifest-path=zebrad/Cargo.toml -- crosslink_
       - name: Regression tests # mostly
         if: github.ref == 'refs/heads/main'
         run: cargo test
