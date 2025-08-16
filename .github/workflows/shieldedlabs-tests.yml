@@ -52,7 +52,7 @@ jobs:
         run: cargo test
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-xl
     name: Static Analysis and Docs
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
           path: target/llvm-cov/html
 
   nix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-xl
     name: Check Nix Flake
     permissions:
       actions: write
