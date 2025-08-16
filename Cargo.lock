@@ -8918,6 +8918,7 @@ dependencies = [
  "tracing-subscriber",
  "wagyu-zcash-parameters",
  "zcash_proofs",
+ "zcash_protocol",
  "zebra-chain",
  "zebra-node-services",
  "zebra-script",
