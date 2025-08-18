@@ -28,22 +28,24 @@ use tower::{Service, ServiceExt};
 use tracing::instrument;
 
 use zebra_chain::{
-    amount,
+    amount::{self, DeferredPoolBalanceChange},
     block::{self, Block},
-    parameters::{subsidy::FundingStreamReceiver, Network, GENESIS_PREVIOUS_BLOCK_HASH},
+    parameters::{
+        subsidy::{block_subsidy, funding_stream_values, FundingStreamReceiver, SubsidyError},
+        Network, GENESIS_PREVIOUS_BLOCK_HASH,
+    },
     work::equihash,
 };
 use zebra_state::{self as zs, CheckpointVerifiedBlock};
 
 use crate::{
     block::VerifyBlockError,
-    block_subsidy,
     checkpoint::types::{
         Progress::{self, *},
         TargetHeight::{self, *},
     },
-    error::{BlockError, SubsidyError},
-    funding_stream_values, BoxError, ParameterCheckpoint as _,
+    error::BlockError,
+    BoxError, ParameterCheckpoint as _,
 };
 
 pub(crate) mod list;
@@ -618,8 +620,13 @@ where
             None
         };
 
+        let deferred_pool_balance_change = expected_deferred_amount
+            .unwrap_or_default()
+            .checked_sub(self.network.lockbox_disbursement_total_amount(height))
+            .map(DeferredPoolBalanceChange::new);
+
         // don't do precalculation until the block passes basic difficulty checks
-        let block = CheckpointVerifiedBlock::new(block, Some(hash), expected_deferred_amount);
+        let block = CheckpointVerifiedBlock::new(block, Some(hash), deferred_pool_balance_change);
 
         crate::block::check::merkle_root_validity(
             &self.network,

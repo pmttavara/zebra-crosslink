@@ -1787,6 +1787,7 @@ fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
 }
 
 /// Viz implementation root
+#[allow(clippy::never_loop)]
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
@@ -2891,7 +2892,8 @@ pub async fn viz_main(
                             pt - target_dist * perp_line
                         };
 
-                        let m = reduced_mass(1. / 1., 1. / 2.);
+                        // 1 = 1. / 1., changed for clippy
+                        let m = reduced_mass(1., 1. / 2.);
 
                         let v = a_pt - target_pt;
                         let force = match spring_method {
