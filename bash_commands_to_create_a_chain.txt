@@ -1,0 +1,107 @@
+
+# 1) Params
+export GEN_TIME=1755602142
+export GEN_BITS_HEX=207fffff
+export GEN_PUBKEY=04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f
+export GEN_MSG="SLnet genesis $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# 2) Build a Sprout-style (v1) coinbase tx (0 value) -> /tmp/coinbase.hex
+python3 - <<'PY' > /tmp/coinbase.hex
+import binascii, struct, os
+GEN_BITS=int(os.environ['GEN_BITS_HEX'],16)
+PUBKEY=os.environ['GEN_PUBKEY'].strip()
+MSG=os.environ['GEN_MSG'].encode()
+def compact(n):
+  return bytes([n]) if n<0xfd else b'\xfd'+struct.pack('<H',n) if n<=0xffff else b'\xfe'+struct.pack('<I',n) if n<=0xffffffff else b'\xff'+struct.pack('<Q',n)
+nbits_le=struct.pack('<I',GEN_BITS)
+ss=bytes([4])+nbits_le+bytes([len(MSG)])+MSG
+spk=bytes([len(bytes.fromhex(PUBKEY))])+bytes.fromhex(PUBKEY)+b'\xac'
+tx=(struct.pack('<I',1)+b'\x01'+b'\x00'*32+b'\xff\xff\xff\xff'+compact(len(ss))+ss+b'\xff\xff\xff\xff'+b'\x01'+struct.pack('<q',0)+compact(len(spk))+spk+struct.pack('<I',0))
+print(tx.hex())
+PY
+
+# 3) Build the 140-byte Equihash header preimage (nonce = 32 zero bytes) -> /tmp/genesis_hdr140.hex
+python3 - <<'PY'
+import binascii, struct, hashlib, os
+def dsha(b): return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+GEN_TIME=int(os.environ['GEN_TIME'])
+GEN_BITS=int(os.environ['GEN_BITS_HEX'],16)
+VERSION=4
+PREV=b'\x00'*32
+BCOMMIT=b'\x00'*32
+cb=bytes.fromhex(open("/tmp/coinbase.hex").read().strip())
+merkle=dsha(cb)[::-1]
+hdr140=(struct.pack("<I",VERSION)+PREV+merkle+BCOMMIT+struct.pack("<I",GEN_TIME)+struct.pack("<I",GEN_BITS)+b'\x00'*32)
+open("/tmp/genesis_hdr140.hex","w").write(hdr140.hex())
+print(hdr140.hex())
+PY
+
+# 4) Run the Equihash solver on the 140-byte header (adjust path/threads as needed)
+HDR140=$(cat /tmp/genesis_hdr140.hex)
+../equihash/equi -x "$HDR140" -r 5000 -t 15 -s | tee /tmp/sol.log
+
+# 5) Extract the first "Solution ..." indices into /tmp/sol_indices.txt
+awk '/^Solution /{for(i=2;i<=NF;i++)printf "%s%s",$i,(i<NF?" ":""); print ""; exit}' /tmp/sol.log > /tmp/sol_indices.txt
+
+# 6) Pack the 512 indices into a 1344-byte solution (hex) -> /tmp/sol1344.hex
+# Create a robust packer that reads hex indices (one per token) and outputs a 1344-byte packed solution (hex)
+cat >/tmp/pack_solution.py <<'PY'
+import sys, re, binascii
+src = open(sys.argv[1], 'r', encoding='utf-8').read()
+# drop any leading "Solution ..." label and keep only hex tokens
+tokens = re.findall(r'[0-9a-fA-F]+', src)
+vals = [int(t, 16) for t in tokens]
+if len(vals) != 512:
+    sys.exit(f"error: need 512 indices, got {len(vals)}")
+if not all(0 <= v < (1<<21) for v in vals):
+    sys.exit("error: indices must be < 2^21")
+buf = 0; bl = 0; out = bytearray()
+for v in vals:
+    buf = (buf << 21) | v
+    bl += 21
+    while bl >= 8:
+        out.append((buf >> (bl - 8)) & 0xff)
+        bl -= 8
+if bl:
+    out.append((buf << (8 - bl)) & 0xff)
+if len(out) != 1344:
+    sys.exit(f"error: packed length {len(out)} != 1344")
+print(out.hex())
+PY
+
+# Clean your solver output into pure hex indices (one token per line)
+# If your indices are in /tmp/sol.log and you want the FIRST "Solution ..." line:
+awk '/^Solution /{for(i=2;i<=NF;i++)printf "%s%s",$i,(i<NF?" ":""); print ""; exit}' /tmp/sol.log \
+| tr -cs '0-9a-fA-F' '\n' > /tmp/sol_indices_clean.txt
+
+# If you already saved a raw indices line to /tmp/sol_indices.txt, clean it instead:
+# sed -E 's/^Solution[[:space:]]+//' /tmp/sol_indices.txt | tr -cs '0-9a-fA-F' '\n' > /tmp/sol_indices_clean.txt
+
+# Pack to 1344-byte solution hex
+python3 /tmp/pack_solution.py /tmp/sol_indices_clean.txt > /tmp/sol1344.hex
+
+# Quick sanity: confirm 1344 bytes
+python3 - <<'PY'
+import binascii; b=binascii.unhexlify(open("/tmp/sol1344.hex").read().strip()); print("solution_bytes=",len(b))
+PY
+
+
+# 7) Assemble the full genesis block using hdr140 (nonce already included) -> /tmp/genesis_block.hex
+python3 - <<'PY'
+import binascii, struct, hashlib
+def varint(n):
+  return (bytes([n]) if n<0xfd else
+          b'\xfd'+struct.pack('<H',n) if n<=0xffff else
+          b'\xfe'+struct.pack('<I',n) if n<=0xffffffff else
+          b'\xff'+struct.pack('<Q',n))
+def dsha(b): return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+hdr140=bytes.fromhex(open("/tmp/genesis_hdr140.hex").read().strip())
+sol=bytes.fromhex(open("/tmp/sol1344.hex").read().strip())
+cb=bytes.fromhex(open("/tmp/coinbase.hex").read().strip())
+header = hdr140 + varint(len(sol)) + sol
+block  = header + b'\x01' + cb
+open("/tmp/genesis_block.hex","w").write(block.hex())
+print("GENESIS_HASH", dsha(header)[::-1].hex())
+PY
+
+curl -X POST -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "method": "submitblock", "params": ["$(cat /tmp/genesis_block.hex)"], "id": 1}' http://127.0.0.1:18233/
