@@ -95,12 +95,22 @@ impl RpcServer {
         Mempool,
         TFLService,
         State,
+        ReadState,
         Tip,
         BlockVerifierRouter,
         SyncStatus,
         AddressBook,
     >(
-        rpc: RpcImpl<Mempool, TFLService, State, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
+        rpc: RpcImpl<
+            Mempool,
+            TFLService,
+            State,
+            ReadState,
+            Tip,
+            AddressBook,
+            BlockVerifierRouter,
+            SyncStatus,
+        >,
         conf: config::rpc::Config,
     ) -> Result<ServerTask, tower::BoxError>
     where
@@ -123,6 +133,15 @@ impl RpcServer {
             + 'static,
         TFLService::Future: Send,
         State: Service<
+                zebra_state::Request,
+                Response = zebra_state::Response,
+                Error = zebra_state::BoxError,
+            > + Clone
+            + Send
+            + Sync
+            + 'static,
+        State::Future: Send,
+        ReadState: Service<
                 zebra_state::ReadRequest,
                 Response = zebra_state::ReadResponse,
                 Error = zebra_state::BoxError,
@@ -130,7 +149,7 @@ impl RpcServer {
             + Send
             + Sync
             + 'static,
-        State::Future: Send,
+        ReadState::Future: Send,
         Tip: ChainTip + Clone + Send + Sync + 'static,
         AddressBook: AddressBookPeers + Clone + Send + Sync + 'static,
         BlockVerifierRouter: Service<

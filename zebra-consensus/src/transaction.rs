@@ -23,9 +23,11 @@ use tower::{
 };
 use tracing::Instrument;
 
+use zcash_protocol::value::ZatBalance;
+
 use zebra_chain::{
     amount::{Amount, NonNegative},
-    block, orchard,
+    block,
     parameters::{Network, NetworkUpgrade},
     primitives::Groth16Proof,
     sapling,
@@ -37,7 +39,7 @@ use zebra_chain::{
 };
 
 use zebra_node_services::mempool;
-use zebra_script::CachedFfiTransaction;
+use zebra_script::{CachedFfiTransaction, Sigops};
 use zebra_state as zs;
 
 use crate::{error::TransactionError, groth16::DescriptionWrapper, primitives, script, BoxError};
@@ -202,7 +204,7 @@ pub enum Response {
 
         /// The number of legacy signature operations in this transaction's
         /// transparent inputs and outputs.
-        legacy_sigop_count: u64,
+        sigops: u32,
     },
 
     /// A response to a mempool transaction verification request.
@@ -343,12 +345,10 @@ impl Response {
 
     /// The number of legacy transparent signature operations in this transaction's
     /// inputs and outputs.
-    pub fn legacy_sigop_count(&self) -> u64 {
+    pub fn sigops(&self) -> u32 {
         match self {
-            Response::Block {
-                legacy_sigop_count, ..
-            } => *legacy_sigop_count,
-            Response::Mempool { transaction, .. } => transaction.legacy_sigop_count,
+            Response::Block { sigops, .. } => *sigops,
+            Response::Mempool { transaction, .. } => transaction.sigops,
         }
     }
 
@@ -408,7 +408,7 @@ where
                 return Ok(Response::Block {
                     tx_id,
                     miner_fee: Some(verified_tx.miner_fee),
-                    legacy_sigop_count: verified_tx.legacy_sigop_count
+                    sigops: verified_tx.sigops
                 });
             }
 
@@ -489,8 +489,9 @@ where
                 Self::check_maturity_height(&network, &req, &spent_utxos)?;
             }
 
+            let nu = req.upgrade(&network);
             let cached_ffi_transaction =
-                Arc::new(CachedFfiTransaction::new(tx.clone(), spent_outputs));
+                Arc::new(CachedFfiTransaction::new(tx.clone(), Arc::new(spent_outputs), nu).map_err(|_| TransactionError::UnsupportedByNetworkUpgrade(tx.version(), nu))?);
 
             tracing::trace!(?tx_id, "got state UTXOs");
 
@@ -513,7 +514,6 @@ where
                 )?,
                 Transaction::V5 {
                     sapling_shielded_data,
-                    orchard_shielded_data,
                     ..
                 } => Self::verify_v5_transaction(
                     &req,
@@ -521,12 +521,10 @@ where
                     script_verifier,
                     cached_ffi_transaction.clone(),
                     sapling_shielded_data,
-                    orchard_shielded_data,
                 )?,
                 #[cfg(feature="tx_v6")]
                 Transaction::V6 {
                     sapling_shielded_data,
-                    orchard_shielded_data,
                     ..
                 } => Self::verify_v6_transaction(
                     &req,
@@ -534,7 +532,6 @@ where
                     script_verifier,
                     cached_ffi_transaction.clone(),
                     sapling_shielded_data,
-                    orchard_shielded_data,
                 )?,
             };
 
@@ -580,24 +577,24 @@ where
                 };
             }
 
-            let legacy_sigop_count = cached_ffi_transaction.legacy_sigop_count()?;
+            let sigops = tx.sigops().map_err(zebra_script::Error::from)?;
 
             let rsp = match req {
                 Request::Block { .. } => Response::Block {
                     tx_id,
                     miner_fee,
-                    legacy_sigop_count,
+                    sigops,
                 },
                 Request::Mempool { transaction: tx, .. } => {
                     let transaction = VerifiedUnminedTx::new(
                         tx,
                         miner_fee.expect("fee should have been checked earlier"),
-                        legacy_sigop_count,
+                        sigops,
                     )?;
 
                     if let Some(mut mempool) = mempool {
                         tokio::spawn(async move {
-                            // Best-effort poll of the mempool to provide a timely response to 
+                            // Best-effort poll of the mempool to provide a timely response to
                             // `sendrawtransaction` RPC calls or `AwaitOutput` mempool calls.
                             tokio::time::sleep(POLL_MEMPOOL_DELAY).await;
                             let _ = mempool
@@ -889,16 +886,12 @@ where
 
         Self::verify_v4_transaction_network_upgrade(&tx, nu)?;
 
-        let shielded_sighash = tx.sighash(
-            nu,
-            HashType::ALL,
-            cached_ffi_transaction.all_previous_outputs(),
-            None,
-        );
+        let shielded_sighash = cached_ffi_transaction
+            .sighasher()
+            .sighash(HashType::ALL, None);
 
         Ok(Self::verify_transparent_inputs_and_outputs(
             request,
-            network,
             script_verifier,
             cached_ffi_transaction,
         )?
@@ -939,6 +932,7 @@ where
             | NetworkUpgrade::Canopy
             | NetworkUpgrade::Nu5
             | NetworkUpgrade::Nu6
+            | NetworkUpgrade::Nu6_1
             | NetworkUpgrade::Nu7 => Ok(()),
 
             // Does not support V4 transactions
@@ -977,23 +971,19 @@ where
         script_verifier: script::Verifier,
         cached_ffi_transaction: Arc<CachedFfiTransaction>,
         sapling_shielded_data: &Option<sapling::ShieldedData<sapling::SharedAnchor>>,
-        orchard_shielded_data: &Option<orchard::ShieldedData>,
     ) -> Result<AsyncChecks, TransactionError> {
         let transaction = request.transaction();
         let nu = request.upgrade(network);
 
         Self::verify_v5_transaction_network_upgrade(&transaction, nu)?;
 
-        let shielded_sighash = transaction.sighash(
-            nu,
-            HashType::ALL,
-            cached_ffi_transaction.all_previous_outputs(),
-            None,
-        );
+        let orchard_bundle = cached_ffi_transaction.sighasher().orchard_bundle();
+        let shielded_sighash = cached_ffi_transaction
+            .sighasher()
+            .sighash(HashType::ALL, None);
 
         Ok(Self::verify_transparent_inputs_and_outputs(
             request,
-            network,
             script_verifier,
             cached_ffi_transaction,
         )?
@@ -1002,7 +992,7 @@ where
             &shielded_sighash,
         )?)
         .and(Self::verify_orchard_shielded_data(
-            orchard_shielded_data,
+            orchard_bundle,
             &shielded_sighash,
         )?))
     }
@@ -1025,7 +1015,10 @@ where
             //
             // Note: Here we verify the transaction version number of the above rule, the group
             // id is checked in zebra-chain crate, in the transaction serialize.
-            NetworkUpgrade::Nu5 | NetworkUpgrade::Nu6 | NetworkUpgrade::Nu7 => Ok(()),
+            NetworkUpgrade::Nu5
+            | NetworkUpgrade::Nu6
+            | NetworkUpgrade::Nu6_1
+            | NetworkUpgrade::Nu7 => Ok(()),
 
             // Does not support V5 transactions
             NetworkUpgrade::Genesis
@@ -1049,7 +1042,6 @@ where
         script_verifier: script::Verifier,
         cached_ffi_transaction: Arc<CachedFfiTransaction>,
         sapling_shielded_data: &Option<sapling::ShieldedData<sapling::SharedAnchor>>,
-        orchard_shielded_data: &Option<orchard::ShieldedData>,
     ) -> Result<AsyncChecks, TransactionError> {
         Self::verify_v5_transaction(
             request,
@@ -1057,7 +1049,6 @@ where
             script_verifier,
             cached_ffi_transaction,
             sapling_shielded_data,
-            orchard_shielded_data,
         )
     }
 
@@ -1067,7 +1058,6 @@ where
     /// Returns script verification responses via the `utxo_sender`.
     fn verify_transparent_inputs_and_outputs(
         request: &Request,
-        network: &Network,
         script_verifier: script::Verifier,
         cached_ffi_transaction: Arc<CachedFfiTransaction>,
     ) -> Result<AsyncChecks, TransactionError> {
@@ -1079,14 +1069,11 @@ where
             Ok(AsyncChecks::new())
         } else {
             // feed all of the inputs to the script verifier
-            // the script_verifier also checks transparent sighashes, using its own implementation
             let inputs = transaction.inputs();
-            let upgrade = request.upgrade(network);
 
             let script_checks = (0..inputs.len())
                 .map(move |input_index| {
                     let request = script::Request {
-                        upgrade,
                         cached_ffi_transaction: cached_ffi_transaction.clone(),
                         input_index,
                     };
@@ -1292,12 +1279,14 @@ where
 
     /// Verifies a transaction's Orchard shielded data.
     fn verify_orchard_shielded_data(
-        orchard_shielded_data: &Option<orchard::ShieldedData>,
+        orchard_bundle: Option<
+            ::orchard::bundle::Bundle<::orchard::bundle::Authorized, ZatBalance>,
+        >,
         shielded_sighash: &SigHash,
     ) -> Result<AsyncChecks, TransactionError> {
         let mut async_checks = AsyncChecks::new();
 
-        if let Some(orchard_shielded_data) = orchard_shielded_data {
+        if let Some(orchard_bundle) = orchard_bundle {
             // # Consensus
             //
             // > The proof 𝜋 MUST be valid given a primary input (cv, rt^{Orchard},
@@ -1309,81 +1298,8 @@ where
             // aggregated Halo2 proof per transaction, even with multiple
             // Actions in one transaction. So we queue it for verification
             // only once instead of queuing it up for every Action description.
-            async_checks.push(
-                primitives::halo2::VERIFIER
-                    .clone()
-                    .oneshot(primitives::halo2::Item::from(orchard_shielded_data)),
-            );
-
-            for authorized_action in orchard_shielded_data.actions.iter().cloned() {
-                let (action, spend_auth_sig) = authorized_action.into_parts();
-
-                // # Consensus
-                //
-                // > - Let SigHash be the SIGHASH transaction hash of this transaction, not
-                // >   associated with an input, as defined in § 4.10 using SIGHASH_ALL.
-                // > - The spend authorization signature MUST be a valid SpendAuthSig^{Orchard}
-                // >   signature over SigHash using rk as the validating key — i.e.
-                // >   SpendAuthSig^{Orchard}.Validate_{rk}(SigHash, spendAuthSig) = 1.
-                // >   As specified in § 5.4.7, validation of the 𝑅 component of the
-                // >   signature prohibits non-canonical encodings.
-                //
-                // https://zips.z.cash/protocol/protocol.pdf#actiondesc
-                //
-                // This is validated by the verifier, inside the [`reddsa`] crate.
-                // It calls [`pallas::Affine::from_bytes`] to parse R and
-                // that enforces the canonical encoding.
-                //
-                // Queue the validation of the RedPallas spend
-                // authorization signature for each Action
-                // description while adding the resulting future to
-                // our collection of async checks that (at a
-                // minimum) must pass for the transaction to verify.
-                async_checks.push(primitives::redpallas::VERIFIER.clone().oneshot(
-                    primitives::redpallas::Item::from_spendauth(
-                        action.rk,
-                        spend_auth_sig,
-                        &shielded_sighash,
-                    ),
-                ));
-            }
-
-            let bvk = orchard_shielded_data.binding_verification_key();
-
-            // # Consensus
-            //
-            // > The Action transfers of a transaction MUST be consistent with
-            // > its v balanceOrchard value as specified in § 4.14.
-            //
-            // https://zips.z.cash/protocol/protocol.pdf#actions
-            //
-            // > [NU5 onward] If effectiveVersion ≥ 5 and nActionsOrchard > 0, then:
-            // > – let bvk^{Orchard} and SigHash be as defined in § 4.14;
-            // > – bindingSigOrchard MUST represent a valid signature under the
-            // >   transaction binding validating key bvk^{Orchard} of SigHash —
-            // >   i.e. BindingSig^{Orchard}.Validate_{bvk^{Orchard}}(SigHash, bindingSigOrchard) = 1.
-            //
-            // https://zips.z.cash/protocol/protocol.pdf#txnconsensus
-            //
-            // This is validated by the verifier. The `if` part is indirectly
-            // enforced, since the `orchard_shielded_data` is only parsed if those
-            // conditions apply in [`Transaction::zcash_deserialize`].
-            //
-            // >   As specified in § 5.4.7, validation of the 𝑅 component of the signature
-            // >   prohibits non-canonical encodings.
-            //
-            // https://zips.z.cash/protocol/protocol.pdf#txnconsensus
-            //
-            // This is validated by the verifier, inside the `reddsa` crate.
-            // It calls [`pallas::Affine::from_bytes`] to parse R and
-            // that enforces the canonical encoding.
-
-            async_checks.push(primitives::redpallas::VERIFIER.clone().oneshot(
-                primitives::redpallas::Item::from_binding(
-                    bvk,
-                    orchard_shielded_data.binding_sig,
-                    &shielded_sighash,
-                ),
+            async_checks.push(primitives::halo2::VERIFIER.clone().oneshot(
+                primitives::halo2::Item::new(orchard_bundle, *shielded_sighash),
             ));
         }
 
