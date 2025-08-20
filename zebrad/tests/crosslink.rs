@@ -158,7 +158,7 @@ fn crosslink_expect_pos_height_on_boot() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+    tf.push_instr_expect_pos_chain_length(0, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -168,7 +168,7 @@ fn crosslink_expect_pow_height_on_boot() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [1, 0]);
+    tf.push_instr_expect_pow_chain_length(1, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -178,8 +178,8 @@ fn crosslink_expect_first_pow_to_not_be_a_no_op() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
-    tf.push_instr_val(TFInstr::EXPECT_POW_CHAIN_LENGTH, [2_u64, 0]);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[0], 0);
+    tf.push_instr_expect_pow_chain_length(2, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -190,16 +190,10 @@ fn crosslink_push_example_pow_chain_only() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(
-            TFInstr::EXPECT_POW_CHAIN_LENGTH,
-            [(2 + i - (i >= 3) as usize) as u64, 0],
-        );
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
+        tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0);
     }
-    tf.push_instr_val(
-        TFInstr::EXPECT_POW_CHAIN_LENGTH,
-        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
-    );
+    tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -210,17 +204,12 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(
-            TFInstr::EXPECT_POW_CHAIN_LENGTH,
-            [(2 + i - (i >= 3) as usize) as u64, 0],
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], SHOULD_FAIL);
+        tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0,
         );
     }
-    tf.push_instr_val(
-        TFInstr::EXPECT_POW_CHAIN_LENGTH,
-        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
-    );
+    tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -231,23 +220,14 @@ fn crosslink_push_example_pow_chain_again_should_not_change_the_pow_chain_length
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(
-            TFInstr::EXPECT_POW_CHAIN_LENGTH,
-            [(2 + i - (i >= 3) as usize) as u64, 0],
-        );
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
+        tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0);
     }
-    tf.push_instr_val(
-        TFInstr::EXPECT_POW_CHAIN_LENGTH,
-        [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
-    );
+    tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
-        tf.push_instr_val(
-            TFInstr::EXPECT_POW_CHAIN_LENGTH,
-            [1 - 1 + REGTEST_BLOCK_BYTES.len() as u64, 0],
-        );
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], SHOULD_FAIL);
+        tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
     }
 
     test_bytes(tf.write_to_bytes());
@@ -258,8 +238,8 @@ fn crosslink_expect_pos_not_pushed_if_pow_blocks_not_present() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], SHOULD_FAIL);
+    tf.push_instr_expect_pos_chain_length(0, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -270,11 +250,11 @@ fn crosslink_expect_pos_height_after_push() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
     for i in 0..REGTEST_POS_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[i]);
-        tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [(1 + i) as u64, 0]);
+        tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[i], 0);
+        tf.push_instr_expect_pos_chain_length(1 + i, 0);
     }
 
     // let write_ok = tf.write_to_file(Path::new("crosslink_expect_pos_height_after_push.zeccltf"));
@@ -288,13 +268,13 @@ fn crosslink_expect_pos_out_of_order() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..5 {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
 
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[2]);
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[1]);
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [2, 0]);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[2], SHOULD_FAIL);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[1], 0);
+    tf.push_instr_expect_pos_chain_length(2, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -305,11 +285,11 @@ fn crosslink_expect_pos_push_same_block_twice_only_accepted_once() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [1, 0]);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], SHOULD_FAIL);
+    tf.push_instr_expect_pos_chain_length(1, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -320,7 +300,7 @@ fn crosslink_reject_pos_with_signature_on_different_data() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
 
     // modify block data so that the signatures are incorrect
@@ -336,8 +316,8 @@ fn crosslink_reject_pos_with_signature_on_different_data() {
         "test invalidated if the serialization has not been changed"
     );
 
-    tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+    tf.push_instr_load_pos_bytes(&new_bytes, SHOULD_FAIL);
+    tf.push_instr_expect_pos_chain_length(0, 0);
 
     test_bytes(tf.write_to_bytes());
 }
@@ -350,53 +330,38 @@ fn crosslink_test_basic_finality() {
     let hashes = regtest_block_hashes();
 
     for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-        tf.push_instr_ex(
-            TFInstr::EXPECT_POW_BLOCK_FINALITY,
-            0,
-            &hashes[i2].0,
-            test_format::val_from_finality(None),
-        );
+        tf.push_instr_expect_pow_block_finality(&hashes[i2], None, 0);
     }
 
     // let hashes = Vec::with_capacity(REGTEST_BLOCK_BYTES.len());
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         // hashes.push()
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
 
         for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-            tf.push_instr_ex(
-                TFInstr::EXPECT_POW_BLOCK_FINALITY,
-                0,
-                &hashes[i2].0,
-                test_format::val_from_finality(
-                    if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3) {
-                        None
-                    } else {
-                        Some(TFLBlockFinality::NotYetFinalized)
-                    },
-                ),
-            );
+            let finality = if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3) {
+                None
+            } else {
+                Some(TFLBlockFinality::NotYetFinalized)
+            };
+            tf.push_instr_expect_pow_block_finality(&hashes[i2], finality, 0);
         }
     }
 
     for i in 0..REGTEST_POS_BLOCK_BYTES.len() {
-        tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[i]);
+        tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[i], 0);
 
         for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-            tf.push_instr_ex(
-                TFInstr::EXPECT_POW_BLOCK_FINALITY,
-                0,
-                &hashes[i2].0,
-                test_format::val_from_finality(if i2 == 2 {
-                    // unpicked sidechain
-                    // TFLBlockFinality::CantBeFinalized
-                    None
-                } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
-                    Some(TFLBlockFinality::Finalized)
-                } else {
-                    Some(TFLBlockFinality::NotYetFinalized)
-                }),
-            );
+            let finality = if i2 == 2 {
+                // unpicked sidechain
+                // TFLBlockFinality::CantBeFinalized
+                None
+            } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
+                Some(TFLBlockFinality::Finalized)
+            } else {
+                Some(TFLBlockFinality::NotYetFinalized)
+            };
+            tf.push_instr_expect_pow_block_finality(&hashes[i2], finality, 0);
         }
     }
 
@@ -410,7 +375,7 @@ fn reject_pos_block_with_lt_sigma_headers() {
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
     for i in 0..4 {
-        tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[i]);
+        tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
     }
 
     let mut bft_block_and_fat_ptr =
@@ -425,8 +390,8 @@ fn reject_pos_block_with_lt_sigma_headers() {
         "test invalidated if the serialization has not been changed"
     );
 
-    tf.push_instr(TFInstr::LOAD_POS, &new_bytes);
-    tf.push_instr_val(TFInstr::EXPECT_POS_CHAIN_LENGTH, [0, 0]);
+    tf.push_instr_load_pos_bytes(&new_bytes, 0);
+    tf.push_instr_expect_pos_chain_length(0, 0);
 }
 
 #[test]
@@ -434,14 +399,14 @@ fn crosslink_test_pow_to_pos_link() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[0]);
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[1]);
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[2]);
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[3]);
-    tf.push_instr(TFInstr::LOAD_POW, REGTEST_BLOCK_BYTES[4]);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[0], 0);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[1], 0);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[2], 0);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[3], 0);
+    tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[4], 0);
 
     // TODO: maybe have push_instr return data?
-    tf.push_instr(TFInstr::LOAD_POS, REGTEST_POS_BLOCK_BYTES[0]);
+    tf.push_instr_load_pos_bytes(REGTEST_POS_BLOCK_BYTES[0], 0);
     let pos_0 = BftBlockAndFatPointerToIt::zcash_deserialize(REGTEST_POS_BLOCK_BYTES[0]).unwrap();
     let pos_0_fat_ptr = zebra_chain::block::FatPointerToBftBlock {
         vote_for_block_without_finalizer_public_key: pos_0
@@ -465,7 +430,7 @@ fn crosslink_test_pow_to_pos_link() {
         ..*pow_5.header
     });
     // let pow_5_hash = pow_5.hash();
-    tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_5);
+    tf.push_instr_load_pow(&pow_5, 0);
 
     // let mut pow_6 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[6]).unwrap();
     // pow_6.header = Arc::new(BlockHeader {
@@ -475,9 +440,9 @@ fn crosslink_test_pow_to_pos_link() {
     //     ..*pow_6.header
     // });
     // // let pow5_hash = pow_5.hash();
-    // tf.push_instr_serialize(TFInstr::LOAD_POW, &pow_6);
+    // tf.push_instr_load_pow(&pow_6, 0);
 
-    tf.write_to_file(&Path::new(&format!("{}.zeccltf", function_name!())));
+    // tf.write_to_file(&Path::new(&format!("{}.zeccltf", function_name!())));
     test_bytes(tf.write_to_bytes());
 }
 

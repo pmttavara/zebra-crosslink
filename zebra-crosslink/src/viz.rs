@@ -643,8 +643,7 @@ pub async fn service_viz_requests(
 
                 if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
                     // push to zebra
-                    println!("################### iarsedhtiasdreht {}", TFInstr::string_from_instr(&force_instrs.0, &instr_val));
-                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_i).await;
+                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_val.flags, instr_i).await;
 
                     // push PoW to visualizer
                     // NOTE: this has to be interleaved with pushes, otherwise some nodes seem to
