@@ -65,6 +65,9 @@ pub enum NetworkUpgrade {
     /// The Zcash protocol after the NU7 upgrade.
     #[serde(rename = "NU7")]
     Nu7,
+
+    #[cfg(zcash_unstable = "zfuture")]
+    ZFuture,
 }
 
 impl TryFrom<u32> for NetworkUpgrade {
@@ -249,6 +252,8 @@ pub(crate) const CONSENSUS_BRANCH_IDS: &[(NetworkUpgrade, ConsensusBranchId)] = 
     (Nu5, ConsensusBranchId(0xc2d6d0b4)),
     (Nu6, ConsensusBranchId(0xc8e71055)),
     (Nu7, ConsensusBranchId(0x77190ad8)),
+    #[cfg(zcash_unstable = "zfuture")]
+    (ZFuture, ConsensusBranchId(0xffffffff)),
 ];
 
 /// The target block spacing before Blossom.
@@ -440,6 +445,9 @@ impl NetworkUpgrade {
             Blossom | Heartwood | Canopy | Nu5 | Nu6 | Nu7 => {
                 POST_BLOSSOM_POW_TARGET_SPACING.into()
             }
+
+            #[cfg(zcash_unstable = "zfuture")]
+            ZFuture => POST_BLOSSOM_POW_TARGET_SPACING.into(),
         };
 
         Duration::seconds(spacing_seconds)
@@ -558,7 +566,10 @@ impl From<zcash_protocol::consensus::NetworkUpgrade> for NetworkUpgrade {
             zcash_protocol::consensus::NetworkUpgrade::Canopy => Self::Canopy,
             zcash_protocol::consensus::NetworkUpgrade::Nu5 => Self::Nu5,
             zcash_protocol::consensus::NetworkUpgrade::Nu6 => Self::Nu6,
-            // zcash_protocol::consensus::NetworkUpgrade::Nu7 => Self::Nu7,
+            #[cfg(zcash_unstable = "nu7")]
+            zcash_protocol::consensus::NetworkUpgrade::Nu7 => Self::Nu7,
+            #[cfg(zcash_unstable = "zfuture")]
+            zcash_protocol::consensus::NetworkUpgrade::ZFuture => Self::ZFuture,
         }
     }
 }
