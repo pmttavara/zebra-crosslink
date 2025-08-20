@@ -227,7 +227,7 @@
           );
 
           # Check formatting
-          nixfmt-check = pkgs.runCommand "${pname}-nixmft" { buildInputs = [ nixfmt ]; } ''
+          nixfmt-check = pkgs.runCommand "${pname}-nixfmt" { buildInputs = [ nixfmt ]; } ''
             set -efuo pipefail
             exitcode=0
             for f in $(find '${src}' -type f -name '*.nix')
