@@ -135,14 +135,15 @@ const FAKE_MAINNET_ACTIVATION_HEIGHTS: &[(block::Height, NetworkUpgrade)] = &[
 #[allow(unused)]
 pub(super) const TESTNET_ACTIVATION_HEIGHTS: &[(block::Height, NetworkUpgrade)] = &[
     (block::Height(0), Genesis),
-    (block::Height(1), BeforeOverwinter),
-    (block::Height(207_500), Overwinter),
-    (block::Height(280_000), Sapling),
-    (block::Height(584_000), Blossom),
-    (block::Height(903_800), Heartwood),
-    (block::Height(1_028_500), Canopy),
-    (block::Height(1_842_420), Nu5),
-    (block::Height(2_976_000), Nu6),
+    (block::Height(1), Nu6),
+    // (block::Height(1), BeforeOverwinter),
+    // (block::Height(207_500), Overwinter),
+    // (block::Height(280_000), Sapling),
+    // (block::Height(584_000), Blossom),
+    // (block::Height(903_800), Heartwood),
+    // (block::Height(1_028_500), Canopy),
+    // (block::Height(1_842_420), Nu5),
+    // (block::Height(2_976_000), Nu6),
 ];
 
 /// Fake testnet network upgrade activation heights, used in tests.

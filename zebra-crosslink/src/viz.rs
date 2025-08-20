@@ -682,7 +682,7 @@ pub async fn service_viz_requests(
                 {
                     tip_height_hash
                 } else {
-                    error!("Failed to read tip");
+                    //error!("Failed to read tip");
                     break (BlockHeight(0), None, Vec::new(), Vec::new());
                 }
             };
