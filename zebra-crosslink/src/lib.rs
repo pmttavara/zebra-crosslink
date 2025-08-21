@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
+use zebra_state::crosslink::*;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 
 use multiaddr::Multiaddr;
@@ -81,14 +82,14 @@ pub mod test_format;
 pub mod viz;
 
 use crate::service::{
-    TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,
+    TFLServiceCalls, TFLServiceError, TFLServiceHandle,
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, MalHeight/PoSHeigh etc?
 use zebra_chain::block::{
     Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
 };
-use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
+use zebra_state::{crosslink::*, ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
 
 /// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
@@ -125,40 +126,6 @@ pub(crate) struct TFLServiceInternal {
     proposed_bft_string: Option<String>,
 
     malachite_watchdog: Instant,
-}
-
-/// The finality status of a block
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TFLBlockFinality {
-    // TODO: rename?
-    /// The block height is above the finalized height, so it's not yet determined
-    /// whether or not it will be finalized.
-    NotYetFinalized,
-
-    /// The block is finalized: it's height is below the finalized height and
-    /// it is in the best chain.
-    Finalized,
-
-    /// The block cannot be finalized: it's height is below the finalized height and
-    /// it is not in the best chain.
-    CantBeFinalized,
-}
-
-/// Placeholder representation for entity staking on PoS chain.
-// TODO: do we want to unify or separate staker/finalizer/delegator
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TFLStaker {
-    id: u64, // TODO: IP/malachite identifier/...
-    stake: u64, // TODO: do we want to store flat/tree delegators
-             // ALT: delegate_stake_to_id
-             // ...
-}
-
-/// Placeholder representation for group of stakers that are to be treated as finalizers.
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TFLRoster {
-    /// The list of stakers whose votes(?) will count. Sorted by weight(?)
-    pub finalizers: Vec<TFLStaker>,
 }
 
 // TODO: Result?

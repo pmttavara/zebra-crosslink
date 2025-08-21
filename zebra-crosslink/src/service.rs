@@ -16,12 +16,16 @@ use tracing::{error, info, warn};
 
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
-use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
+use zebra_state::{
+    ReadRequest as ReadStateRequest,
+    ReadResponse as ReadStateResponse,
+    crosslink::*
+};
 
 use crate::chain::BftBlock;
 use crate::mal_system::FatPointerToBftBlock2;
 use crate::{
-    tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
+    tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal,
 };
 
 impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
@@ -37,56 +41,6 @@ impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
         let duplicate_handle = self.clone();
         Box::pin(async move { tfl_service_incoming_request(duplicate_handle, request).await })
     }
-}
-
-/// Types of requests that can be made to the TFLService.
-///
-/// These map one to one to the variants of the same name in [`TFLServiceResponse`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TFLServiceRequest {
-    /// Is the TFL service activated yet?
-    IsTFLActivated,
-    /// Get the final block hash
-    FinalBlockHash,
-    /// Get a receiver for the final block hash
-    FinalBlockRx,
-    /// Set final block hash
-    SetFinalBlockHash(BlockHash),
-    /// Get the finality status of a block
-    BlockFinalityStatus(BlockHash),
-    /// Get the finality status of a transaction
-    TxFinalityStatus(TxHash),
-    /// Get the finalizer roster
-    Roster,
-    /// Update the list of stakers
-    UpdateStaker(TFLStaker),
-    /// Get the fat pointer to the BFT chain tip
-    FatPointerToBFTChainTip,
-}
-
-/// Types of responses that can be returned by the TFLService.
-///
-/// These map one to one to the variants of the same name in [`TFLServiceRequest`].
-#[derive(Debug)]
-pub enum TFLServiceResponse {
-    /// Is the TFL service activated yet?
-    IsTFLActivated(bool),
-    /// Final block hash
-    FinalBlockHash(Option<BlockHash>),
-    /// Receiver for the final block hash
-    FinalBlockRx(broadcast::Receiver<BlockHash>),
-    /// Set final block hash
-    SetFinalBlockHash(Option<BlockHeight>),
-    /// Finality status of a block
-    BlockFinalityStatus(Option<TFLBlockFinality>),
-    /// Finality status of a transaction
-    TxFinalityStatus(Option<TFLBlockFinality>),
-    /// Finalizer roster
-    Roster(TFLRoster),
-    /// Update the list of stakers
-    UpdateStaker, // TODO: batch?
-    /// Fat pointer to the BFT chain tip
-    FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
 }
 
 /// Errors that can occur when interacting with the TFLService.

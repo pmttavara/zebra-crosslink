@@ -58,8 +58,8 @@ use zebra_consensus::{
     block_subsidy, funding_stream_address, funding_stream_values, miner_subsidy,
     ParameterCheckpoint, RouterError,
 };
-use zebra_crosslink::{
-    service::{TFLServiceRequest, TFLServiceResponse},
+use zebra_state::crosslink::{
+    TFLServiceRequest, TFLServiceResponse,
     TFLBlockFinality, TFLRoster, TFLStaker,
 };
 use zebra_network::address_book_peers::AddressBookPeers;
