@@ -3,6 +3,7 @@
 //! This module integrates `TFLServiceHandle` with the `tower::Service` trait,
 //! allowing it to handle asynchronous service requests.
 
+use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -28,7 +29,8 @@ use crate::{
     tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal,
 };
 
-impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
+use tower::Service;
+impl Service<TFLServiceRequest> for TFLServiceHandle {
     type Response = TFLServiceResponse;
     type Error = TFLServiceError;
     type Future = Pin<Box<dyn Future<Output = Result<TFLServiceResponse, TFLServiceError>> + Send>>;
@@ -147,10 +149,14 @@ pub fn spawn_new_tfl_service(
     *handle_mtx.lock().unwrap() = Some(handle1.clone());
 
     let handle2 = handle1.clone();
+    *read_crosslink_procedure_callback.lock().unwrap() = Some(Arc::new(move |req| handle2.clone().call(req)));
+
+    let handle3 = handle1.clone();
+
 
     (
         handle1,
-        tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
+        tokio::spawn(async move { crate::tfl_service_main_loop(handle3).await }),
     )
 }
 

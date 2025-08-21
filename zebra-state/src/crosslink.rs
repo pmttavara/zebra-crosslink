@@ -127,7 +127,7 @@ pub type ReadCrosslinkServiceProcedure = Arc<
                 dyn Future<
                         Output = Result<
                             TFLServiceResponse,
-                            Box<dyn std::error::Error + Send + Sync>,
+                            TFLServiceError,
                         >,
                     > + Send,
             >,
