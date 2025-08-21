@@ -43,23 +43,6 @@ impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
     }
 }
 
-/// Errors that can occur when interacting with the TFLService.
-#[derive(Debug)]
-pub enum TFLServiceError {
-    /// Not implemented error
-    NotImplemented,
-    /// Arbitrary error
-    Misc(String),
-}
-
-impl fmt::Display for TFLServiceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TFLServiceError: {:?}", self)
-    }
-}
-
-impl std::error::Error for TFLServiceError {}
-
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
 ///

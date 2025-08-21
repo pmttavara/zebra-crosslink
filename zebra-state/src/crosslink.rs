@@ -95,6 +95,24 @@ pub enum TFLServiceResponse {
 }
 
 
+/// Errors that can occur when interacting with the TFLService.
+#[derive(Debug)]
+pub enum TFLServiceError {
+    /// Not implemented error
+    NotImplemented,
+    /// Arbitrary error
+    Misc(String),
+}
+
+impl fmt::Display for TFLServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TFLServiceError: {:?}", self)
+    }
+}
+
+use std::error::Error;
+impl Error for TFLServiceError {}
+
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
 /// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
 ///
@@ -117,3 +135,11 @@ pub type ReadCrosslinkServiceProcedure = Arc<
         + Sync,
 >;
 
+// pub static read_crosslink_procedure_callback: Mutex<Option<ReadCrosslinkServiceProcedure>> = Arc::new(Mutex::new(Arc::new(
+//     move |req| {
+//         Box::pin(async move {
+//             Err(Box::new(TFLServiceError::Misc("This callback needs to be replaced".to_string())) as Box<dyn Error + Send + Sync>)
+//         })
+//     }
+// )));
+pub static read_crosslink_procedure_callback: std::sync::Mutex<Option<ReadCrosslinkServiceProcedure>> = std::sync::Mutex::new(None);

@@ -1905,7 +1905,7 @@ fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
-) -> Result<(), crate::service::TFLServiceError> {
+) -> Result<(), TFLServiceError> {
     let mut ctx = VizCtx {
         old_mouse_pt: {
             let (x, y) = mouse_position();

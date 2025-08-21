@@ -82,7 +82,7 @@ pub mod test_format;
 pub mod viz;
 
 use crate::service::{
-    TFLServiceCalls, TFLServiceError, TFLServiceHandle,
+    TFLServiceCalls, TFLServiceHandle,
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, MalHeight/PoSHeigh etc?
