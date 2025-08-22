@@ -5,6 +5,7 @@
 // [ ] non-finalized side-chain
 // [ ] uncross edges
 
+
 use crate::{test_format::*, *};
 use macroquad::{
     camera::*,
@@ -13,7 +14,7 @@ use macroquad::{
     math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
     telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard},
-    text::{self, TextDimensions, TextParams},
+    text::{self, Font, TextDimensions, TextParams},
     texture::{self, Texture2D},
     time,
     ui::{self, hash, root_ui, widgets},
@@ -536,6 +537,9 @@ pub struct VizGlobals {
 
     /// If true then we should propose no new BFT blocks.
     pub bft_pause_button: bool,
+
+    /// validators_at_current_height
+    pub validators_at_current_height: Vec<MalValidator>,
 }
 pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
@@ -597,6 +601,7 @@ pub async fn service_viz_requests(
         proposed_bft_string: None,
         consumed: true,
         bft_pause_button: false,
+        validators_at_current_height: Vec::new(),
     });
 
     loop {
@@ -613,6 +618,8 @@ pub async fn service_viz_requests(
         }
         let mut new_g = old_g.clone();
         new_g.consumed = false;
+
+        new_g.validators_at_current_height = tfl_handle.internal.lock().await.validators_at_current_height.clone();
 
         // ALT: do 1 or the other of force/read, not both
         // NOTE: we have to use force blocks, otherwise we miss side-chains
@@ -1673,7 +1680,13 @@ fn draw_crosshair(pt: Vec2, rad: f32, thick: f32, col: color::Color) {
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
-    text::draw_text(text, pt.x, pt.y, font_size, col)
+    text::draw_text_ex(text, pt.x, pt.y, TextParams {
+            font: Some(&PIXEL_FONT),
+            font_size: font_size as u16,
+            font_scale: 1.,
+            color: col,
+            ..Default::default()
+        })
 }
 fn draw_multiline_text(
     text: &str,
@@ -1722,6 +1735,7 @@ fn get_text_align_pt(text: &str, pt: Vec2, font_size: f32, align: Vec2) -> Vec2 
         text,
         pt,
         &TextParams {
+            font: Some(&PIXEL_FONT),
             font_size: font_size as u16,
             font_scale: 1.,
             ..Default::default()
@@ -1750,6 +1764,7 @@ fn draw_text_align(
         text,
         pt,
         TextParams {
+            font: Some(&PIXEL_FONT),
             font_size: font_size as u16,
             font_scale: 1.0,
             color: col,
@@ -1954,10 +1969,11 @@ pub async fn viz_main(
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
-    let font_size = 30.;
+    let font_size = 32.;
 
     let base_style = root_ui()
         .style_builder()
+        .with_font(&PIXEL_FONT).unwrap()
         .font_size(font_size as u16)
         .build();
     let skin = ui::Skin {
@@ -1976,9 +1992,10 @@ pub async fn viz_main(
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
-    let mut edit_proposed_bft_string = String::new();
+    let mut edit_proposed_bft_string = "/ip4/127.0.0.1/udp/45869/quic-v1".to_string();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
     let mut bft_pause_button = false;
+    let mut tray_make_wider = false;
 
     let mut track_node_h: Option<i32> = None;
     let mut track_continuously: bool = true;
@@ -2499,6 +2516,7 @@ pub async fn viz_main(
                                     _ => Vec::new(),
                                 };
                             },
+                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         ctx.bft_last_added = ctx.push_node(
@@ -2522,14 +2540,6 @@ pub async fn viz_main(
                         node_str = "".to_string();
                         target_bc_str = "".to_string();
                     }
-
-                    if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
-                        .multiline(false)
-                        .ui(ui, &mut edit_proposed_bft_string)
-                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
-                    {
-                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
-                    }
                 },
             );
         }
@@ -2539,7 +2549,7 @@ pub async fn viz_main(
         let goto_button_txt = "Goto height";
         let controls_txt_size = vec2(12. * ch_w, font_size);
         let controls_wnd_size =
-            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 2.2 * font_size);
+            controls_txt_size + vec2((track_button_txt.len() + 4) as f32 * ch_w, 2.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -2753,6 +2763,7 @@ pub async fn viz_main(
                             previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
+                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
@@ -3140,6 +3151,8 @@ pub async fn viz_main(
                             }
                         }
                         VizHeader::BftBlock(bft_block) => {
+                            let cmd = String::from_utf8_lossy(&bft_block.block.temp_roster_edit_command_string,);
+                            ui.label(None, &format!("CMD: '{}'", cmd));
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {
                                 let pow_hdr = &bft_block.block.headers[i];
@@ -3207,7 +3220,9 @@ pub async fn viz_main(
                 }
             }
 
-            if circle.overlaps_rect(&world_rect) {
+            let bigger_world_rect = Rect { x: world_rect.x - world_rect.w, y: world_rect.y - world_rect.h, w: world_rect.w*3.0, h: world_rect.h*3.0 };
+
+            if circle.overlaps_rect(&bigger_world_rect) || true {
                 // node is on screen
 
                 let is_final = if node.kind == NodeKind::BC {
@@ -3332,7 +3347,7 @@ pub async fn viz_main(
 
         // CONTROL TRAY
         {
-            let tray_w = 32. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let tray_w = 32. * ch_w * if tray_make_wider { 2.0 } else { 1.0 }; // NOTE: below ~26*ch_w this starts clipping the checkbox
             let target_tray_x = if tray_is_open { tray_w } else { 0. };
             tray_x = tray_x.lerp(target_tray_x, 0.1);
 
@@ -3427,7 +3442,7 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    widgets::Editbox::new(hash!(), vec2(28. * ch_w, font_size))
+                    widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
                         .multiline(false)
                         .ui(ui, &mut instr_path_str);
 
@@ -3491,7 +3506,7 @@ pub async fn viz_main(
                     }
 
                     {
-                        widgets::Editbox::new(hash!(), vec2(28. * ch_w, font_size))
+                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
                             .multiline(false)
                             .ui(ui, &mut pow_block_nonce_str);
                         let try_parse : Option<u8> = pow_block_nonce_str.parse().ok();
@@ -3499,6 +3514,16 @@ pub async fn viz_main(
                             *MINER_NONCE_BYTE.lock().unwrap() = byte;
                         }
                         checkbox(ui, hash!(), "BFT Paused", &mut bft_pause_button);
+                    }
+                    {
+                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
+                            .multiline(false)
+                            .ui(ui, &mut edit_proposed_bft_string);
+
+                        if ui.button(None, "Submit BFT CMD") {
+                            proposed_bft_string = Some(edit_proposed_bft_string.clone());
+                        }
+                        checkbox(ui, hash!(), "Wider tray", &mut tray_make_wider);
                     }
 
                     widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |mut ui| {
@@ -3531,11 +3556,14 @@ pub async fn viz_main(
                 },
             );
         }
-
+        
         if config.show_bft_msgs {
+            let min_y = 150.;
+            let w = 0.6 * font_size;
+            let y_pad = 2.;
+            let mut i = 0;
             for variant in BFTMsgFlag::iter() {
                 // animates up, stays lit for a bit, then animates down
-                let i = variant as usize;
                 if !config.pause_incoming_blocks {
                     let target_val = ((bft_msg_flags >> i) & 1) * 255; // number of frames each direction
 
@@ -3550,9 +3578,6 @@ pub async fn viz_main(
 
                 let t = min(bft_msg_vals[i], 30) as f32 / 30.;
                 let col = color_lerp(DARKGREEN, GREEN, t);
-                let w = 0.6 * font_size;
-                let y_pad = 2.;
-                let min_y = 150.;
                 let y = min_y + i as f32 * (w + y_pad);
                 let mut rect = Rect {
                     x: window::screen_width() - w,
@@ -3572,6 +3597,29 @@ pub async fn viz_main(
                         ch_w,
                     );
                 }
+                i += 1;
+            }
+            let min_y = min_y + i as f32 * (w + y_pad) + 20.0;
+            let mut i = 0;
+            draw_text_right_align(
+                "(Vote Power) (Trnkd PK)",
+                vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
+                font_size/2.0,
+                WHITE,
+                ch_w/2.0,
+            );
+            i += 1;
+            for val in &g.validators_at_current_height {
+                let mut string = format!("{:?}", MalPublicKey2(val.public_key));
+                string.truncate(16);
+                draw_text_right_align(
+                    &format!("{} - {}", val.voting_power, &string,),
+                    vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
+                    font_size/2.0,
+                    WHITE,
+                    ch_w/2.0,
+                );
+                i += 1;
             }
         }
 
@@ -3637,6 +3685,15 @@ pub async fn viz_main(
         ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
+}
+
+lazy_static! {
+    static ref PIXEL_FONT: Font = {
+        let font_bytes = include_bytes!("../../crosslink-test-data/gohum_pixel.ttf");
+        let mut font = text::load_ttf_font_from_bytes(font_bytes).unwrap();
+        font.set_filter(texture::FilterMode::Nearest);
+        font
+    };
 }
 
 /// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)

@@ -36,30 +36,12 @@ pub struct RunningMalachite {
 
     pub height: u64,
     pub round: u32,
-    pub validator_set: Vec<MalValidator>,
 }
 
-pub async fn start_malachite(
-    tfl_handle: TFLServiceHandle,
-    at_height: u64,
-    validators_at_height: Vec<MalValidator>,
-    my_private_key: MalPrivateKey,
-    bft_config: BFTConfig,
-) -> Arc<TokioMutex<RunningMalachite>> {
-    start_malachite_with_start_delay(
-        tfl_handle,
-        at_height,
-        validators_at_height,
-        my_private_key,
-        bft_config,
-        Duration::from_secs(0),
-    )
-    .await
-}
 pub async fn start_malachite_with_start_delay(
     tfl_handle: TFLServiceHandle,
     at_height: u64,
-    validators_at_height: Vec<MalValidator>,
+    validators_at_current_height: Vec<MalValidator>,
     my_private_key: MalPrivateKey,
     bft_config: BFTConfig,
     start_delay: Duration,
@@ -88,7 +70,6 @@ pub async fn start_malachite_with_start_delay(
 
         height: at_height,
         round: 0,
-        validator_set: validators_at_height.clone(),
     }));
 
     let weak_self = Arc::downgrade(&arc_handle);
@@ -100,9 +81,7 @@ pub async fn start_malachite_with_start_delay(
             bft_node_handle,
             bft_config,
             Some(MalHeight::new(at_height)),
-            MalValidatorSet {
-                validators: validators_at_height,
-            },
+            MalValidatorSet { validators: validators_at_current_height },
         )
         .await
         .unwrap();
@@ -132,15 +111,15 @@ async fn malachite_system_terminate_engine(
     mut post_pending_block_to_push_to_core_reply: Option<
         tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
     >,
-    mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>>,
 ) {
     engine_handle.actor.stop(None);
     if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
         reply
-            .send(
-                post_pending_block_to_push_to_core_reply_data
-                    .take()
-                    .unwrap(),
+            .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                MalHeight::new(0),
+                MalValidatorSet {
+                    validators: Vec::new(),
+                })
             )
             .unwrap();
     }
@@ -161,7 +140,6 @@ async fn malachite_system_main_loop(
     let mut post_pending_block_to_push_to_core_reply: Option<
         tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
     > = None;
-    let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
 
     let mut bft_msg_flags = 0;
     let mut at_this_height_previously_seen_proposals: Vec<
@@ -177,14 +155,14 @@ async fn malachite_system_main_loop(
             malachite_system_terminate_engine(
                 engine_handle,
                 post_pending_block_to_push_to_core_reply,
-                post_pending_block_to_push_to_core_reply_data,
             )
             .await;
             return;
         };
 
         if let Some((pending_block, fat_pointer)) = &pending_block_to_push_to_core {
-            if !new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await
+            let (accepted, validator_set) = new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await;
+            if !accepted
             {
                 tokio::time::sleep(Duration::from_millis(800)).await;
 
@@ -193,23 +171,28 @@ async fn malachite_system_main_loop(
                     malachite_system_terminate_engine(
                         engine_handle,
                         post_pending_block_to_push_to_core_reply,
-                        post_pending_block_to_push_to_core_reply_data,
                     )
                     .await;
                     return;
                 }
                 continue;
             }
-            pending_block_to_push_to_core = None;
-            post_pending_block_to_push_to_core_reply
+
+            {
+                let mut lock = running_malachite.lock().await;
+                
+                pending_block_to_push_to_core = None;
+                post_pending_block_to_push_to_core_reply
                 .take()
                 .unwrap()
-                .send(
-                    post_pending_block_to_push_to_core_reply_data
-                        .take()
-                        .unwrap(),
+                .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                    MalHeight::new(lock.height),
+                    MalValidatorSet {
+                        validators: validator_set,
+                    })
                 )
                 .unwrap();
+            }
         }
 
         let mut something_to_do_maybe = None;
@@ -223,7 +206,6 @@ async fn malachite_system_main_loop(
             malachite_system_terminate_engine(
                 engine_handle,
                 post_pending_block_to_push_to_core_reply,
-                post_pending_block_to_push_to_core_reply_data,
             )
             .await;
             return;
@@ -243,7 +225,7 @@ async fn malachite_system_main_loop(
                         .send((
                             MalHeight::new(lock.height),
                             MalValidatorSet {
-                                validators: lock.validator_set.clone(),
+                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
                             },
                         ))
                         .unwrap();
@@ -313,17 +295,9 @@ async fn malachite_system_main_loop(
                         other_type
                     } else {
                         if let Some(block) =
-                            propose_new_bft_block(&tfl_handle, &my_public_key).await
+                            propose_new_bft_block(&tfl_handle, &my_public_key, lock.height).await
                         {
                             info!("Proposing block with hash: {}", block.blake3_hash());
-                            if let Some(last_block) =
-                                tfl_handle.internal.lock().await.bft_blocks.last()
-                            {
-                                debug_assert_eq!(
-                                    block.previous_block_fat_ptr.points_at_block_hash(),
-                                    last_block.blake3_hash()
-                                );
-                            }
                             let other_type: MalLocallyProposedValue<MalContext> =
                                 MalLocallyProposedValue {
                                     height: height,
@@ -493,7 +467,7 @@ async fn malachite_system_main_loop(
                     if height.as_u64() == lock.height {
                         reply
                             .send(MalValidatorSet {
-                                validators: lock.validator_set.clone(),
+                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
                             })
                             .unwrap();
                     }
@@ -540,13 +514,6 @@ async fn malachite_system_main_loop(
                     at_this_height_previously_seen_proposals.clear();
 
                     post_pending_block_to_push_to_core_reply = Some(reply);
-                    post_pending_block_to_push_to_core_reply_data =
-                        Some(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                            MalHeight::new(lock.height),
-                            MalValidatorSet {
-                                validators: lock.validator_set.clone(),
-                            },
-                        ));
                 }
                 BFTAppMsg::ExtendVote {
                     height,
@@ -610,17 +577,6 @@ async fn malachite_system_main_loop(
                         || proposal_round > lock.round as i64 + 1
                     {
                         warn!("Outdated or future proposal, ignoring");
-                        reply.send(None).unwrap();
-                        break;
-                    }
-
-                    if lock
-                        .validator_set
-                        .iter()
-                        .position(|v| v.public_key == parts.proposer)
-                        .is_none()
-                    {
-                        warn!("Invalid proposer, ignoring");
                         reply.send(None).unwrap();
                         break;
                     }

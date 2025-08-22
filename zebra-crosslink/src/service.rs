@@ -6,6 +6,7 @@
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -20,8 +21,9 @@ use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResp
 
 use crate::chain::BftBlock;
 use crate::mal_system::FatPointerToBftBlock2;
+use crate::malctx::MalValidator;
 use crate::{
-    tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker,
+    rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal, TFLStaker
 };
 
 impl tower::Service<TFLServiceRequest> for TFLServiceHandle {
@@ -177,6 +179,24 @@ pub fn spawn_new_tfl_service(
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
         proposed_bft_string: None,
         malachite_watchdog: tokio::time::Instant::now(),
+        validators_at_current_height: {
+            let mut array = Vec::with_capacity(config.malachite_peers.len());
+
+            for peer in config.malachite_peers.iter() {
+                let (_, _, public_key) = rng_private_public_key_from_address(peer.as_bytes());
+                array.push(MalValidator::new(public_key, 1));
+            }
+
+            if array.is_empty() {
+                let public_ip_string = config
+                    .public_address.clone()
+                    .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+                let (_, _, public_key) = rng_private_public_key_from_address(&public_ip_string.as_bytes());
+                array.push(MalValidator::new(public_key, 1));
+            }
+
+            array
+        },
     }));
 
     let handle_mtx = Arc::new(std::sync::Mutex::new(None));
@@ -185,9 +205,8 @@ pub fn spawn_new_tfl_service(
     let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
         let handle = handle_mtx2.lock().unwrap().clone().unwrap();
         Box::pin(async move {
-            if crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
-                .await
-            {
+            let (accepted, _) = crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await;
+            if accepted {
                 info!("Successfully force-fed BFT block");
                 true
             } else {

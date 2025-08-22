@@ -3,6 +3,9 @@
 #![allow(clippy::print_stdout)]
 #![allow(unexpected_cfgs, unused, missing_docs)]
 
+#[macro_use]
+extern crate lazy_static;
+
 use color_eyre::install;
 
 use async_trait::async_trait;
@@ -125,6 +128,8 @@ pub(crate) struct TFLServiceInternal {
     proposed_bft_string: Option<String>,
 
     malachite_watchdog: Instant,
+
+    validators_at_current_height: Vec<MalValidator>,
 }
 
 /// The finality status of a block
@@ -311,11 +316,11 @@ async fn tfl_final_block_height_hash_pre_locked(
     }
 }
 
-fn rng_private_public_key_from_address(
-    addr: &str,
+pub fn rng_private_public_key_from_address(
+    addr: &[u8],
 ) -> (rand::rngs::StdRng, MalPrivateKey, MalPublicKey) {
     let mut hasher = DefaultHasher::new();
-    hasher.write(addr.as_bytes());
+    hasher.write(addr);
     let seed = hasher.finish();
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let private_key = MalPrivateKey::new(&mut rng);
@@ -331,6 +336,7 @@ async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u6
 async fn propose_new_bft_block(
     tfl_handle: &TFLServiceHandle,
     my_public_key: &MalPublicKey,
+    at_height: u64,
 ) -> Option<BftBlock> {
     #[cfg(feature = "viz_gui")]
     if let Some(state) = viz::VIZ_G.lock().unwrap().as_ref() {
@@ -419,6 +425,12 @@ async fn propose_new_bft_block(
 
     let mut internal = tfl_handle.internal.lock().await;
 
+    if internal.bft_blocks.len() as u64 + 1 != at_height {
+        warn!("Malachite is out of sync with us due to out of band syncing. Let us force reboot it.");
+        internal.malachite_watchdog = Instant::now().checked_sub(Duration::from_secs(60*60*24*365)).unwrap();
+        return None;
+    }
+
     match BftBlock::try_from(
         params,
         internal.bft_blocks.len() as u32 + 1,
@@ -426,7 +438,8 @@ async fn propose_new_bft_block(
         0,
         headers,
     ) {
-        Ok(v) => {
+        Ok(mut v) => {
+            v.temp_roster_edit_command_string = internal.proposed_bft_string.take().unwrap_or("".to_string()).as_bytes().into();
             return Some(v);
         }
         Err(e) => {
@@ -436,11 +449,15 @@ async fn propose_new_bft_block(
     };
 }
 
+async fn malachite_wants_to_know_what_the_current_validator_set_is(tfl_handle: &TFLServiceHandle) -> Vec<MalValidator> {
+    tfl_handle.internal.lock().await.validators_at_current_height.clone()
+}
+
 async fn new_decided_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
     fat_pointer: &FatPointerToBftBlock2,
-) -> bool {
+) -> (bool, Vec<MalValidator>) {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -448,18 +465,18 @@ async fn new_decided_bft_block_from_malachite(
 
     if fat_pointer.points_at_block_hash() != new_block.blake3_hash() {
         warn!("Fat Pointer hash does not match block hash.");
-        return false;
+        return (false, internal.validators_at_current_height.clone());
     }
     // TODO: check public keys on the fat pointer against the roster
     if fat_pointer.validate_signatures() == false {
         warn!("Signatures are not valid. Rejecting block.");
-        return false;
+        return (false, internal.validators_at_current_height.clone());
     }
 
     if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
         == false
     {
-        return false;
+        return (false, internal.validators_at_current_height.clone());
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -479,6 +496,7 @@ async fn new_decided_bft_block_from_malachite(
             },
             finalization_candidate_height: 0,
             headers: Vec::new(),
+            temp_roster_edit_command_string: Vec::new(),
         });
     }
 
@@ -499,8 +517,47 @@ async fn new_decided_bft_block_from_malachite(
     internal.bft_blocks[insert_i] = new_block.clone();
     internal.fat_pointer_to_tip = fat_pointer.clone();
     internal.latest_final_block = Some((new_final_height, new_final_hash));
-    // internal.malachite_watchdog = Instant::now(); // NOTE(Sam): We don't reset the watchdog in order to be always testing it for now.
-    true
+    internal.malachite_watchdog = Instant::now();
+
+    // MUTATE ROSTER BY COMMAND
+    {
+        let roster = &mut internal.validators_at_current_height;
+        let cmd = new_block.temp_roster_edit_command_string.as_slice();
+        if cmd.len() >= 4 && cmd[3] == b'|' {
+            if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
+                let cmd = &cmd[4..];
+                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+                if roster.iter().position(|cmp| cmp.public_key == public_key).is_none() {
+                    roster.push(MalValidator::new(public_key, 0));
+                }
+            }
+            if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
+                let cmd = &cmd[4..];
+                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+                roster.retain(|cmp| cmp.public_key != public_key);
+            }
+            if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
+                let cmd = &cmd[4..];
+                let mut split_at = 0;
+                while split_at < cmd.len() && cmd[split_at] != b'|' { split_at += 1; }
+                if split_at < cmd.len() {
+                    let num_str = &cmd[0..split_at];
+                    let cmd = &cmd[split_at+1..];
+
+                    if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
+                        let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+                        for cmp in roster {
+                            if cmp.public_key == public_key {
+                                cmp.voting_power = num;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (true, internal.validators_at_current_height.clone())
 }
 
 async fn validate_bft_block_from_malachite(
@@ -718,23 +775,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     info!("public IP: {}", public_ip_string);
     let (mut rng, my_private_key, my_public_key) =
-        rng_private_public_key_from_address(&public_ip_string);
-
-    let initial_validator_set = {
-        let mut array = Vec::with_capacity(config.malachite_peers.len());
-
-        for peer in config.malachite_peers.iter() {
-            let (_, _, public_key) = rng_private_public_key_from_address(peer);
-            array.push(MalValidator::new(public_key, 1));
-        }
-
-        if array.is_empty() {
-            let (_, _, public_key) = rng_private_public_key_from_address(&public_ip_string);
-            array.push(MalValidator::new(public_key, 1));
-        }
-
-        MalValidatorSet::new(array)
-    };
+        rng_private_public_key_from_address(&public_ip_string.as_bytes());
 
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
     let ctx = MalContext {};
@@ -797,12 +838,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let mut malachite_system = None;
     if !*TEST_MODE.lock().unwrap() {
         malachite_system = Some(
-            start_malachite(
+            start_malachite_with_start_delay(
                 internal_handle.clone(),
                 1,
-                initial_validator_set.validators.clone(),
+                internal_handle.internal.lock().await.validators_at_current_height.clone(),
                 my_private_key,
                 bft_config.clone(),
+                Duration::from_secs(0)
             )
             .await,
         );
@@ -861,7 +903,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 start_malachite_with_start_delay(
                     internal_handle.clone(),
                     internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
-                    initial_validator_set.validators.clone(),
+                    internal.validators_at_current_height.clone(),
                     my_private_key,
                     bft_config.clone(),
                     start_delay,
