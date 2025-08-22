@@ -58,7 +58,7 @@ pub enum TFLServiceRequest {
     /// Set final block hash
     SetFinalBlockHash(BlockHash),
     /// Get the finality status of a block
-    BlockFinalityStatus(BlockHash),
+    BlockFinalityStatus(BlockHeight, BlockHash),
     /// Get the finality status of a transaction
     TxFinalityStatus(zebra_chain::transaction::Hash),
     /// Get the finalizer roster

@@ -752,7 +752,7 @@ pub async fn service_viz_requests(
         let mut block_finalities = Vec::with_capacity(height_hashes.len());
         for i in 0..height_hashes.len() {
             block_finalities.push(
-                tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1)
+                tfl_block_finality_from_height_hash(tfl_handle.clone(), height_hashes[i].0, height_hashes[i].1)
                     .await
                     .unwrap_or(None),
             );

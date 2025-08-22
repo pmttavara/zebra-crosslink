@@ -997,11 +997,12 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     }
 }
 
-// TODO: from_height_hash
-async fn tfl_block_finality_from_hash(
+async fn tfl_block_finality_from_height_hash(
     internal_handle: TFLServiceHandle,
+    height: BlockHeight,
     hash: BlockHash,
 ) -> Result<Option<TFLBlockFinality>, TFLServiceError> {
+    // TODO: None is no longer ever returned
     let call = internal_handle.call.clone();
     let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
     let (final_height, final_hash) = match tfl_final_block_height_hash(&internal_handle).await {
@@ -1013,50 +1014,36 @@ async fn tfl_block_finality_from_hash(
         }
     };
 
-    Ok(
-        if let Ok(ReadStateResponse::BlockHeader {
-            header: block_hdr,
-            height,
-            hash: check_hash,
-            ..
-        }) = block_hdr.await
-        {
-            assert_eq!(check_hash, block_hdr.hash());
-            assert_eq!(check_hash, hash);
+    if height > final_height {
+        // N.B. this may be invalidated by the time it is received
+        Ok(Some(TFLBlockFinality::NotYetFinalized))
+    } else {
+        let cmp_hash = if height == final_height {
+            final_hash // we already have the hash at the final height, no point in re-getting it
+        } else {
+            match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
+                Ok(ReadStateResponse::BlockHeader { hash, .. }) => hash,
 
-            if height > final_height {
-                Some(TFLBlockFinality::NotYetFinalized)
-            } else if check_hash == final_hash {
-                assert_eq!(height, final_height);
-                Some(TFLBlockFinality::Finalized)
-            } else {
-                // get the block at the given height from the best chain.
-                // If it matches this then our block is on the best chain under the finalization
-                // height & is thus finalized.
-                // Otherwise it can't be finalized.
-                match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
-                    Ok(ReadStateResponse::BlockHeader {
-                        hash: hash_of_best_block_at_height,
-                        ..
-                    }) => Some(if hash_of_best_block_at_height == hash {
-                        TFLBlockFinality::Finalized
-                    } else {
-                        TFLBlockFinality::CantBeFinalized
-                    }),
+                Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
 
-                    Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
-                    _ => {
-                        return Err(TFLServiceError::Misc(
+                _ => {
+                    return Err(TFLServiceError::Misc(
                             "Invalid BlockHeader response type".to_string(),
-                        ))
-                    }
+                    ))
                 }
             }
+        };
+
+        // We have the hash of the block at the given height from the best chain.
+        // If it matches the queried hash then our block is on the best chain under the finalization
+        // height & is thus finalized.
+        // Otherwise it can't be finalized.
+        Ok(Some(if hash == cmp_hash {
+            TFLBlockFinality::Finalized
         } else {
-            // warn!("couldn't find PoW hash {}", hash);
-            None
-        },
-    )
+            TFLBlockFinality::CantBeFinalized
+        }))
+    }
 }
 
 async fn tfl_service_incoming_request(
@@ -1092,8 +1079,8 @@ async fn tfl_service_incoming_request(
             tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
         )),
 
-        TFLServiceRequest::BlockFinalityStatus(hash) => {
-            match tfl_block_finality_from_hash(internal_handle.clone(), hash).await {
+        TFLServiceRequest::BlockFinalityStatus(height, hash) => {
+            match tfl_block_finality_from_height_hash(internal_handle.clone(), height, hash).await {
                 Ok(val) => Ok(TFLServiceResponse::BlockFinalityStatus({ val })), // N.B. may still be None
                 Err(err) => Err(err),
             }

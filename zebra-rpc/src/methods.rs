@@ -1697,16 +1697,28 @@ where
         &self,
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality> {
-        if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-            .tfl_service
+        if let Ok(zebra_state::ReadResponse::BlockHeader{ height, .. }) = self
+            .state
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
+            .call(zebra_state::ReadRequest::BlockHeader(hash.0.into()))
             .await
         {
-            ret
+            if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
+                .tfl_service
+                    .clone()
+                    .ready()
+                    .await
+                    .unwrap()
+                    .call(TFLServiceRequest::BlockFinalityStatus(height, hash.0))
+                    .await
+            {
+                ret
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1835,20 +1847,11 @@ where
                 return None;
             }
         };
+
         loop {
-            match if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-                .tfl_service
-                .clone()
-                .ready()
-                .await
-                .unwrap()
-                .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
-                .await
-            {
-                ret
-            } else {
-                None
-            } {
+            let status = self.get_tfl_block_finality_from_hash(hash).await;
+
+            match status {
                 None => {
                     return None;
                 }

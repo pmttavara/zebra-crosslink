@@ -495,9 +495,12 @@ pub(crate) async fn handle_instr(
 
         TestInstr::ExpectPoWBlockFinality(hash, f) => {
             let expect = f;
-            let actual = tfl_block_finality_from_hash(internal_handle.clone(), hash)
-                .await
-                .expect("valid response, even if None");
+            let height = block_height_from_hash(&internal_handle.call.clone(), hash).await;
+            let actual = if let Some(height) = height {
+                tfl_block_finality_from_height_hash(internal_handle.clone(), height, hash).await
+                } else {
+                    Ok(None)
+                }.expect("valid response, even if None");
             test_check(
                 expect == actual,
                 &format!(
