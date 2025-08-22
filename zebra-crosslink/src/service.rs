@@ -18,8 +18,8 @@ use tracing::{error, info, warn};
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{
-    ReadRequest as ReadStateRequest,
-    ReadResponse as ReadStateResponse,
+    Request as ReadStateRequest,
+    Response as ReadStateResponse,
     crosslink::*
 };
 

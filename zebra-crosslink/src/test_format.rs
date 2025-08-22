@@ -369,6 +369,8 @@ fn test_check(condition: bool, message: &str) {
                 "test check failed (and TEST_CHECK_ASSERT == true), message:\n{}",
                 message
             );
+        } else {
+            error!("test check failed, message:\n{}", message);
         }
     }
 }

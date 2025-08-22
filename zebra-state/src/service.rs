@@ -53,6 +53,7 @@ use crate::{
         pending_utxos::PendingUtxos,
         queued_blocks::QueuedBlocks,
         watch_receiver::WatchReceiver,
+        write::NonFinalizedStateWriteMessage,
     },
     BoxError, CheckpointVerifiedBlock, CloneError, Config, ReadRequest, ReadResponse, Request,
     Response, SemanticallyVerifiedBlock,
@@ -128,7 +129,7 @@ pub(crate) struct StateService {
     /// A channel to send blocks to the `block_write_task`,
     /// so they can be written to the [`NonFinalizedState`].
     non_finalized_block_write_sender:
-        Option<tokio::sync::mpsc::UnboundedSender<QueuedSemanticallyVerified>>,
+        Option<tokio::sync::mpsc::UnboundedSender<NonFinalizedStateWriteMessage>>,
 
     /// A channel to send blocks to the `block_write_task`,
     /// so they can be written to the [`FinalizedState`].
@@ -715,6 +716,27 @@ impl StateService {
         rsp_rx
     }
 
+    fn send_crosslink_finalized_to_non_finalized_state(
+        &mut self,
+        hash: block::Hash,
+    ) -> oneshot::Receiver<Result<block::Hash, BoxError>> {
+        let (rsp_tx, rsp_rx) = oneshot::channel();
+
+        if self.finalized_block_write_sender.is_none() {
+            if let Some(tx) = &self.non_finalized_block_write_sender {
+                if let Err(err) = tx.send(NonFinalizedStateWriteMessage::CrosslinkFinalized(hash, rsp_tx)) {
+                    tracing::warn!(?err, "failed to send Crosslink-finalized hash to NonFinalizedState");
+                };
+            } else {
+                let _ = rsp_tx.send(Err("not ready to crosslink-finalize blocks".into()));
+            }
+        } else {
+            let _ = rsp_tx.send(Err("not ready to crosslink-finalize blocks".into()));
+        }
+
+        rsp_rx
+    }
+
     /// Returns `true` if `hash` is a valid previous block hash for new non-finalized blocks.
     fn can_fork_chain_at(&self, hash: &block::Hash) -> bool {
         self.non_finalized_block_write_sent_hashes
@@ -751,9 +773,10 @@ impl StateService {
 
                     self.non_finalized_block_write_sent_hashes
                         .add(&queued_child.0);
-                    let send_result = non_finalized_block_write_sender.send(queued_child);
+                    let send_result = non_finalized_block_write_sender.send(
+                        NonFinalizedStateWriteMessage::QueueAndCommit(queued_child));
 
-                    if let Err(SendError(queued)) = send_result {
+                    if let Err(SendError(NonFinalizedStateWriteMessage::QueueAndCommit(queued))) = send_result {
                         // If Zebra is shutting down, drop blocks and return an error.
                         Self::send_semantically_verified_block_error(
                             queued,
@@ -983,6 +1006,35 @@ impl Service<Request> for StateService {
                         // https://github.com/rust-lang/rust/issues/70142
                         .and_then(convert::identity)
                         .map(Response::Committed)
+                }
+                .instrument(span)
+                .boxed()
+            }
+
+            Request::CrosslinkFinalizeBlock(finalized) => {
+                // # Performance
+                //
+                // This method doesn't block, access the database, or perform CPU-intensive tasks,
+                // so we can run it directly in the tokio executor's Future threads.
+                let rsp_rx = self.send_crosslink_finalized_to_non_finalized_state(finalized);
+
+                // TODO:
+                //   - check for panics in the block write task here,
+                //     as well as in poll_ready()
+
+                // The work is all done, the future just waits on a channel for the result
+                timer.finish(module_path!(), line!(), "CrosslinkFinalizeBlock");
+
+                async move {
+                    rsp_rx
+                        .await
+                        .map_err(|_recv_error| {
+                            BoxError::from("block was dropped from the queue of finalized blocks")
+                        })
+                        // TODO: replace with Result::flatten once it stabilises
+                        // https://github.com/rust-lang/rust/issues/70142
+                        .and_then(convert::identity)
+                        .map(Response::CrosslinkFinalized)
                 }
                 .instrument(span)
                 .boxed()

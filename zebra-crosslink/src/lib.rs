@@ -89,7 +89,8 @@ use crate::service::{
 use zebra_chain::block::{
     Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
 };
-use zebra_state::{crosslink::*, ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
+// TODO: rename
+use zebra_state::{crosslink::*, Request as ReadStateRequest, Response as ReadStateResponse};
 
 /// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
@@ -466,7 +467,18 @@ async fn new_decided_bft_block_from_malachite(
     internal.bft_blocks[insert_i] = new_block.clone();
     internal.fat_pointer_to_tip = fat_pointer.clone();
     internal.latest_final_block = Some((new_final_height, new_final_hash));
-    // internal.malachite_watchdog = Instant::now(); // NOTE(Sam): We don't reset the watchdog in order to be always testing it for now.
+    internal.malachite_watchdog = Instant::now();
+
+    match (call.read_state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
+        Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
+            assert_eq!(hash, new_final_hash, "PoW finalized hash should now match ours");
+        }
+        Ok(_) => unreachable!("wrong response type"),
+        Err(err) => {
+            error!(?err);
+        }
+    }
+
     true
 }
 

@@ -286,12 +286,12 @@ impl StartCmd {
 
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
-            let read_only_state_service = read_only_state_service.clone();
+            let state = state.clone();
             zebra_crosslink::service::spawn_new_tfl_service(
                 Arc::new(move |req| {
-                    let read_only_state_service = read_only_state_service.clone();
+                    let state = state.clone();
                     Box::pin(async move {
-                        read_only_state_service
+                        state
                             .clone()
                             .ready()
                             .await
@@ -302,6 +302,14 @@ impl StartCmd {
                 }),
                 Arc::new(move |block| {
                     let gbt = Arc::clone(&gbt_for_force_feeding_pow);
+
+                    let height = block
+                        .coinbase_height()
+                        // .ok_or_error(0, "coinbase height not found")?;
+                        .unwrap();
+
+                    let parent_hash = block.header.previous_block_hash;
+                    let block_hash = block.hash();
 
                     Box::pin(async move {
                         let attempt_result = timeout(Duration::from_millis(100), async move {
@@ -370,7 +378,7 @@ impl StartCmd {
                                 return success;
                             }
                             Err(_) => {
-                                tracing::error!("submit block timed out");
+                                tracing::error!(?height, ?block_hash, ?parent_hash, "submit block timed out");
                                 return false;
                             }
                         }
