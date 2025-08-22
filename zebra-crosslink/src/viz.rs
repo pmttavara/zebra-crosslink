@@ -673,7 +673,7 @@ pub async fn service_viz_requests(
         }
 
         #[allow(clippy::never_loop)]
-        let (lo_height, bc_tip, hashes, seq_blocks) = loop {
+        let (lo_height, bc_tip, height_hashes, seq_blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
             assert!(
                 lo <= hi || (lo >= 0 && hi < 0),
@@ -740,16 +740,13 @@ pub async fn service_viz_requests(
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let (hashes, blocks) =
+            let (height_hashes, blocks) =
                 tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
-            break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
+            break (lo_height_hash.0, Some(tip_height_hash), height_hashes, blocks);
         };
 
-        if hashes.len() != pow_blocks.len() {
+        if height_hashes.len() != pow_blocks.len() {
             // warn!("expected hashes & blocks to be parallel, actually have {} hashes, {} blocks", hashes.len(), pow_blocks.len());
-        }
-        for i in 0..hashes.len() {
-            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
         }
         for i in 0..seq_blocks.len() {
             pow_blocks.push(seq_blocks[i].clone());
@@ -759,7 +756,7 @@ pub async fn service_viz_requests(
         let mut block_finalities = Vec::with_capacity(height_hashes.len());
         for i in 0..height_hashes.len() {
             block_finalities.push(
-                tfl_block_finality_from_hash(tfl_handle.clone(), height_hashes[i].1)
+                tfl_block_finality_from_height_hash(tfl_handle.clone(), height_hashes[i].0, height_hashes[i].1)
                     .await
                     .unwrap_or(None),
             );
@@ -1920,7 +1917,7 @@ fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
-) -> Result<(), crate::service::TFLServiceError> {
+) -> Result<(), TFLServiceError> {
     let mut ctx = VizCtx {
         old_mouse_pt: {
             let (x, y) = mouse_position();

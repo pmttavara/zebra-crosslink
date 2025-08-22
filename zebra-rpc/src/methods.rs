@@ -58,8 +58,8 @@ use zebra_consensus::{
     block_subsidy, funding_stream_address, funding_stream_values, miner_subsidy,
     ParameterCheckpoint, RouterError,
 };
-use zebra_crosslink::{
-    service::{TFLServiceRequest, TFLServiceResponse},
+use zebra_state::crosslink::{
+    TFLServiceRequest, TFLServiceResponse,
     TFLBlockFinality, TFLRoster, TFLStaker,
 };
 use zebra_network::address_book_peers::AddressBookPeers;
@@ -1647,10 +1647,10 @@ where
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-        if let Ok(TFLServiceResponse::FinalBlockHash(val)) = ret {
-            val.map(GetBlockHash)
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHash(height_hash.1))
         } else {
             tracing::error!(?ret, "Bad tfl service return.");
             None
@@ -1658,37 +1658,18 @@ where
     }
 
     async fn get_tfl_final_block_height_and_hash(&self) -> Option<GetBlockHeightAndHash> {
-        use zebra_state::{ReadRequest, ReadResponse};
-
-        let res = self
+        let ret = self
             .tfl_service
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-
-        if let Ok(TFLServiceResponse::FinalBlockHash(hash)) = res {
-            if let Some(hash) = hash {
-                let final_block_hdr_req = ReadRequest::BlockHeader(HashOrHeight::Hash(hash));
-                let final_block_hdr = self
-                    .state
-                    .clone()
-                    .oneshot(final_block_hdr_req)
-                    .await
-                    .map_misc_error();
-
-                if let Ok(ReadResponse::BlockHeader { height, .. }) = final_block_hdr {
-                    Some(GetBlockHeightAndHash { height, hash })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHeightAndHash{ height: height_hash.0, hash: height_hash.1 })
         } else {
-            tracing::error!(?res, "Bad tfl service return.");
+            tracing::error!(?ret, "Bad tfl service return.");
             None
         }
     }
@@ -1697,16 +1678,28 @@ where
         &self,
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality> {
-        if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-            .tfl_service
+        if let Ok(zebra_state::ReadResponse::BlockHeader{ height, .. }) = self
+            .state
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
+            .call(zebra_state::ReadRequest::BlockHeader(hash.0.into()))
             .await
         {
-            ret
+            if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
+                .tfl_service
+                    .clone()
+                    .ready()
+                    .await
+                    .unwrap()
+                    .call(TFLServiceRequest::BlockFinalityStatus(height, hash.0))
+                    .await
+            {
+                ret
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1806,7 +1799,7 @@ where
             loop {
                 let rx_res = rx.recv().await;
                 if let Ok(block) = rx_res {
-                    tracing::info!("{:x}: RX new block: {}", id, block);
+                    tracing::info!("{:x}: RX new block: {:?}", id, block);
                 } else {
                     tracing::error!(?rx_res, "Bad channel TX");
                 }
@@ -1835,20 +1828,11 @@ where
                 return None;
             }
         };
+
         loop {
-            match if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-                .tfl_service
-                .clone()
-                .ready()
-                .await
-                .unwrap()
-                .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
-                .await
-            {
-                ret
-            } else {
-                None
-            } {
+            let status = self.get_tfl_block_finality_from_hash(hash).await;
+
+            match status {
                 None => {
                     return None;
                 }
@@ -1892,7 +1876,7 @@ where
                         .await;
                     if let Ok(txs) = txs_res {
                         tracing::info!(
-                            "{:x}: RX new block {}, with transactions: {:?}",
+                            "{:x}: RX new block {:?}, with transactions: {:?}",
                             id,
                             block_hash,
                             txs
@@ -1900,7 +1884,7 @@ where
                     } else {
                         tracing::error!(
                             ?txs_res,
-                            "Couldn't read transactions for new final block {}",
+                            "Couldn't read transactions for new final block {:?}",
                             block_hash
                         );
                     }

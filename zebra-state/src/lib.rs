@@ -24,6 +24,8 @@ pub mod constants;
 #[cfg(any(test, feature = "proptest-impl"))]
 pub mod arbitrary;
 
+pub mod crosslink;
+
 mod error;
 mod request;
 mod response;

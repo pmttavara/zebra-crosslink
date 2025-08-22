@@ -110,6 +110,12 @@ fn update_latest_chain_channels(
     tip_block_height
 }
 
+// NOTE: temporary until we merge upstream
+pub enum NonFinalizedStateWriteMessage {
+    QueueAndCommit(QueuedSemanticallyVerified),
+    CrosslinkFinalized(block::Hash, tokio::sync::oneshot::Sender<Result<block::Hash, BoxError>>),
+}
+
 /// Reads blocks from the channels, writes them to the `finalized_state` or `non_finalized_state`,
 /// sends any errors on the `invalid_block_reset_sender`, then updates the `chain_tip_sender` and
 /// `non_finalized_state_sender`.
@@ -132,7 +138,7 @@ fn update_latest_chain_channels(
 )]
 pub fn write_blocks_from_channels(
     mut finalized_block_write_receiver: UnboundedReceiver<QueuedCheckpointVerified>,
-    mut non_finalized_block_write_receiver: UnboundedReceiver<QueuedSemanticallyVerified>,
+    mut non_finalized_block_write_receiver: UnboundedReceiver<NonFinalizedStateWriteMessage>,
     mut finalized_state: FinalizedState,
     mut non_finalized_state: NonFinalizedState,
     invalid_block_reset_sender: UnboundedSender<block::Hash>,
@@ -224,7 +230,33 @@ pub fn write_blocks_from_channels(
     // Save any errors to propagate down to queued child blocks
     let mut parent_error_map: IndexMap<block::Hash, CloneError> = IndexMap::new();
 
-    while let Some((queued_child, rsp_tx)) = non_finalized_block_write_receiver.blocking_recv() {
+    while let Some(msg) = non_finalized_block_write_receiver.blocking_recv() {
+        let (queued_child, rsp_tx) = match msg {
+            NonFinalizedStateWriteMessage::QueueAndCommit(val) => val,
+            NonFinalizedStateWriteMessage::CrosslinkFinalized(hash, rsp_tx) => {
+                if let Some(newly_finalized_blocks) = non_finalized_state.crosslink_finalized(hash) {
+                    for block in newly_finalized_blocks {
+                        finalized_state.commit_finalized_direct(block.block.into(), None, "commit Crosslink-finalized block").expect(
+                            "unexpected finalized block commit error: blocks were already checked by the non-finalized state",
+                        );
+
+                        non_finalized_state.finalize();
+                    }
+
+                    rsp_tx.send(Ok(hash));
+                } else if finalized_state.db.contains_hash(hash) {
+                    // already de-facto finalized as below reorg height
+                    rsp_tx.send(Ok(hash));
+                } else {
+                    rsp_tx.send(Err("Couldn't find finalized block".into()));
+                }
+
+                // TODO: we may want to add db data here
+
+                continue;
+            },
+        };
+
         let child_hash = queued_child.hash;
         let parent_hash = queued_child.block.header.previous_block_hash;
         let parent_error = parent_error_map.get(&parent_hash);

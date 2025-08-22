@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
+use zebra_state::crosslink::*;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 
 use multiaddr::Multiaddr;
@@ -84,14 +85,15 @@ pub mod test_format;
 pub mod viz;
 
 use crate::service::{
-    TFLServiceCalls, TFLServiceError, TFLServiceHandle, TFLServiceRequest, TFLServiceResponse,
+    TFLServiceCalls, TFLServiceHandle,
 };
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, MalHeight/PoSHeigh etc?
 use zebra_chain::block::{
     Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
 };
-use zebra_state::{ReadRequest as ReadStateRequest, ReadResponse as ReadStateResponse};
+// TODO: rename
+use zebra_state::{crosslink::*, Request as ReadStateRequest, Response as ReadStateResponse};
 
 /// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
@@ -120,7 +122,7 @@ pub(crate) struct TFLServiceInternal {
     stakers: Vec<TFLStaker>,
 
     // channels
-    final_change_tx: broadcast::Sender<BlockHash>,
+    final_change_tx: broadcast::Sender<(BlockHeight, BlockHash)>,
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
     bft_blocks: Vec<BftBlock>,
@@ -130,40 +132,6 @@ pub(crate) struct TFLServiceInternal {
     malachite_watchdog: Instant,
 
     validators_at_current_height: Vec<MalValidator>,
-}
-
-/// The finality status of a block
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TFLBlockFinality {
-    // TODO: rename?
-    /// The block height is above the finalized height, so it's not yet determined
-    /// whether or not it will be finalized.
-    NotYetFinalized,
-
-    /// The block is finalized: it's height is below the finalized height and
-    /// it is in the best chain.
-    Finalized,
-
-    /// The block cannot be finalized: it's height is below the finalized height and
-    /// it is not in the best chain.
-    CantBeFinalized,
-}
-
-/// Placeholder representation for entity staking on PoS chain.
-// TODO: do we want to unify or separate staker/finalizer/delegator
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TFLStaker {
-    id: u64, // TODO: IP/malachite identifier/...
-    stake: u64, // TODO: do we want to store flat/tree delegators
-             // ALT: delegate_stake_to_id
-             // ...
-}
-
-/// Placeholder representation for group of stakers that are to be treated as finalizers.
-#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TFLRoster {
-    /// The list of stakers whose votes(?) will count. Sorted by weight(?)
-    pub finalizers: Vec<TFLStaker>,
 }
 
 // TODO: Result?
@@ -519,6 +487,16 @@ async fn new_decided_bft_block_from_malachite(
     internal.latest_final_block = Some((new_final_height, new_final_hash));
     internal.malachite_watchdog = Instant::now();
 
+    match (call.read_state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
+        Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
+            assert_eq!(hash, new_final_hash, "PoW finalized hash should now match ours");
+        }
+        Ok(_) => unreachable!("wrong response type"),
+        Err(err) => {
+            error!(?err);
+        }
+    }
+    
     // MUTATE ROSTER BY COMMAND
     {
         let roster = &mut internal.validators_at_current_height;
@@ -951,7 +929,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 for new_final_block in new_final_blocks {
                     // skip repeated boundary blocks
                     if let Some((_, prev_hash)) = current_bc_final {
-                        if prev_hash == new_final_block {
+                        if prev_hash == new_final_block.1 {
                             continue;
                         }
                     }
@@ -1072,11 +1050,12 @@ impl malachitebft_app_channel::app::node::Node for BFTNode {
     }
 }
 
-// TODO: from_height_hash
-async fn tfl_block_finality_from_hash(
+async fn tfl_block_finality_from_height_hash(
     internal_handle: TFLServiceHandle,
+    height: BlockHeight,
     hash: BlockHash,
 ) -> Result<Option<TFLBlockFinality>, TFLServiceError> {
+    // TODO: None is no longer ever returned
     let call = internal_handle.call.clone();
     let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
     let (final_height, final_hash) = match tfl_final_block_height_hash(&internal_handle).await {
@@ -1088,50 +1067,36 @@ async fn tfl_block_finality_from_hash(
         }
     };
 
-    Ok(
-        if let Ok(ReadStateResponse::BlockHeader {
-            header: block_hdr,
-            height,
-            hash: check_hash,
-            ..
-        }) = block_hdr.await
-        {
-            assert_eq!(check_hash, block_hdr.hash());
-            assert_eq!(check_hash, hash);
+    if height > final_height {
+        // N.B. this may be invalidated by the time it is received
+        Ok(Some(TFLBlockFinality::NotYetFinalized))
+    } else {
+        let cmp_hash = if height == final_height {
+            final_hash // we already have the hash at the final height, no point in re-getting it
+        } else {
+            match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
+                Ok(ReadStateResponse::BlockHeader { hash, .. }) => hash,
 
-            if height > final_height {
-                Some(TFLBlockFinality::NotYetFinalized)
-            } else if check_hash == final_hash {
-                assert_eq!(height, final_height);
-                Some(TFLBlockFinality::Finalized)
-            } else {
-                // get the block at the given height from the best chain.
-                // If it matches this then our block is on the best chain under the finalization
-                // height & is thus finalized.
-                // Otherwise it can't be finalized.
-                match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
-                    Ok(ReadStateResponse::BlockHeader {
-                        hash: hash_of_best_block_at_height,
-                        ..
-                    }) => Some(if hash_of_best_block_at_height == hash {
-                        TFLBlockFinality::Finalized
-                    } else {
-                        TFLBlockFinality::CantBeFinalized
-                    }),
+                Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
 
-                    Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
-                    _ => {
-                        return Err(TFLServiceError::Misc(
+                _ => {
+                    return Err(TFLServiceError::Misc(
                             "Invalid BlockHeader response type".to_string(),
-                        ))
-                    }
+                    ))
                 }
             }
+        };
+
+        // We have the hash of the block at the given height from the best chain.
+        // If it matches the queried hash then our block is on the best chain under the finalization
+        // height & is thus finalized.
+        // Otherwise it can't be finalized.
+        Ok(Some(if hash == cmp_hash {
+            TFLBlockFinality::Finalized
         } else {
-            // warn!("couldn't find PoW hash {}", hash);
-            None
-        },
-    )
+            TFLBlockFinality::CantBeFinalized
+        }))
+    }
 }
 
 async fn tfl_service_incoming_request(
@@ -1148,12 +1113,8 @@ async fn tfl_service_incoming_request(
             internal_handle.internal.lock().await.tfl_is_activated,
         )),
 
-        TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            if let Some((_, hash)) = tfl_final_block_height_hash(&internal_handle).await {
-                Some(hash)
-            } else {
-                None
-            },
+        TFLServiceRequest::FinalBlockHeightHash => Ok(TFLServiceResponse::FinalBlockHeightHash(
+            tfl_final_block_height_hash(&internal_handle).await
         )),
 
         TFLServiceRequest::FinalBlockRx => {
@@ -1167,8 +1128,8 @@ async fn tfl_service_incoming_request(
             tfl_set_finality_by_hash(internal_handle.clone(), hash).await,
         )),
 
-        TFLServiceRequest::BlockFinalityStatus(hash) => {
-            match tfl_block_finality_from_hash(internal_handle.clone(), hash).await {
+        TFLServiceRequest::BlockFinalityStatus(height, hash) => {
+            match tfl_block_finality_from_height_hash(internal_handle.clone(), height, hash).await {
                 Ok(val) => Ok(TFLServiceResponse::BlockFinalityStatus({ val })), // N.B. may still be None
                 Err(err) => Err(err),
             }
@@ -1281,7 +1242,7 @@ async fn tfl_block_sequence(
     final_height_hash: Option<(BlockHeight, BlockHash)>,
     include_start_hash: bool,
     read_extra_info: bool, // NOTE: done here rather than on print to isolate async from sync code
-) -> (Vec<BlockHash>, Vec<Option<Arc<Block>>>) {
+) -> (Vec<(BlockHeight, BlockHash)>, Vec<Option<Arc<Block>>>) {
     // get "real" initial values //////////////////////////////
     let (start_height, init_hash) = {
         if let Ok(ReadStateResponse::BlockHeader { height, header, .. }) =
@@ -1290,9 +1251,9 @@ async fn tfl_block_sequence(
             if include_start_hash {
                 // NOTE: BlockHashes does not return the first hash provided, so we move back 1.
                 //       We would probably also be fine to just push it directly.
-                (Some(height.sat_sub(1)), Some(header.previous_block_hash))
+                (Some(height), Some(header.previous_block_hash))
             } else {
-                (Some(height), Some(start_hash))
+                (Some(BlockHeight(height.0 + 1)), Some(start_hash))
             }
         } else {
             (None, None)
@@ -1364,7 +1325,16 @@ async fn tfl_block_sequence(
         }
 
         if let Some(val) = chunk.get(chunk_i) {
-            hashes.push(*val);
+            let height = BlockHeight(start_height.0 + <u32>::try_from(hashes.len()).expect("should fit in u32"));
+            debug_assert!(if let Some(h) = block_height_from_hash(call, *val).await {
+                if h != height {
+                    error!("expected: {:?}, actual: {:?}", height, h);
+                }
+                h == height
+            } else {
+                true
+            });
+            hashes.push((height, *val));
         } else {
             break; // expected
         };
@@ -1377,7 +1347,7 @@ async fn tfl_block_sequence(
         for hash in &hashes {
             infos.push(
                 if let Ok(ReadStateResponse::Block(block)) =
-                    (call.read_state)(ReadStateRequest::Block((*hash).into())).await
+                    (call.read_state)(ReadStateRequest::Block((hash.1).into())).await
                 {
                     block
                 } else {
@@ -1423,6 +1393,11 @@ impl HasBlockHash for BlockHash {
         Some(*self)
     }
 }
+impl HasBlockHash for (BlockHeight, BlockHash) {
+    fn get_hash(&self) -> Option<BlockHash> {
+        Some(self.1)
+    }
+}
 
 /// "How many little-endian chars are needed to uniquely identify any of the blocks in the given
 /// slice"
@@ -1464,12 +1439,12 @@ where
     unique_chars_n
 }
 
-fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
+fn tfl_dump_blocks(blocks: &[(BlockHeight, BlockHash)], infos: &[Option<Arc<Block>>]) {
     let highlight_chars_n = block_hash_unique_chars_n(blocks);
 
     let print_color = true;
 
-    for (block_i, hash) in blocks.iter().enumerate() {
+    for (block_i, (_, hash)) in blocks.iter().enumerate() {
         print!("  ");
         if print_color {
             dump_hash_highlight_lo(hash, highlight_chars_n);

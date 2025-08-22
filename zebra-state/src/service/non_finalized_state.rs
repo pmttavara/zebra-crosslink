@@ -239,6 +239,19 @@ impl NonFinalizedState {
         FinalizableBlock::new(best_chain_root, root_treestate)
     }
 
+    pub fn crosslink_finalized(&self, hash: block::Hash) -> Option<Vec<ContextuallyVerifiedBlock>> {
+        if let Some(chain_containing_finalized_block) = self.find_chain(|chain| chain.height_by_hash(hash).is_some()) {
+            let height = chain_containing_finalized_block.height_by_hash(hash).unwrap();
+
+            Some(chain_containing_finalized_block.blocks
+                .range(..=height)
+                .map(|(_h, b)| b.clone())
+                .collect())
+        } else {
+            None
+        }
+    }
+
     /// Commit block to the non-finalized state, on top of:
     /// - an existing chain's tip, or
     /// - a newly forked chain.
