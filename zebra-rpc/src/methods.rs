@@ -1647,10 +1647,10 @@ where
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-        if let Ok(TFLServiceResponse::FinalBlockHash(val)) = ret {
-            val.map(GetBlockHash)
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHash(height_hash.1))
         } else {
             tracing::error!(?ret, "Bad tfl service return.");
             None
@@ -1658,37 +1658,18 @@ where
     }
 
     async fn get_tfl_final_block_height_and_hash(&self) -> Option<GetBlockHeightAndHash> {
-        use zebra_state::{ReadRequest, ReadResponse};
-
-        let res = self
+        let ret = self
             .tfl_service
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-
-        if let Ok(TFLServiceResponse::FinalBlockHash(hash)) = res {
-            if let Some(hash) = hash {
-                let final_block_hdr_req = ReadRequest::BlockHeader(HashOrHeight::Hash(hash));
-                let final_block_hdr = self
-                    .state
-                    .clone()
-                    .oneshot(final_block_hdr_req)
-                    .await
-                    .map_misc_error();
-
-                if let Ok(ReadResponse::BlockHeader { height, .. }) = final_block_hdr {
-                    Some(GetBlockHeightAndHash { height, hash })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHeightAndHash{ height: height_hash.0, hash: height_hash.1 })
         } else {
-            tracing::error!(?res, "Bad tfl service return.");
+            tracing::error!(?ret, "Bad tfl service return.");
             None
         }
     }

@@ -1060,12 +1060,8 @@ async fn tfl_service_incoming_request(
             internal_handle.internal.lock().await.tfl_is_activated,
         )),
 
-        TFLServiceRequest::FinalBlockHash => Ok(TFLServiceResponse::FinalBlockHash(
-            if let Some((_, hash)) = tfl_final_block_height_hash(&internal_handle).await {
-                Some(hash)
-            } else {
-                None
-            },
+        TFLServiceRequest::FinalBlockHeightHash => Ok(TFLServiceResponse::FinalBlockHeightHash(
+            tfl_final_block_height_hash(&internal_handle).await
         )),
 
         TFLServiceRequest::FinalBlockRx => {

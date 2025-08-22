@@ -52,7 +52,7 @@ pub enum TFLServiceRequest {
     /// Is the TFL service activated yet?
     IsTFLActivated,
     /// Get the final block hash
-    FinalBlockHash,
+    FinalBlockHeightHash,
     /// Get a receiver for the final block hash
     FinalBlockRx,
     /// Set final block hash
@@ -77,7 +77,7 @@ pub enum TFLServiceResponse {
     /// Is the TFL service activated yet?
     IsTFLActivated(bool),
     /// Final block hash
-    FinalBlockHash(Option<BlockHash>),
+    FinalBlockHeightHash(Option<(BlockHeight, BlockHash)>),
     /// Receiver for the final block hash
     FinalBlockRx(broadcast::Receiver<BlockHash>),
     /// Set final block hash
