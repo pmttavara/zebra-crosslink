@@ -2,7 +2,7 @@
 
 This [zebra-crosslink](https://github.com/ShieldedLabs/zebra-crosslink) codebase is an in-progress implementation of the *Crosslink* hybrid Proof-of-Work / Proof-of-Stake consensus protocol described in [Zcash Trailing Finality Layer](https://electric-coin-company.github.io/tfl-book/).
 
-**Status:** Early Prototype; see [Implementation Approach](#implementation-approach) below for definition.
+**Warning:** All other chapters from 2 on are *not yet updated* for Crosslink.
 
 ## For Users
 
