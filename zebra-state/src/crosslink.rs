@@ -79,7 +79,7 @@ pub enum TFLServiceResponse {
     /// Final block hash
     FinalBlockHeightHash(Option<(BlockHeight, BlockHash)>),
     /// Receiver for the final block hash
-    FinalBlockRx(broadcast::Receiver<BlockHash>),
+    FinalBlockRx(broadcast::Receiver<(BlockHeight, BlockHash)>),
     /// Set final block hash
     SetFinalBlockHash(Option<BlockHeight>),
     /// Finality status of a block

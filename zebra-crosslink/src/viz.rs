@@ -666,7 +666,7 @@ pub async fn service_viz_requests(
         }
 
         #[allow(clippy::never_loop)]
-        let (lo_height, bc_tip, hashes, seq_blocks) = loop {
+        let (lo_height, bc_tip, height_hashes, seq_blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
             assert!(
                 lo <= hi || (lo >= 0 && hi < 0),
@@ -733,16 +733,13 @@ pub async fn service_viz_requests(
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let (hashes, blocks) =
+            let (height_hashes, blocks) =
                 tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
-            break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
+            break (lo_height_hash.0, Some(tip_height_hash), height_hashes, blocks);
         };
 
-        if hashes.len() != pow_blocks.len() {
+        if height_hashes.len() != pow_blocks.len() {
             // warn!("expected hashes & blocks to be parallel, actually have {} hashes, {} blocks", hashes.len(), pow_blocks.len());
-        }
-        for i in 0..hashes.len() {
-            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
         }
         for i in 0..seq_blocks.len() {
             pow_blocks.push(seq_blocks[i].clone());

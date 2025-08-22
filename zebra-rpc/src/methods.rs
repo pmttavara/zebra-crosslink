@@ -1799,7 +1799,7 @@ where
             loop {
                 let rx_res = rx.recv().await;
                 if let Ok(block) = rx_res {
-                    tracing::info!("{:x}: RX new block: {}", id, block);
+                    tracing::info!("{:x}: RX new block: {:?}", id, block);
                 } else {
                     tracing::error!(?rx_res, "Bad channel TX");
                 }
@@ -1876,7 +1876,7 @@ where
                         .await;
                     if let Ok(txs) = txs_res {
                         tracing::info!(
-                            "{:x}: RX new block {}, with transactions: {:?}",
+                            "{:x}: RX new block {:?}, with transactions: {:?}",
                             id,
                             block_hash,
                             txs
@@ -1884,7 +1884,7 @@ where
                     } else {
                         tracing::error!(
                             ?txs_res,
-                            "Couldn't read transactions for new final block {}",
+                            "Couldn't read transactions for new final block {:?}",
                             block_hash
                         );
                     }

@@ -118,7 +118,7 @@ pub(crate) struct TFLServiceInternal {
     stakers: Vec<TFLStaker>,
 
     // channels
-    final_change_tx: broadcast::Sender<BlockHash>,
+    final_change_tx: broadcast::Sender<(BlockHeight, BlockHash)>,
 
     bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
     bft_blocks: Vec<BftBlock>,
@@ -876,7 +876,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 for new_final_block in new_final_blocks {
                     // skip repeated boundary blocks
                     if let Some((_, prev_hash)) = current_bc_final {
-                        if prev_hash == new_final_block {
+                        if prev_hash == new_final_block.1 {
                             continue;
                         }
                     }
@@ -1189,7 +1189,7 @@ async fn tfl_block_sequence(
     final_height_hash: Option<(BlockHeight, BlockHash)>,
     include_start_hash: bool,
     read_extra_info: bool, // NOTE: done here rather than on print to isolate async from sync code
-) -> (Vec<BlockHash>, Vec<Option<Arc<Block>>>) {
+) -> (Vec<(BlockHeight, BlockHash)>, Vec<Option<Arc<Block>>>) {
     // get "real" initial values //////////////////////////////
     let (start_height, init_hash) = {
         if let Ok(ReadStateResponse::BlockHeader { height, header, .. }) =
@@ -1198,9 +1198,9 @@ async fn tfl_block_sequence(
             if include_start_hash {
                 // NOTE: BlockHashes does not return the first hash provided, so we move back 1.
                 //       We would probably also be fine to just push it directly.
-                (Some(height.sat_sub(1)), Some(header.previous_block_hash))
+                (Some(height), Some(header.previous_block_hash))
             } else {
-                (Some(height), Some(start_hash))
+                (Some(BlockHeight(height.0 + 1)), Some(start_hash))
             }
         } else {
             (None, None)
@@ -1272,7 +1272,16 @@ async fn tfl_block_sequence(
         }
 
         if let Some(val) = chunk.get(chunk_i) {
-            hashes.push(*val);
+            let height = BlockHeight(start_height.0 + <u32>::try_from(hashes.len()).expect("should fit in u32"));
+            debug_assert!(if let Some(h) = block_height_from_hash(call, *val).await {
+                if h != height {
+                    error!("expected: {:?}, actual: {:?}", height, h);
+                }
+                h == height
+            } else {
+                true
+            });
+            hashes.push((height, *val));
         } else {
             break; // expected
         };
@@ -1285,7 +1294,7 @@ async fn tfl_block_sequence(
         for hash in &hashes {
             infos.push(
                 if let Ok(ReadStateResponse::Block(block)) =
-                    (call.read_state)(ReadStateRequest::Block((*hash).into())).await
+                    (call.read_state)(ReadStateRequest::Block((hash.1).into())).await
                 {
                     block
                 } else {
@@ -1331,6 +1340,11 @@ impl HasBlockHash for BlockHash {
         Some(*self)
     }
 }
+impl HasBlockHash for (BlockHeight, BlockHash) {
+    fn get_hash(&self) -> Option<BlockHash> {
+        Some(self.1)
+    }
+}
 
 /// "How many little-endian chars are needed to uniquely identify any of the blocks in the given
 /// slice"
@@ -1372,12 +1386,12 @@ where
     unique_chars_n
 }
 
-fn tfl_dump_blocks(blocks: &[BlockHash], infos: &[Option<Arc<Block>>]) {
+fn tfl_dump_blocks(blocks: &[(BlockHeight, BlockHash)], infos: &[Option<Arc<Block>>]) {
     let highlight_chars_n = block_hash_unique_chars_n(blocks);
 
     let print_color = true;
 
-    for (block_i, hash) in blocks.iter().enumerate() {
+    for (block_i, (_, hash)) in blocks.iter().enumerate() {
         print!("  ");
         if print_color {
             dump_hash_highlight_lo(hash, highlight_chars_n);
