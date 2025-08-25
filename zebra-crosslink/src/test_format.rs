@@ -472,8 +472,8 @@ pub(crate) async fn handle_instr(
         }
 
         TestInstr::ExpectPoWChainLength(h) => {
-            if let ReadStateResponse::Tip(Some((height, hash))) =
-                (internal_handle.call.read_state)(ReadStateRequest::Tip)
+            if let StateResponse::Tip(Some((height, hash))) =
+                (internal_handle.call.state)(StateRequest::Tip)
                     .await
                     .expect("can read tip")
             {
@@ -540,7 +540,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
     println!("waiting for tip before starting the test...");
     let before_time = Instant::now();
     loop {
-        if let Ok(ReadStateResponse::Tip(Some(_))) = (call.read_state)(ReadStateRequest::Tip).await
+        if let Ok(StateResponse::Tip(Some(_))) = (call.state)(StateRequest::Tip).await
         {
             break;
         } else {
