@@ -683,8 +683,8 @@ pub async fn service_viz_requests(
             );
 
             let tip_height_hash: (BlockHeight, BlockHash) = {
-                if let Ok(ReadStateResponse::Tip(Some(tip_height_hash))) =
-                    (call.read_state)(ReadStateRequest::Tip).await
+                if let Ok(StateResponse::Tip(Some(tip_height_hash))) =
+                    (call.state)(StateRequest::Tip).await
                 {
                     tip_height_hash
                 } else {
@@ -714,8 +714,8 @@ pub async fn service_viz_requests(
                 if h == existing_height_hash.0 {
                     // avoid duplicating work if we've already got that value
                     Some(existing_height_hash)
-                } else if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
-                    (call.read_state)(ReadStateRequest::BlockHeader(h.into())).await
+                } else if let Ok(StateResponse::BlockHeader { hash, .. }) =
+                    (call.state)(StateRequest::BlockHeader(h.into())).await
                 {
                     Some((h, hash))
                 } else {

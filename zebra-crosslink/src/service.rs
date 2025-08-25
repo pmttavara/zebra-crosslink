@@ -19,8 +19,8 @@ use tracing::{error, info, warn};
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{
-    Request as ReadStateRequest,
-    Response as ReadStateResponse,
+    Request as StateRequest,
+    Response as StateResponse,
     crosslink::*
 };
 
@@ -48,17 +48,17 @@ impl Service<TFLServiceRequest> for TFLServiceHandle {
 }
 
 /// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
-/// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
+/// pointer that takes a `StateRequest` as input and returns a `StateResponse` as output.
 ///
 /// The error is boxed to allow for dynamic error types.
-pub(crate) type ReadStateServiceProcedure = Arc<
+pub(crate) type StateServiceProcedure = Arc<
     dyn Fn(
-            ReadStateRequest,
+            StateRequest,
         ) -> Pin<
             Box<
                 dyn Future<
                         Output = Result<
-                            ReadStateResponse,
+                            StateResponse,
                             Box<dyn std::error::Error + Send + Sync>,
                         >,
                     > + Send,
@@ -87,7 +87,7 @@ pub(crate) type ForceFeedPoSBlockProcedure = Arc<
 /// Simply put, it is a function pointer bundle for all outgoing calls to the rest of Zebra.
 #[derive(Clone)]
 pub struct TFLServiceCalls {
-    pub(crate) read_state: ReadStateServiceProcedure,
+    pub(crate) state: StateServiceProcedure,
     pub(crate) force_feed_pow: ForceFeedPoWBlockProcedure,
     pub(crate) force_feed_pos: ForceFeedPoSBlockProcedure,
 }
@@ -100,11 +100,11 @@ impl fmt::Debug for TFLServiceCalls {
 /// Spawn a Trailing Finality Service that uses the provided
 /// closures to call out to other services.
 ///
-/// - `read_state_service_call` takes a [`ReadStateRequest`] as input and returns a [`ReadStateResponse`] as output.
+/// - `state_service_call` takes a [`StateRequest`] as input and returns a [`StateResponse`] as output.
 ///
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
-    read_state_service_call: ReadStateServiceProcedure,
+    state_service_call: StateServiceProcedure,
     force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
@@ -158,7 +158,7 @@ pub fn spawn_new_tfl_service(
     let handle1 = TFLServiceHandle {
         internal,
         call: TFLServiceCalls {
-            read_state: read_state_service_call,
+            state: state_service_call,
             force_feed_pow: force_feed_pow_call,
             force_feed_pos,
         },

@@ -92,8 +92,7 @@ use crate::service::{
 use zebra_chain::block::{
     Block, CountedHeader, Hash as BlockHash, Header as BlockHeader, Height as BlockHeight,
 };
-// TODO: rename
-use zebra_state::{crosslink::*, Request as ReadStateRequest, Response as ReadStateResponse};
+use zebra_state::{crosslink::*, Request as StateRequest, Response as StateResponse};
 
 /// Placeholder activation height for Crosslink functionality
 pub const TFL_ACTIVATION_HEIGHT: BlockHeight = BlockHeight(2000);
@@ -136,8 +135,8 @@ pub(crate) struct TFLServiceInternal {
 
 // TODO: Result?
 async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHeight> {
-    if let Ok(ReadStateResponse::BlockHeader { height, .. }) =
-        (call.read_state)(ReadStateRequest::BlockHeader(hash.into())).await
+    if let Ok(StateResponse::BlockHeader { height, .. }) =
+        (call.state)(StateRequest::BlockHeader(hash.into())).await
     {
         Some(height)
     } else {
@@ -149,11 +148,11 @@ async fn block_height_hash_from_hash(
     call: &TFLServiceCalls,
     hash: BlockHash,
 ) -> Option<(BlockHeight, BlockHash)> {
-    if let Ok(ReadStateResponse::BlockHeader {
+    if let Ok(StateResponse::BlockHeader {
         height,
         hash: check_hash,
         ..
-    }) = (call.read_state)(ReadStateRequest::BlockHeader(hash.into())).await
+    }) = (call.state)(StateRequest::BlockHeader(hash.into())).await
     {
         assert_eq!(hash, check_hash);
         Some((height, hash))
@@ -166,8 +165,8 @@ async fn _block_header_from_hash(
     call: &TFLServiceCalls,
     hash: BlockHash,
 ) -> Option<Arc<BlockHeader>> {
-    if let Ok(ReadStateResponse::BlockHeader { header, .. }) =
-        (call.read_state)(ReadStateRequest::BlockHeader(hash.into())).await
+    if let Ok(StateResponse::BlockHeader { header, .. }) =
+        (call.state)(StateRequest::BlockHeader(hash.into())).await
     {
         Some(header)
     } else {
@@ -176,8 +175,8 @@ async fn _block_header_from_hash(
 }
 
 async fn _block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHash> {
-    if let Ok(ReadStateResponse::BlockHeader { header, .. }) =
-        (call.read_state)(ReadStateRequest::BlockHeader(hash.into())).await
+    if let Ok(StateResponse::BlockHeader { header, .. }) =
+        (call.state)(StateRequest::BlockHeader(hash.into())).await
     {
         Some(header.previous_block_hash)
     } else {
@@ -188,11 +187,11 @@ async fn _block_prev_hash_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> 
 async fn tfl_reorg_final_block_height_hash(
     call: &TFLServiceCalls,
 ) -> Option<(BlockHeight, BlockHash)> {
-    let locator = (call.read_state)(ReadStateRequest::BlockLocator).await;
+    let locator = (call.state)(StateRequest::BlockLocator).await;
 
     // NOTE: although this is a vector, the docs say it may skip some blocks
     // so we can't just `.get(MAX_BLOCK_REORG_HEIGHT)`
-    if let Ok(ReadStateResponse::BlockLocator(hashes)) = locator {
+    if let Ok(StateResponse::BlockLocator(hashes)) = locator {
         let result_1 = match hashes.last() {
             Some(hash) => block_height_from_hash(call, *hash)
                 .await
@@ -217,10 +216,10 @@ async fn tfl_reorg_final_block_height_hash(
                     let pre_reorg_height = height
                         .sub(BlockHeightDiff::from(zebra_state::MAX_BLOCK_REORG_HEIGHT))
                         .unwrap();
-                    let final_block_req = ReadStateRequest::BlockHeader(pre_reorg_height.into());
-                    let final_block_hdr = (call.read_state)(final_block_req).await;
+                    let final_block_req = StateRequest::BlockHeader(pre_reorg_height.into());
+                    let final_block_hdr = (call.state)(final_block_req).await;
 
-                    if let Ok(ReadStateResponse::BlockHeader { height, hash, .. }) = final_block_hdr
+                    if let Ok(StateResponse::BlockHeader { height, hash, .. }) = final_block_hdr
                     {
                         Some((height, hash))
                     } else {
@@ -242,10 +241,10 @@ async fn tfl_reorg_final_block_height_hash(
                     let pre_reorg_height = height
                         .sub(BlockHeightDiff::from(zebra_state::MAX_BLOCK_REORG_HEIGHT))
                         .unwrap();
-                    let final_block_req = ReadStateRequest::BlockHeader(pre_reorg_height.into());
-                    let final_block_hdr = (call.read_state)(final_block_req).await;
+                    let final_block_req = StateRequest::BlockHeader(pre_reorg_height.into());
+                    let final_block_hdr = (call.state)(final_block_req).await;
 
-                    if let Ok(ReadStateResponse::BlockHeader { height, hash, .. }) = final_block_hdr
+                    if let Ok(StateResponse::BlockHeader { height, hash, .. }) = final_block_hdr
                     {
                         result_3 = Some((height, hash))
                     }
@@ -314,7 +313,7 @@ async fn propose_new_bft_block(
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
     let (tip_height, tip_hash) =
-        if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
+        if let Ok(StateResponse::Tip(val)) = (call.state)(StateRequest::Tip).await {
             if val.is_none() {
                 return None;
             }
@@ -361,12 +360,12 @@ async fn propose_new_bft_block(
         return None;
     }
 
-    let resp = (call.read_state)(ReadStateRequest::BlockHeader(
+    let resp = (call.state)(StateRequest::BlockHeader(
         finality_candidate_height.into(),
     ))
     .await;
 
-    let candidate_hash = if let Ok(ReadStateResponse::BlockHeader { hash, .. }) = resp {
+    let candidate_hash = if let Ok(StateResponse::BlockHeader { hash, .. }) = resp {
         hash
     } else {
         // Error or unexpected response type:
@@ -375,13 +374,13 @@ async fn propose_new_bft_block(
     };
 
     // NOTE: probably faster to request 2x as many blocks as we need rather than have another async call
-    let resp = (call.read_state)(ReadStateRequest::FindBlockHeaders {
+    let resp = (call.state)(StateRequest::FindBlockHeaders {
         known_blocks: vec![candidate_hash],
         stop: None,
     })
     .await;
 
-    let headers: Vec<BlockHeader> = if let Ok(ReadStateResponse::BlockHeaders(hdrs)) = resp {
+    let headers: Vec<BlockHeader> = if let Ok(StateResponse::BlockHeaders(hdrs)) = resp {
         // TODO: do we want these in chain order or "walk-back order"
         hdrs.into_iter()
             .map(|ch| Arc::unwrap_or_clone(ch.header))
@@ -487,7 +486,7 @@ async fn new_decided_bft_block_from_malachite(
     internal.latest_final_block = Some((new_final_height, new_final_hash));
     internal.malachite_watchdog = Instant::now();
 
-    match (call.read_state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
+    match (call.state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
         Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
             assert_eq!(hash, new_final_hash, "PoW finalized hash should now match ours");
         }
@@ -496,7 +495,7 @@ async fn new_decided_bft_block_from_malachite(
             error!(?err);
         }
     }
-    
+
     // MUTATE ROSTER BY COMMAND
     {
         let roster = &mut internal.validators_at_current_height;
@@ -838,8 +837,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     loop {
         // Calculate this prior to message handling so that handlers can use it:
-        let new_bc_tip = if let Ok(ReadStateResponse::Tip(val)) =
-            (call.read_state)(ReadStateRequest::Tip).await
+        let new_bc_tip = if let Ok(StateResponse::Tip(val)) =
+            (call.state)(StateRequest::Tip).await
         {
             val
         } else {
@@ -1055,7 +1054,7 @@ async fn tfl_block_finality_from_height_hash(
 ) -> Result<Option<TFLBlockFinality>, TFLServiceError> {
     // TODO: None is no longer ever returned
     let call = internal_handle.call.clone();
-    let block_hdr = (call.read_state)(ReadStateRequest::BlockHeader(hash.into()));
+    let block_hdr = (call.state)(StateRequest::BlockHeader(hash.into()));
     let (final_height, final_hash) = match tfl_final_block_height_hash(&internal_handle).await {
         Some(v) => v,
         None => {
@@ -1072,8 +1071,8 @@ async fn tfl_block_finality_from_height_hash(
         let cmp_hash = if height == final_height {
             final_hash // we already have the hash at the final height, no point in re-getting it
         } else {
-            match (call.read_state)(ReadStateRequest::BlockHeader(height.into())).await {
-                Ok(ReadStateResponse::BlockHeader { hash, .. }) => hash,
+            match (call.state)(StateRequest::BlockHeader(height.into())).await {
+                Ok(StateResponse::BlockHeader { hash, .. }) => hash,
 
                 Err(err) => return Err(TFLServiceError::Misc(err.to_string())),
 
@@ -1134,8 +1133,8 @@ async fn tfl_service_incoming_request(
         }
 
         TFLServiceRequest::TxFinalityStatus(hash) => Ok(TFLServiceResponse::TxFinalityStatus({
-            if let Ok(ReadStateResponse::Transaction(Some(tx))) =
-                (call.read_state)(ReadStateRequest::Transaction(hash)).await
+            if let Ok(StateResponse::Transaction(Some(tx))) =
+                (call.state)(StateRequest::Transaction(hash)).await
             {
                 let (final_height, _final_hash) =
                     match tfl_final_block_height_hash(&internal_handle).await {
@@ -1232,7 +1231,7 @@ impl SatSubAffine<i32> for BlockHeight {
 
 // TODO: handle headers as well?
 // NOTE: this is currently best-chain-only due to request/response limitations
-// TODO: add more request/response pairs directly in zebra-state's ReadStateService
+// TODO: add more request/response pairs directly in zebra-state's StateService
 /// always returns block hashes. If read_extra_info is set, also returns Blocks, otherwise returns an empty vector.
 async fn tfl_block_sequence(
     call: &TFLServiceCalls,
@@ -1243,8 +1242,8 @@ async fn tfl_block_sequence(
 ) -> (Vec<(BlockHeight, BlockHash)>, Vec<Option<Arc<Block>>>) {
     // get "real" initial values //////////////////////////////
     let (start_height, init_hash) = {
-        if let Ok(ReadStateResponse::BlockHeader { height, header, .. }) =
-            (call.read_state)(ReadStateRequest::BlockHeader(start_hash.into())).await
+        if let Ok(StateResponse::BlockHeader { height, header, .. }) =
+            (call.state)(StateRequest::BlockHeader(start_hash.into())).await
         {
             if include_start_hash {
                 // NOTE: BlockHashes does not return the first hash provided, so we move back 1.
@@ -1259,7 +1258,7 @@ async fn tfl_block_sequence(
     };
     let (final_height, final_hash) = if let Some((height, hash)) = final_height_hash {
         (Some(height), Some(hash))
-    } else if let Ok(ReadStateResponse::Tip(val)) = (call.read_state)(ReadStateRequest::Tip).await {
+    } else if let Ok(StateResponse::Tip(val)) = (call.state)(StateRequest::Tip).await {
         val.unzip()
     } else {
         (None, None)
@@ -1300,13 +1299,13 @@ async fn tfl_block_sequence(
                 chunk.last().expect("should have chunk elements by now")
             };
 
-            let res = (call.read_state)(ReadStateRequest::FindBlockHashes {
+            let res = (call.state)(StateRequest::FindBlockHashes {
                 known_blocks: vec![*chunk_start_hash],
                 stop: final_hash,
             })
             .await;
 
-            if let Ok(ReadStateResponse::BlockHashes(chunk_hashes)) = res {
+            if let Ok(StateResponse::BlockHashes(chunk_hashes)) = res {
                 if c == 0 && include_start_hash && !chunk_hashes.is_empty() {
                     assert_eq!(
                         chunk_hashes[0], start_hash,
@@ -1344,8 +1343,8 @@ async fn tfl_block_sequence(
     if read_extra_info {
         for hash in &hashes {
             infos.push(
-                if let Ok(ReadStateResponse::Block(block)) =
-                    (call.read_state)(ReadStateRequest::Block((hash.1).into())).await
+                if let Ok(StateResponse::Block(block)) =
+                    (call.state)(StateRequest::Block((hash.1).into())).await
                 {
                     block
                 } else {
