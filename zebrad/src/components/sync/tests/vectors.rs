@@ -105,7 +105,7 @@ async fn sync_blocks_ok() -> Result<(), crate::BoxError> {
     state_service
         .expect_request(zs::Request::KnownBlock(block0_hash))
         .await
-        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock::BestChain)));
+        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock{ location: zs::KnownBlockLocation::BestChain, height: Height(0)})));
 
     // ChainSync::obtain_tips
 
@@ -347,7 +347,7 @@ async fn sync_blocks_duplicate_hashes_ok() -> Result<(), crate::BoxError> {
     state_service
         .expect_request(zs::Request::KnownBlock(block0_hash))
         .await
-        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock::BestChain)));
+        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock{ location: zs::KnownBlockLocation::BestChain, height: Height(0) })));
 
     // ChainSync::obtain_tips
 
@@ -647,7 +647,7 @@ async fn sync_block_too_high_obtain_tips() -> Result<(), crate::BoxError> {
     state_service
         .expect_request(zs::Request::KnownBlock(block0_hash))
         .await
-        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock::BestChain)));
+        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock{ location: zs::KnownBlockLocation::BestChain, height: Height(0)})));
 
     // ChainSync::obtain_tips
 
@@ -820,7 +820,7 @@ async fn sync_block_too_high_extend_tips() -> Result<(), crate::BoxError> {
     state_service
         .expect_request(zs::Request::KnownBlock(block0_hash))
         .await
-        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock::BestChain)));
+        .respond(zs::Response::KnownBlock(Some(zs::KnownBlock{ location: zs::KnownBlockLocation::BestChain, height: Height(0)})));
 
     // ChainSync::obtain_tips
 
