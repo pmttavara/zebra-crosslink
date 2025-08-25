@@ -49,7 +49,7 @@ Note the scope of these decisions may deviate from the more rigorous yet abstrac
 
 This means the prototype _may_ violate some of the security assumptions or other goals of that design, so we make no assurances _the prototype is not safe_. We have three possible types of rationale for these deviations:
 
-- We _intentionally_ prefer a different trade-off to the original design; in which case we should have verly explicit rationale documentation about the difference (in an ADR). One example (**TODO**: not-yet-done) is our ADR-0001 selects a different approach to on-chain signatures than (**TODO**: link to TFL section).
+- We _intentionally_ prefer a different trade-off to the original design; in which case we should have very explicit rationale documentation about the difference (in an ADR). One example (**TODO**: not-yet-done) is our ADR-0001 selects a different approach to on-chain signatures than (**TODO**: link to TFL section).
 - Something about the more abstract design makes assumptions we cannot uphold in practice with all of the other implementation constraints. In this case, we need to determine if the upstream design needs to be improved, or we need to alter our implementation constraints.
 - As an expedient, we found it quicker and easier to do something different to get the prototype working, even though we believe the design makes better trade-offs. These are prime candidates for improvement during productionization to match the design, or else require persuasive rationale that a "short cut" is worth the trade-offs and risks.
 
