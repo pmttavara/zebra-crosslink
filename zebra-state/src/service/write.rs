@@ -250,6 +250,13 @@ pub fn write_blocks_from_channels(
                         non_finalized_state.finalize();
                     }
 
+                    update_latest_chain_channels(
+                        &non_finalized_state,
+                        &mut chain_tip_sender,
+                        &non_finalized_state_sender,
+                        &mut last_zebra_mined_log_height,
+                    );
+
                     rsp_tx.send(Ok(hash));
                 } else if finalized_state.db.contains_hash(hash) {
                     // already de-facto finalized as below reorg height
