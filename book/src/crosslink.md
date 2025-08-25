@@ -22,7 +22,7 @@ Our engineering goals are defined in `DELIVERABLES.md` in this repository. (**TO
 
 ### Design Documentation
 
-As we proceed we intend to produce design documentation that is abstracted from implementation, but more comprehensive than the [TFL Book](https://electric-coin-company.github.io/tfl-book/) design because it encompasses all of a specific concrete integrated hybrid prototocl with full PoW, BFT, and PoS scope.
+As we proceed we intend to produce design documentation that is abstracted from implementation, but more comprehensive than the [TFL Book](https://electric-coin-company.github.io/tfl-book/) design because it encompasses all of a specific concrete integrated hybrid protocol with full PoW, BFT, and PoS scope.
 
 - The keystone document for this is an in-progress [ZIP Draft](https://docs.google.com/document/d/1wSLLReAEe4cM60VMKj0-ze_EHS12DqVoI0QVW8H3X9E/edit?tab=t.0#heading=h.f0ehy0pxr01t) which will enter the formal [ZIP](https://zips.z.cash) process as it matures.
 - Additionally, we are tracking _Architecture Design Rationales_ as we prototype the complete design. More detail is provided in the [Implementation Approach](#implementation-approach) section below.
