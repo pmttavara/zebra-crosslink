@@ -101,7 +101,7 @@ pub enum Response {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// An enum of block stores in the state where a block hash could be found.
-pub enum KnownBlock {
+pub enum KnownBlockLocation {
     /// Block is in the best chain.
     BestChain,
 
@@ -110,6 +110,15 @@ pub enum KnownBlock {
 
     /// Block is queued to be validated and committed, or rejected and dropped.
     Queue,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KnownBlock {
+    /// Where is the block located?
+    pub location: KnownBlockLocation,
+    // header: Arc<block::Header>,
+    /// What height in the given chain is it?
+    pub height: block::Height,
 }
 
 /// Information about a transaction in the best chain

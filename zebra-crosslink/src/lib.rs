@@ -135,10 +135,10 @@ pub(crate) struct TFLServiceInternal {
 
 // TODO: Result?
 async fn block_height_from_hash(call: &TFLServiceCalls, hash: BlockHash) -> Option<BlockHeight> {
-    if let Ok(StateResponse::BlockHeader { height, .. }) =
-        (call.state)(StateRequest::BlockHeader(hash.into())).await
+    if let Ok(StateResponse::KnownBlock(Some(known_block))) =
+        (call.state)(StateRequest::KnownBlock(hash.into())).await
     {
-        Some(height)
+        Some(known_block.height)
     } else {
         None
     }
