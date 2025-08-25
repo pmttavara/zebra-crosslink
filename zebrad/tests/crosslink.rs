@@ -453,6 +453,12 @@ fn crosslink_reject_pow_chain_fork_that_is_competing_against_a_shorter_finalized
     test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test1_short_pos_long.zeccltf"));
 }
 
+#[test]
+fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists() {
+    set_test_name(function_name!());
+    test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test2_long_short_pos.zeccltf"));
+}
+
 // TODO:
 // - reject signatures from outside the roster
 // - reject pos block with < 2/3rds roster stake

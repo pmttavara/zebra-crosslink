@@ -235,6 +235,13 @@ pub fn write_blocks_from_channels(
             NonFinalizedStateWriteMessage::QueueAndCommit(val) => val,
             NonFinalizedStateWriteMessage::CrosslinkFinalized(hash, rsp_tx) => {
                 if let Some(newly_finalized_blocks) = non_finalized_state.crosslink_finalized(hash) {
+                    info!("finalized {}, which implicitly finalizes:", hash);
+                    for i in 0..newly_finalized_blocks.len() {
+                        info!("  {}: {}", i, newly_finalized_blocks[i].block.hash());
+                    }
+
+                    non_finalized_state.remove_chains_invalidated_by_crosslink_finalized(hash);
+
                     for block in newly_finalized_blocks {
                         finalized_state.commit_finalized_direct(block.block.into(), None, "commit Crosslink-finalized block").expect(
                             "unexpected finalized block commit error: blocks were already checked by the non-finalized state",

@@ -239,8 +239,23 @@ impl NonFinalizedState {
         FinalizableBlock::new(best_chain_root, root_treestate)
     }
 
+    pub fn remove_chains_invalidated_by_crosslink_finalized(&mut self, hash: block::Hash) {
+        let mut new_chain_set = self.chain_set.clone();
+        for chain in self.chain_iter() {
+            if ! chain.contains_block_hash(hash) {
+                info!("crosslink finalize: removing chain with hashes:");
+                for (i, block) in chain.child_blocks(&chain.non_finalized_root_height()).iter().enumerate() {
+                    info!("  {}: {}", i, block.hash);
+                }
+                new_chain_set.remove(&*chain);
+            }
+        }
+        self.chain_set = new_chain_set;
+    }
+
     pub fn crosslink_finalized(&self, hash: block::Hash) -> Option<Vec<ContextuallyVerifiedBlock>> {
         if let Some(chain_containing_finalized_block) = self.find_chain(|chain| chain.height_by_hash(hash).is_some()) {
+            info!("crosslink finalize: found block in chain: {}", hash);
             let height = chain_containing_finalized_block.height_by_hash(hash).unwrap();
 
             Some(chain_containing_finalized_block.blocks
@@ -248,6 +263,7 @@ impl NonFinalizedState {
                 .map(|(_h, b)| b.clone())
                 .collect())
         } else {
+            warn!("crosslink finalize: couldn't find block in any chain: {}", hash);
             None
         }
     }
