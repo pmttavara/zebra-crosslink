@@ -488,6 +488,7 @@ async fn new_decided_bft_block_from_malachite(
 
     match (call.state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
         Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
+            info!("Successfully crosslink-finalized {}", hash);
             assert_eq!(hash, new_final_hash, "PoW finalized hash should now match ours");
         }
         Ok(_) => unreachable!("wrong response type"),

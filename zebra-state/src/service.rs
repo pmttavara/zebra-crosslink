@@ -1012,6 +1012,7 @@ impl Service<Request> for StateService {
             }
 
             Request::CrosslinkFinalizeBlock(finalized) => {
+                info!("Trying to Crosslink-finalize {}", finalized);
                 // # Performance
                 //
                 // This method doesn't block, access the database, or perform CPU-intensive tasks,
