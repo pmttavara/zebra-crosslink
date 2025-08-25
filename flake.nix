@@ -287,7 +287,7 @@
         };
 
         packages = {
-          inherit zebrad;
+          inherit zebrad zebra-book;
 
           default = zebra-all-pkgs;
         };
@@ -305,6 +305,7 @@
               mdbook
               mdbook-mermaid
               nixfmt
+              yamllint
             ];
 
             dynlibs = with pkgs; [
