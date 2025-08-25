@@ -2,44 +2,61 @@
 
 This [zebra-crosslink](https://github.com/ShieldedLabs/zebra-crosslink) codebase is an in-progress implementation of the *Crosslink* hybrid Proof-of-Work / Proof-of-Stake consensus protocol described in [Zcash Trailing Finality Layer](https://electric-coin-company.github.io/tfl-book/).
 
-**Status:** Early Prototype; see [Implementation Approach](#implementation-approach) below for definition.
+**Warning:** All other chapters from 2 on are *not yet updated* for Crosslink.
 
 ## For Users
 
 Presently, this implementation is not suitable for general users. There is no functioning testnet support. There is no guarantee Crosslink will activate on the Zcash network, although every indication we've seen is enthusiastic support from both the userbase and Zcash developer communities, so we expect it will be when the time is right.
 
+## For Developers and Protocol Aficionados
+
+While inspired by the [Zcash Trailing Finality Layer](https://electric-coin-company.github.io/tfl-book/) book, this project relies on a suite of scope, goals, and specifications to achieve a successful safe Mainnet deployment with a priority of quick time-to-market.
+
+### Product Definition
+
+Our project [SCOPING.md](crosslink/SCOPING.md) in this repository is a user-facing description of what we aim to accomplish.
+
+(**TODO:** Incorporate user stories.)
+
+Our engineering goals are defined in `DELIVERABLES.md` in this repository. (**TODO:** Not yet merged.)
+
+### Design Documentation
+
+As we proceed we intend to produce design documentation that is abstracted from implementation, but more comprehensive than the [TFL Book](https://electric-coin-company.github.io/tfl-book/) design because it encompasses all of a specific concrete integrated hybrid protocol with full PoW, BFT, and PoS scope.
+
+- The keystone document for this is an in-progress [ZIP Draft](https://docs.google.com/document/d/1wSLLReAEe4cM60VMKj0-ze_EHS12DqVoI0QVW8H3X9E/edit?tab=t.0#heading=h.f0ehy0pxr01t) which will enter the formal [ZIP](https://zips.z.cash) process as it matures.
+- Additionally, we are tracking _Architecture Design Rationales_ as we prototype the complete design. More detail is provided in the [Implementation Approach](#implementation-approach) section below.
+
+### Protocol and Engineering Documentation
+
+As we develop this specific instance, we are also aiming to produce _generic implementation specification_ in two forms:
+
+- The other is a set of lower-level [Crosslink Implementation Requirements](https://docs.google.com/document/d/1YXalTGoezGH8GS1dknO8aK6eBFRq_Pq8LvDeho1KVZ8/edit?tab=t.0#heading=h.2sfs3jgpkfgx)  that engineers aim to adhere to in our implementation.
+
 ## Implementation Approach
 
-### Prototype Phase (You Are Here)
+The high level roadmap has two main phases: _Prototyping Phase_ and _Productionization Phase_.
 
-Our initial development effort will be "prototypical", producing "milestones" which have partial usable functionality which developers or motivated curious users can experiment with. However, during this prototype phase we make no guarantee about safety, correctness, performance, etc... of either the implementation or design.
+Please see the Shielded Labs Crosslink [Roadmap Timeline](https://shieldedlabs.net/roadmap/) for current status, and our [Blogpost](https://shieldedlabs.net/crosslink-roadmap-q1-2025/) for more detailed milestone plans.
 
-During development of this working implementation, we will be filling in unspecific aspects of the protocol design, as well as making many implementation-specific decisions. During this prototype phase, our goal is to implement an _apparently_ working prototype rapidly, so to that end, we may make best-effort practical design or implementation decisions which may not prove to be safe enough or correct for mainnet production usage.
+During the Prototype Phase we often choose the "simplest" design alternative when faced with choices. Simplicity has multiple axes: easy to explain, easy to implement, easiest implications to understand, etc... We prioritize time to market, then easiness to explain.
 
-We will document all such decisions here, and for any significant decision we will provide an Architectural Design Record to follow this helpful practice [upstream has adopted](https://github.com/ZcashFoundation/zebra/pull/9310#issue-2886753962).
+We intend to revisit each of these documented decisions, and any new ones we discover, during Milestone 5 where we begin the transition from prototype to production-ready.
 
-### Alpha & Beta Phase
+### Design Adherence, Safety, & Analysis
 
-Eventually, this prototype will reach a feature-complete "alpha" phase. At this phase we will begin refining both the code and the design to meet the high bar for rigor and safety for the Zcash mainnet.
+Note the scope of these decisions may deviate from the more rigorous yet abstract [TFL Book §3.3 The Crosslink Construction](https://electric-coin-company.github.io/tfl-book/design/crosslink.html)!
 
-It is during this phase that we will also be focused on merging the changes in earnest into upstream projects, including `zebrad`.
+This means the prototype _may_ violate some of the security assumptions or other goals of that design, so we make no assurances _the prototype is not safe_. We have three possible types of rationale for these deviations:
 
-### Zcash Deployment Phase
+- We _intentionally_ prefer a different trade-off to the original design; in which case we should have very explicit rationale documentation about the difference (in an ADR). One example (**TODO**: not-yet-done) is our ADR-0001 selects a different approach to on-chain signatures than (**TODO**: link to TFL section).
+- Something about the more abstract design makes assumptions we cannot uphold in practice with all of the other implementation constraints. In this case, we need to determine if the upstream design needs to be improved, or we need to alter our implementation constraints.
+- As an expedient, we found it quicker and easier to do something different to get the prototype working, even though we believe the design makes better trade-offs. These are prime candidates for improvement during productionization to match the design, or else require persuasive rationale that a "short cut" is worth the trade-offs and risks.
 
-Once the Beta phase reaches a sufficient level of maturity, there is widespread confidence in the design and implementation, and a clear mandate from Zcashers to activate it, we will begin the deployment phase.
+### Architecture Design Rationales
 
-During this phase, all Crosslink-specific functionality will be merged to upstream projects, or if it makes sense to the different teams involved to release differentiated first class products, we may also do that.
+We use an approach of documenting many design decisions via "Architecture Design Rationale" documents, inspired by the upstream development process. These are especially important for our Prototype-then-Productionize approach, since they record key decisions we should review for production readiness.
 
-For example, it may make sense to have different specialized products such as a "PoW-full-node/PoS-light-client" that miners prefer, a distinct "finalizer node" that finalizer operators prefer, and a "light wallet backend service node" that wallet vendors or infrastructure providers prefer, and those might be supported by different teams. Or, it may make the most sense to support those different use cases in a unified codebase and product by a single team. We'll continue to engage with the other Zcash development teams early on to determine which approaches Shielded Labs can commit to supporting.
+Currently ADRs are very rough and tracked on this [zebra-crosslink ADR Google Sheet](https://docs.google.com/spreadsheets/d/1X6dMxrkbWshhy8JwR7WkNC7JuN1J5YKNFzTcR-BolRo/edit?gid=0#gid=0).
 
-This phase is a success when the Crosslink functionality is released in mainnet production products (which is always well ahead of protocol activation).
-
-### Activation and Follow-Through Phase
-
-The final phase is crucial to success: we consider our effort successful only after the features have activated on mainnet, *and* we see successful up-take of those features, such as multiple functioning wallets, exchanges, DEXes, and finalizer provider services.
-
-During this phase, we will be focused on ironing out any blockers to full successful adoption of the activated featureset. 
-
-## Design & Architecture
-
-TBD. Stay tuned.
+Moving forward we will begin to incorporate them into this codebase.
