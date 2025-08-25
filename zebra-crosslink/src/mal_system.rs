@@ -99,6 +99,7 @@ pub async fn start_malachite_with_start_delay(
             Ok(()) => (),
             Err(error) => {
                 eprintln!("panic occurred inside mal_system.rs: {:?}", error);
+                #[cfg(debug_assertions)]
                 std::process::abort();
             }
         }

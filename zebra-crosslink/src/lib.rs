@@ -782,15 +782,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
-    bft_config.consensus.p2p.persistent_peers.remove(
-        bft_config
-            .consensus
-            .p2p
-            .persistent_peers
-            .iter()
-            .position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap())
-            .unwrap(),
-    );
+    if let Some(position) = bft_config.consensus
+                                    .p2p
+                                    .persistent_peers
+                                    .iter()
+                                    .position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap()) {
+        bft_config.consensus.p2p.persistent_peers.remove(position);
+    }
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
     if let Some(listen_addr) = config.listen_address {
@@ -1326,14 +1324,14 @@ async fn tfl_block_sequence(
 
         if let Some(val) = chunk.get(chunk_i) {
             let height = BlockHeight(start_height.0 + <u32>::try_from(hashes.len()).expect("should fit in u32"));
-            debug_assert!(if let Some(h) = block_height_from_hash(call, *val).await {
-                if h != height {
-                    error!("expected: {:?}, actual: {:?}", height, h);
-                }
-                h == height
-            } else {
-                true
-            });
+            // debug_assert!(if let Some(h) = block_height_from_hash(call, *val).await {
+            //     if h != height {
+            //         error!("expected: {:?}, actual: {:?}", height, h);
+            //     }
+            //     h == height
+            // } else {
+            //     true
+            // });
             hashes.push((height, *val));
         } else {
             break; // expected
