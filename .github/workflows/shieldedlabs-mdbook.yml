@@ -41,7 +41,7 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v30
       - uses: nix-community/cache-nix-action@v6
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}-${{ github.run_id }}  # yamllint disable-line rule:line-length
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', 'flake.lock') }}  # yamllint disable-line rule:line-length
           restore-prefixes-first-match: nix-${{ runner.os }}-
           purge: true
           purge-prefixes: nix-${{ runner.os }}-
