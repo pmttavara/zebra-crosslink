@@ -92,8 +92,8 @@ impl TFInstr {
         str += " (";
 
         match tf_read_instr(&bytes, instr) {
-            Some(TestInstr::LoadPoW(block)) => str += &block.hash().to_string(),
-            Some(TestInstr::LoadPoS((block, fat_ptr))) => str += &block.blake3_hash().to_string(),
+            Some(TestInstr::LoadPoW(block)) => str += &format!("{} - {}, parent: {}", block.coinbase_height().unwrap().0, block.hash(), block.header.previous_block_hash),
+            Some(TestInstr::LoadPoS((block, fat_ptr))) => str += &format!("{}, hdrs: [{} .. {}]", block.blake3_hash(), block.headers[0].hash(), block.headers.last().unwrap().hash()),
             Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
             Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
@@ -520,7 +520,7 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs
         // info!(
         //     "Loading instruction {}: {} ({})",
         //     instr_i,
-        //     TFInstr::str_from_kind(instr_val.kind),
+        //     TFInstr::string_from_instr(bytes, instr_val),
         //     instr_val.kind
         // );
 

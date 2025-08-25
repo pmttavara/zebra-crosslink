@@ -450,7 +450,7 @@ fn crosslink_test_pow_to_pos_link() {
 #[test]
 fn crosslink_reject_pow_chain_fork_that_is_competing_against_a_shorter_finalized_pow_chain() {
     set_test_name(function_name!());
-    test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test1.zeccltf"));
+    test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test1_short_pos_long.zeccltf"));
 }
 
 // TODO:

@@ -495,7 +495,7 @@ async fn new_decided_bft_block_from_malachite(
             error!(?err);
         }
     }
-    
+
     // MUTATE ROSTER BY COMMAND
     {
         let roster = &mut internal.validators_at_current_height;
