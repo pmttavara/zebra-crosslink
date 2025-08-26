@@ -506,8 +506,8 @@ pub(crate) async fn handle_instr(
             test_check(
                 expect == actual,
                 &format!(
-                    "PoW block finality: expected {:?}, actually {:?}",
-                    expect, actual
+                    "PoW block finality at hash={}, height={:?}: expected {:?}, actually {:?}",
+                    hash, height, expect, actual
                 ),
             ); // TODO: maybe assert in test but recoverable error in-GUI
         }

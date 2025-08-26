@@ -340,8 +340,12 @@ fn crosslink_test_basic_finality() {
         tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
 
         for i2 in 0..REGTEST_BLOCK_BYTES.len() {
-            let finality = if i2 > i || (i2 == 2 && i > 3) || (i2 == 3 && i == 3) {
+            let finality = if i2 > i {
                 None
+            } else if i2 == 3 && i == 3 {
+                Some(TFLBlockFinality::NotYetFinalized)
+            } else if i2 == 2 && i > 3 {
+                Some(TFLBlockFinality::NotYetFinalized)
             } else {
                 Some(TFLBlockFinality::NotYetFinalized)
             };
@@ -355,8 +359,11 @@ fn crosslink_test_basic_finality() {
         for i2 in 0..REGTEST_BLOCK_BYTES.len() {
             let finality = if i2 == 2 {
                 // unpicked sidechain
-                // TFLBlockFinality::CantBeFinalized
-                None
+                if i < 1 {
+                    Some(TFLBlockFinality::NotYetFinalized)
+                } else {
+                    Some(TFLBlockFinality::CantBeFinalized)
+                }
             } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
                 Some(TFLBlockFinality::Finalized)
             } else {
