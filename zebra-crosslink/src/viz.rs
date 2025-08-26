@@ -1376,7 +1376,8 @@ impl VizCtx {
 
             // find & link possible child
             if let Some(node_hash) = new_node.hash() {
-                if let Some(&child_ref) = self.missing_bc_parents.get(&node_hash) {
+                if let Some(&child_ref_) = self.missing_bc_parents.get(&node_hash) {
+                    child_ref = child_ref_;
                     if let Some(child) = self.node(child_ref) {
                         new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
