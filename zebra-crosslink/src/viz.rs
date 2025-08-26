@@ -1495,7 +1495,7 @@ impl VizCtx {
 
                 if self
                     .get_node(self.bc_hi)
-                    .map_or(true, |node| new_node.height < node.height)
+                    .map_or(true, |node| new_node.height > node.height)
                 {
                     self.bc_hi = node_ref;
                 }
@@ -3291,18 +3291,16 @@ pub async fn viz_main(
                 h: world_rect.h * 3.0,
             };
 
-            if circle.overlaps_rect(&bigger_world_rect) || true {
+            if circle.overlaps_rect(&bigger_world_rect) {
                 // node is on screen
+
+                if node.kind == NodeKind::BC {
+                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
+                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
+                }
 
                 let is_final = if node.kind == NodeKind::BC {
                     finalized_pow_blocks.contains(&BlockHash(node.hash().unwrap()))
-                    // bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
-                    // bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
-                    // if let Some((final_h, _)) = g.state.latest_final_block {
-                    //     node.height <= final_h.0
-                    // } else {
-                    //     false
-                    // }
                 } else {
                     true
                 };
