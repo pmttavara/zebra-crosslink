@@ -147,17 +147,23 @@ pub fn non_finalized_state_contains_block_hash(
     let is_hash_in_chain = |chain: &Arc<Chain>| chain.contains_block_hash(hash);
 
     // Equivalent to `chain_set.iter().next_back()` in `NonFinalizedState.best_chain()` method.
-    if let Some(best_chain) = chains_iter.next(){
+    if let Some(best_chain) = chains_iter.next() {
         if let Some(height) = best_chain.height_by_hash(hash) {
-            return Some(KnownBlock { location: KnownBlockLocation::BestChain, height });
+            return Some(KnownBlock {
+                location: KnownBlockLocation::BestChain,
+                height,
+            });
         } else {
             for side_chain in chains_iter {
                 if let Some(height) = side_chain.height_by_hash(hash) {
-                    return Some(KnownBlock { location: KnownBlockLocation::SideChain, height });
+                    return Some(KnownBlock {
+                        location: KnownBlockLocation::SideChain,
+                        height,
+                    });
                 }
             }
         }
-     }
+    }
     return None;
 }
 
@@ -165,7 +171,10 @@ pub fn non_finalized_state_contains_block_hash(
 /// Returns None if the block hash is not found in the finalized state.
 pub fn finalized_state_contains_block_hash(db: &ZebraDb, hash: block::Hash) -> Option<KnownBlock> {
     if let Some(height) = db.height(hash) {
-        Some(KnownBlock { location: KnownBlockLocation::BestChain, height })
+        Some(KnownBlock {
+            location: KnownBlockLocation::BestChain,
+            height,
+        })
     } else {
         None
     }

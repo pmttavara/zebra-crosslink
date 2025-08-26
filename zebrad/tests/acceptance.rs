@@ -152,7 +152,10 @@ use tower::ServiceExt;
 use zcash_keys::address::Address;
 
 use zebra_chain::{
-    block::{self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash, FatPointerToBftBlock, Height},
+    block::{
+        self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash,
+        FatPointerToBftBlock, Height,
+    },
     parameters::{
         testnet::ConfiguredActivationHeights,
         Network::{self, *},

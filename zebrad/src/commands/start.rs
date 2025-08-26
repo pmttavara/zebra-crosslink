@@ -287,15 +287,7 @@ impl StartCmd {
             zebra_crosslink::service::spawn_new_tfl_service(
                 Arc::new(move |req| {
                     let state = state.clone();
-                    Box::pin(async move {
-                        state
-                            .clone()
-                            .ready()
-                            .await
-                            .unwrap()
-                            .call(req)
-                            .await
-                    })
+                    Box::pin(async move { state.clone().ready().await.unwrap().call(req).await })
                 }),
                 Arc::new(move |block| {
                     let gbt = Arc::clone(&gbt_for_force_feeding_pow);
@@ -375,7 +367,12 @@ impl StartCmd {
                                 return success;
                             }
                             Err(_) => {
-                                tracing::error!(?height, ?block_hash, ?parent_hash, "submit block timed out");
+                                tracing::error!(
+                                    ?height,
+                                    ?block_hash,
+                                    ?parent_hash,
+                                    "submit block timed out"
+                                );
                                 return false;
                             }
                         }

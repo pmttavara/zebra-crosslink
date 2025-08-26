@@ -61,7 +61,9 @@ use zcash_primitives::consensus::Parameters;
 
 use zebra_chain::{
     amount::{self, Amount, NegativeAllowed, NonNegative},
-    block::{self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight},
+    block::{
+        self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight,
+    },
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
     parameters::{
@@ -83,12 +85,11 @@ use zebra_chain::{
     },
 };
 use zebra_consensus::{funding_stream_address, ParameterCheckpoint, RouterError};
-use zebra_state::crosslink::{
-    TFLServiceRequest, TFLServiceResponse,
-    TFLBlockFinality, TFLRoster, TFLStaker,
-};
 use zebra_network::{address_book_peers::AddressBookPeers, PeerSocketAddr};
 use zebra_node_services::mempool;
+use zebra_state::crosslink::{
+    TFLBlockFinality, TFLRoster, TFLServiceRequest, TFLServiceResponse, TFLStaker,
+};
 use zebra_state::{HashOrHeight, OutputLocation, ReadRequest, ReadResponse, TransactionLocation};
 
 use crate::{
@@ -1863,7 +1864,10 @@ where
             .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
         if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
-            val.map(|height_hash| GetBlockHeightAndHashResponse{ height: height_hash.0, hash: height_hash.1 })
+            val.map(|height_hash| GetBlockHeightAndHashResponse {
+                height: height_hash.0,
+                hash: height_hash.1,
+            })
         } else {
             tracing::error!(?ret, "Bad tfl service return.");
             None
@@ -1874,7 +1878,7 @@ where
         &self,
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality> {
-        if let Ok(zebra_state::Response::BlockHeader{ height, .. }) = self
+        if let Ok(zebra_state::Response::BlockHeader { height, .. }) = self
             .state
             .clone()
             .ready()
@@ -1885,12 +1889,12 @@ where
         {
             if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
                 .tfl_service
-                    .clone()
-                    .ready()
-                    .await
-                    .unwrap()
-                    .call(TFLServiceRequest::BlockFinalityStatus(height, hash.0))
-                    .await
+                .clone()
+                .ready()
+                .await
+                .unwrap()
+                .call(TFLServiceRequest::BlockFinalityStatus(height, hash.0))
+                .await
             {
                 ret
             } else {

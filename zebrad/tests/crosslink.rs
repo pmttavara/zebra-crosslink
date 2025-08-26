@@ -46,7 +46,9 @@ pub fn test_start() {
     {
         *CROSSLINK_TEST_CONFIG_OVERRIDE.lock().unwrap() = {
             let mut base = ZebradConfig::default();
-            base.network.network = Network::new_regtest(zebra_chain::parameters::testnet::RegtestParameters::default());
+            base.network.network = Network::new_regtest(
+                zebra_chain::parameters::testnet::RegtestParameters::default(),
+            );
             base.state.ephemeral = true;
 
             Some(std::sync::Arc::new(base))
@@ -207,8 +209,7 @@ fn crosslink_push_example_pow_chain_each_block_twice() {
     for i in 0..REGTEST_BLOCK_BYTES.len() {
         tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], 0);
         tf.push_instr_load_pow_bytes(REGTEST_BLOCK_BYTES[i], SHOULD_FAIL);
-        tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0,
-        );
+        tf.push_instr_expect_pow_chain_length(2 + i - (i >= 3) as usize, 0);
     }
     tf.push_instr_expect_pow_chain_length(1 - 1 + REGTEST_BLOCK_BYTES.len(), 0);
 
@@ -458,13 +459,17 @@ fn crosslink_test_pow_to_pos_link() {
 #[test]
 fn crosslink_reject_pow_chain_fork_that_is_competing_against_a_shorter_finalized_pow_chain() {
     set_test_name(function_name!());
-    test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test1_short_pos_long.zeccltf"));
+    test_path(PathBuf::from(
+        "../crosslink-test-data/wrong_branch_test1_short_pos_long.zeccltf",
+    ));
 }
 
 #[test]
 fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists() {
     set_test_name(function_name!());
-    test_path(PathBuf::from("../crosslink-test-data/wrong_branch_test2_long_short_pos.zeccltf"));
+    test_path(PathBuf::from(
+        "../crosslink-test-data/wrong_branch_test2_long_short_pos.zeccltf",
+    ));
 }
 
 // TODO:
