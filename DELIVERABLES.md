@@ -10,7 +10,7 @@ The active list of [Code Deliverables](https://github.com/ShieldedLabs/zebra-cro
   - [GH #105](https://github.com/ShieldedLabs/zebra-crosslink/issues/105) augmentation of existing RPC APIs for blocks and transactions to include finality status
   - [GH #104](https://github.com/ShieldedLabs/zebra-crosslink/issues/104) new RPC APIs related to proof-of-stake
   - [GH #104](https://github.com/ShieldedLabs/zebra-crosslink/issues/104) new RPC APIs related to finality, BFT stalls, contingency mode, and other Crosslink-specific status
-- [GH #154](https://github.com/ShieldedLabs/zebra-crosslink/issues/154) a basic working commandline validator (probably as a configured mode of the full node) - potentially used by production validators
+- [GH #154](https://github.com/ShieldedLabs/zebra-crosslink/issues/154) a basic working commandline finalizer (probably as a configured mode of the full node) - potentially used by production finalizers
 - [GH #106](https://github.com/ShieldedLabs/zebra-crosslink/issues/106) a basic, minimal stake delegation tool - this will not be an easily usable or recommended product for end users
 - [GH #112](https://github.com/ShieldedLabs/zebra-crosslink/issues/112) all necessary Continuous Integration / Continuous Deployment source code is an explicit code deliverable
 
@@ -33,7 +33,7 @@ The active list of [Documentation Deliverables](https://github.com/ShieldedLabs/
 While not deliverables per se, a key strategy we'll use for gauging our success is to establish working relationships with partner teams which are representative stakeholders for these categories:
 
 - Wallet developers
-- Validators
+- Finalizers
 - Exchanges
 - Bridges, DEXes, or other protocol-integration product teams
 
