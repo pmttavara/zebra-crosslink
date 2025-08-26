@@ -36,30 +36,12 @@ pub struct RunningMalachite {
 
     pub height: u64,
     pub round: u32,
-    pub validator_set: Vec<MalValidator>,
 }
 
-pub async fn start_malachite(
-    tfl_handle: TFLServiceHandle,
-    at_height: u64,
-    validators_at_height: Vec<MalValidator>,
-    my_private_key: MalPrivateKey,
-    bft_config: BFTConfig,
-) -> Arc<TokioMutex<RunningMalachite>> {
-    start_malachite_with_start_delay(
-        tfl_handle,
-        at_height,
-        validators_at_height,
-        my_private_key,
-        bft_config,
-        Duration::from_secs(0),
-    )
-    .await
-}
 pub async fn start_malachite_with_start_delay(
     tfl_handle: TFLServiceHandle,
     at_height: u64,
-    validators_at_height: Vec<MalValidator>,
+    validators_at_current_height: Vec<MalValidator>,
     my_private_key: MalPrivateKey,
     bft_config: BFTConfig,
     start_delay: Duration,
@@ -88,7 +70,6 @@ pub async fn start_malachite_with_start_delay(
 
         height: at_height,
         round: 0,
-        validator_set: validators_at_height.clone(),
     }));
 
     let weak_self = Arc::downgrade(&arc_handle);
@@ -100,9 +81,7 @@ pub async fn start_malachite_with_start_delay(
             bft_node_handle,
             bft_config,
             Some(MalHeight::new(at_height)),
-            MalValidatorSet {
-                validators: validators_at_height,
-            },
+            MalValidatorSet { validators: validators_at_current_height },
         )
         .await
         .unwrap();
@@ -120,6 +99,7 @@ pub async fn start_malachite_with_start_delay(
             Ok(()) => (),
             Err(error) => {
                 eprintln!("panic occurred inside mal_system.rs: {:?}", error);
+                #[cfg(debug_assertions)]
                 std::process::abort();
             }
         }
@@ -132,15 +112,15 @@ async fn malachite_system_terminate_engine(
     mut post_pending_block_to_push_to_core_reply: Option<
         tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
     >,
-    mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>>,
 ) {
     engine_handle.actor.stop(None);
     if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
         reply
-            .send(
-                post_pending_block_to_push_to_core_reply_data
-                    .take()
-                    .unwrap(),
+            .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                MalHeight::new(0),
+                MalValidatorSet {
+                    validators: Vec::new(),
+                })
             )
             .unwrap();
     }
@@ -157,11 +137,10 @@ async fn malachite_system_main_loop(
     let my_public_key = (&my_private_key).into();
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
 
-    let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock)> = None;
+    let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock2)> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<
         tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
     > = None;
-    let mut post_pending_block_to_push_to_core_reply_data: Option<ConsensusMsg<MalContext>> = None;
 
     let mut bft_msg_flags = 0;
     let mut at_this_height_previously_seen_proposals: Vec<
@@ -177,14 +156,14 @@ async fn malachite_system_main_loop(
             malachite_system_terminate_engine(
                 engine_handle,
                 post_pending_block_to_push_to_core_reply,
-                post_pending_block_to_push_to_core_reply_data,
             )
             .await;
             return;
         };
 
         if let Some((pending_block, fat_pointer)) = &pending_block_to_push_to_core {
-            if !new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await
+            let (accepted, validator_set) = new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await;
+            if !accepted
             {
                 tokio::time::sleep(Duration::from_millis(800)).await;
 
@@ -193,23 +172,28 @@ async fn malachite_system_main_loop(
                     malachite_system_terminate_engine(
                         engine_handle,
                         post_pending_block_to_push_to_core_reply,
-                        post_pending_block_to_push_to_core_reply_data,
                     )
                     .await;
                     return;
                 }
                 continue;
             }
-            pending_block_to_push_to_core = None;
-            post_pending_block_to_push_to_core_reply
+
+            {
+                let mut lock = running_malachite.lock().await;
+                
+                pending_block_to_push_to_core = None;
+                post_pending_block_to_push_to_core_reply
                 .take()
                 .unwrap()
-                .send(
-                    post_pending_block_to_push_to_core_reply_data
-                        .take()
-                        .unwrap(),
+                .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                    MalHeight::new(lock.height),
+                    MalValidatorSet {
+                        validators: validator_set,
+                    })
                 )
                 .unwrap();
+            }
         }
 
         let mut something_to_do_maybe = None;
@@ -223,7 +207,6 @@ async fn malachite_system_main_loop(
             malachite_system_terminate_engine(
                 engine_handle,
                 post_pending_block_to_push_to_core_reply,
-                post_pending_block_to_push_to_core_reply_data,
             )
             .await;
             return;
@@ -243,7 +226,7 @@ async fn malachite_system_main_loop(
                         .send((
                             MalHeight::new(lock.height),
                             MalValidatorSet {
-                                validators: lock.validator_set.clone(),
+                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
                             },
                         ))
                         .unwrap();
@@ -313,17 +296,9 @@ async fn malachite_system_main_loop(
                         other_type
                     } else {
                         if let Some(block) =
-                            propose_new_bft_block(&tfl_handle, &my_public_key).await
+                            propose_new_bft_block(&tfl_handle, &my_public_key, lock.height).await
                         {
                             info!("Proposing block with hash: {}", block.blake3_hash());
-                            if let Some(last_block) =
-                                tfl_handle.internal.lock().await.bft_blocks.last()
-                            {
-                                debug_assert_eq!(
-                                    block.previous_block_fat_ptr.points_at_block_hash(),
-                                    last_block.blake3_hash()
-                                );
-                            }
                             let other_type: MalLocallyProposedValue<MalContext> =
                                 MalLocallyProposedValue {
                                     height: height,
@@ -493,7 +468,7 @@ async fn malachite_system_main_loop(
                     if height.as_u64() == lock.height {
                         reply
                             .send(MalValidatorSet {
-                                validators: lock.validator_set.clone(),
+                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
                             })
                             .unwrap();
                     }
@@ -513,7 +488,7 @@ async fn malachite_system_main_loop(
                     assert_eq!(lock.round as i64, certificate.round.as_i64());
                     bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
-                    let fat_pointer = FatPointerToBftBlock::from(&certificate);
+                    let fat_pointer = FatPointerToBftBlock2::from(&certificate);
                     info!("Fat pointer to tip is now: {}", fat_pointer);
                     assert!(fat_pointer.validate_signatures());
                     assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
@@ -540,13 +515,6 @@ async fn malachite_system_main_loop(
                     at_this_height_previously_seen_proposals.clear();
 
                     post_pending_block_to_push_to_core_reply = Some(reply);
-                    post_pending_block_to_push_to_core_reply_data =
-                        Some(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                            MalHeight::new(lock.height),
-                            MalValidatorSet {
-                                validators: lock.validator_set.clone(),
-                            },
-                        ));
                 }
                 BFTAppMsg::ExtendVote {
                     height,
@@ -610,17 +578,6 @@ async fn malachite_system_main_loop(
                         || proposal_round > lock.round as i64 + 1
                     {
                         warn!("Outdated or future proposal, ignoring");
-                        reply.send(None).unwrap();
-                        break;
-                    }
-
-                    if lock
-                        .validator_set
-                        .iter()
-                        .position(|v| v.public_key == parts.proposer)
-                        .is_none()
-                    {
-                        warn!("Invalid proposer, ignoring");
                         reply.send(None).unwrap();
                         break;
                     }
@@ -689,12 +646,12 @@ async fn malachite_system_main_loop(
 
 /// A bundle of signed votes for a block
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerToBftBlock {
+pub struct FatPointerToBftBlock2 {
     pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
-    pub signatures: Vec<FatPointerSignature>,
+    pub signatures: Vec<FatPointerSignature2>,
 }
 
-impl std::fmt::Display for FatPointerToBftBlock {
+impl std::fmt::Display for FatPointerToBftBlock2 {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{{hash:")?;
         for b in &self.vote_for_block_without_finalizer_public_key[0..32] {
@@ -724,8 +681,8 @@ impl std::fmt::Display for FatPointerToBftBlock {
     }
 }
 
-impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
-    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock {
+impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
+    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock2 {
         let vote_template = MalVote {
             validator_address: MalPublicKey2([0_u8; 32].into()),
             value: NilOrVal::Val(certificate.value_id), // previous_block_hash
@@ -736,7 +693,7 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
         let vote_for_block_without_finalizer_public_key: [u8; 76 - 32] =
             vote_template.to_bytes()[32..].try_into().unwrap();
 
-        FatPointerToBftBlock {
+        FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key,
             signatures: certificate
                 .commit_signatures
@@ -745,7 +702,7 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
                     let public_key: MalPublicKey2 = commit_signature.address;
                     let signature: [u8; 64] = commit_signature.signature;
 
-                    FatPointerSignature {
+                    FatPointerSignature2 {
                         public_key: public_key.0.into(),
                         vote_signature: signature,
                     }
@@ -755,9 +712,24 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock {
     }
 }
 
-impl FatPointerToBftBlock {
-    pub fn null() -> FatPointerToBftBlock {
-        FatPointerToBftBlock {
+impl FatPointerToBftBlock2 {
+    pub fn to_non_two(self) -> zebra_chain::block::FatPointerToBftBlock {
+        zebra_chain::block::FatPointerToBftBlock {
+            vote_for_block_without_finalizer_public_key: self
+                .vote_for_block_without_finalizer_public_key,
+            signatures: self
+                .signatures
+                .into_iter()
+                .map(|two| zebra_chain::block::FatPointerSignature {
+                    public_key: two.public_key,
+                    vote_signature: two.vote_signature,
+                })
+                .collect(),
+        }
+    }
+
+    pub fn null() -> FatPointerToBftBlock2 {
+        FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
             signatures: Vec::new(),
         }
@@ -772,8 +744,7 @@ impl FatPointerToBftBlock {
         }
         buf
     }
-    #[allow(clippy::reversed_empty_ranges)]
-    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
+    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock2> {
         if bytes.len() < 76 - 32 + 2 {
             return None;
         }
@@ -786,7 +757,7 @@ impl FatPointerToBftBlock {
         let rem = &bytes[76 - 32 + 2..];
         let signatures = rem
             .chunks_exact(32 + 64)
-            .map(|chunk| FatPointerSignature::from_bytes(chunk.try_into().unwrap()))
+            .map(|chunk| FatPointerSignature2::from_bytes(chunk.try_into().unwrap()))
             .collect();
 
         Some(Self {
@@ -834,31 +805,31 @@ impl FatPointerToBftBlock {
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
-impl ZcashSerialize for FatPointerToBftBlock {
+impl ZcashSerialize for FatPointerToBftBlock2 {
     fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
-        writer.write_all(&self.vote_for_block_without_finalizer_public_key);
-        writer.write_u16::<LittleEndian>(self.signatures.len() as u16);
+        writer.write_all(&self.vote_for_block_without_finalizer_public_key)?;
+        writer.write_u16::<LittleEndian>(self.signatures.len() as u16)?;
         for signature in &self.signatures {
-            writer.write_all(&signature.to_bytes());
+            writer.write_all(&signature.to_bytes())?;
         }
         Ok(())
     }
 }
 
-impl ZcashDeserialize for FatPointerToBftBlock {
+impl ZcashDeserialize for FatPointerToBftBlock2 {
     fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let mut vote_for_block_without_finalizer_public_key = [0u8; 76 - 32];
         reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
 
         let len = reader.read_u16::<LittleEndian>()?;
-        let mut signatures: Vec<FatPointerSignature> = Vec::with_capacity(len.into());
+        let mut signatures: Vec<FatPointerSignature2> = Vec::with_capacity(len.into());
         for _ in 0..len {
             let mut signature_bytes = [0u8; 32 + 64];
             reader.read_exact(&mut signature_bytes)?;
-            signatures.push(FatPointerSignature::from_bytes(&signature_bytes));
+            signatures.push(FatPointerSignature2::from_bytes(&signature_bytes));
         }
 
-        Ok(FatPointerToBftBlock {
+        Ok(FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key,
             signatures,
         })
@@ -867,19 +838,19 @@ impl ZcashDeserialize for FatPointerToBftBlock {
 
 /// A vote signature for a block
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerSignature {
+pub struct FatPointerSignature2 {
     pub public_key: [u8; 32],
     pub vote_signature: [u8; 64],
 }
 
-impl FatPointerSignature {
+impl FatPointerSignature2 {
     pub fn to_bytes(&self) -> [u8; 32 + 64] {
         let mut buf = [0_u8; 32 + 64];
         buf[0..32].copy_from_slice(&self.public_key);
         buf[32..32 + 64].copy_from_slice(&self.vote_signature);
         buf
     }
-    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature {
+    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature2 {
         Self {
             public_key: bytes[0..32].try_into().unwrap(),
             vote_signature: bytes[32..32 + 64].try_into().unwrap(),

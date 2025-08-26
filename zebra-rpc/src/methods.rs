@@ -61,7 +61,7 @@ use zcash_primitives::consensus::Parameters;
 
 use zebra_chain::{
     amount::{self, Amount, NegativeAllowed, NonNegative},
-    block::{self, Block, Commitment, Height, SerializedBlock, TryIntoHeight},
+    block::{self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight},
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
     parameters::{
@@ -83,8 +83,8 @@ use zebra_chain::{
     },
 };
 use zebra_consensus::{funding_stream_address, ParameterCheckpoint, RouterError};
-use zebra_crosslink::{
-    service::{TFLServiceRequest, TFLServiceResponse},
+use zebra_state::crosslink::{
+    TFLServiceRequest, TFLServiceResponse,
     TFLBlockFinality, TFLRoster, TFLStaker,
 };
 use zebra_network::{address_book_peers::AddressBookPeers, PeerSocketAddr};
@@ -275,6 +275,10 @@ pub trait Rpc {
     /// *(The `address:port` matches the value in `zebrad.toml > [rpc] > listen_addr`)*
     #[method(name = "get_tfl_roster")]
     async fn get_tfl_roster(&self) -> Option<TFLRoster>;
+
+    /// Get the fat pointer to the BFT Chain tip. TODO: Example
+    #[method(name = "get_tfl_fat_pointer_to_bft_chain_tip")]
+    async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock>;
 
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
@@ -1801,6 +1805,23 @@ where
         }
     }
 
+    async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::FatPointerToBFTChainTip)
+            .await;
+        if let Ok(TFLServiceResponse::FatPointerToBFTChainTip(fat_pointer)) = ret {
+            Some(fat_pointer)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
+        }
+    }
+
     async fn update_tfl_staker(&self, staker: TFLStaker) {
         if let Ok(TFLServiceResponse::UpdateStaker) = self
             .tfl_service
@@ -1822,47 +1843,29 @@ where
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-        if let Ok(TFLServiceResponse::FinalBlockHash(val)) = ret {
-            val.map(GetBlockHash)
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHash(height_hash.1))
         } else {
             tracing::error!(?ret, "Bad tfl service return.");
             None
         }
     }
 
-    async fn get_tfl_final_block_height_and_hash(&self) -> Option<GetBestBlockHeightAndHash> {
-        let res = self
+    async fn get_tfl_final_block_height_and_hash(&self) -> Option<GetBlockHeightAndHashResponse> {
+        let ret = self
             .tfl_service
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::FinalBlockHash)
+            .call(TFLServiceRequest::FinalBlockHeightHash)
             .await;
-
-        if let Ok(TFLServiceResponse::FinalBlockHash(hash)) = res {
-            if let Some(hash) = hash {
-                let final_block_hdr_req =
-                    zebra_state::Request::BlockHeader(HashOrHeight::Hash(hash));
-                let final_block_hdr = self
-                    .state
-                    .clone()
-                    .oneshot(final_block_hdr_req)
-                    .await
-                    .map_misc_error();
-
-                if let Ok(zebra_state::Response::BlockHeader { height, .. }) = final_block_hdr {
-                    Some(GetBestBlockHeightAndHash { height, hash })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        if let Ok(TFLServiceResponse::FinalBlockHeightHash(val)) = ret {
+            val.map(|height_hash| GetBlockHeightAndHashResponse{ height: height_hash.0, hash: height_hash.1 })
         } else {
-            tracing::error!(?res, "Bad tfl service return.");
+            tracing::error!(?ret, "Bad tfl service return.");
             None
         }
     }
@@ -1871,16 +1874,28 @@ where
         &self,
         hash: GetBlockHash,
     ) -> Option<TFLBlockFinality> {
-        if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-            .tfl_service
+        if let Ok(zebra_state::Response::BlockHeader{ height, .. }) = self
+            .state
             .clone()
             .ready()
             .await
             .unwrap()
-            .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
+            .call(zebra_state::Request::BlockHeader(hash.0.into()))
             .await
         {
-            ret
+            if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
+                .tfl_service
+                    .clone()
+                    .ready()
+                    .await
+                    .unwrap()
+                    .call(TFLServiceRequest::BlockFinalityStatus(height, hash.0))
+                    .await
+            {
+                ret
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1980,7 +1995,7 @@ where
             loop {
                 let rx_res = rx.recv().await;
                 if let Ok(block) = rx_res {
-                    tracing::info!("{:x}: RX new block: {}", id, block);
+                    tracing::info!("{:x}: RX new block: {:?}", id, block);
                 } else {
                     tracing::error!(?rx_res, "Bad channel TX");
                 }
@@ -2009,20 +2024,11 @@ where
                 return None;
             }
         };
+
         loop {
-            match if let Ok(TFLServiceResponse::BlockFinalityStatus(ret)) = self
-                .tfl_service
-                .clone()
-                .ready()
-                .await
-                .unwrap()
-                .call(TFLServiceRequest::BlockFinalityStatus(hash.0))
-                .await
-            {
-                ret
-            } else {
-                None
-            } {
+            let status = self.get_tfl_block_finality_from_hash(hash).await;
+
+            match status {
                 None => {
                     return None;
                 }
@@ -2066,7 +2072,7 @@ where
                         .await;
                     if let Ok(txs) = txs_res {
                         tracing::info!(
-                            "{:x}: RX new block {}, with transactions: {:?}",
+                            "{:x}: RX new block {:?}, with transactions: {:?}",
                             id,
                             block_hash,
                             txs
@@ -2074,7 +2080,7 @@ where
                     } else {
                         tracing::error!(
                             ?txs_res,
-                            "Couldn't read transactions for new final block {}",
+                            "Couldn't read transactions for new final block {:?}",
                             block_hash
                         );
                     }
@@ -3131,6 +3137,11 @@ where
             "selected transactions for the template from the mempool"
         );
 
+        let fat_pointer = self
+            .get_tfl_fat_pointer_to_bft_chain_tip()
+            .await
+            .expect("get fat pointer should never fail only return a null pointer");
+
         // - After this point, the template only depends on the previously fetched data.
 
         let response = BlockTemplateResponse::new_internal(
@@ -3141,6 +3152,7 @@ where
             mempool_txs,
             submit_old,
             extra_coinbase_data,
+            fat_pointer,
         );
 
         Ok(response.into())

@@ -188,6 +188,10 @@ impl ZebradApp {
     }
 }
 
+/// Override for application config for use by crosslink tests.
+pub static CROSSLINK_TEST_CONFIG_OVERRIDE: std::sync::Mutex<Option<Arc<ZebradConfig>>> =
+    std::sync::Mutex::new(None);
+
 impl Application for ZebradApp {
     /// Entrypoint command for this application.
     type Cmd = EntryPoint;
@@ -200,7 +204,12 @@ impl Application for ZebradApp {
 
     /// Accessor for application configuration.
     fn config(&self) -> Arc<ZebradConfig> {
-        self.config.read()
+        CROSSLINK_TEST_CONFIG_OVERRIDE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.config.read())
     }
 
     /// Borrow the application state immutably.

@@ -73,12 +73,12 @@
 //!
 //! Some of the diagnostic features are optional, and need to be enabled at compile-time.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use abscissa_core::{config, Command, FrameworkError};
 use color_eyre::eyre::{eyre, Report};
 use futures::FutureExt;
-use tokio::{pin, select, sync::oneshot};
+use tokio::{pin, select, sync::oneshot, time::timeout};
 use tower::{builder::ServiceBuilder, util::BoxService, ServiceExt};
 use tracing_futures::Instrument;
 
@@ -283,12 +283,12 @@ impl StartCmd {
 
         info!("spawning tfl service task");
         let (tfl, tfl_service_task_handle) = {
-            let read_only_state_service = read_only_state_service.clone();
+            let state = state.clone();
             zebra_crosslink::service::spawn_new_tfl_service(
                 Arc::new(move |req| {
-                    let read_only_state_service = read_only_state_service.clone();
+                    let state = state.clone();
                     Box::pin(async move {
-                        read_only_state_service
+                        state
                             .clone()
                             .ready()
                             .await
@@ -299,57 +299,86 @@ impl StartCmd {
                 }),
                 Arc::new(move |block| {
                     let gbt = Arc::clone(&gbt_for_force_feeding_pow);
+
+                    let height = block
+                        .coinbase_height()
+                        // .ok_or_error(0, "coinbase height not found")?;
+                        .unwrap();
+
+                    let parent_hash = block.header.previous_block_hash;
+                    let block_hash = block.hash();
+
                     Box::pin(async move {
-                        let mut block_verifier_router = gbt.block_verifier_router();
+                        let attempt_result = timeout(Duration::from_millis(100), async move {
+                            let mut block_verifier_router = gbt.block_verifier_router();
 
-                        let height = block
-                            .coinbase_height()
-                            // .ok_or_error(0, "coinbase height not found")?;
-                            .unwrap();
-                        let block_hash = block.hash();
+                            let height = block
+                                .coinbase_height()
+                                // .ok_or_error(0, "coinbase height not found")?;
+                                .unwrap();
+                            let block_hash = block.hash();
 
-                        let block_verifier_router_response = block_verifier_router
-                            .ready()
-                            .await
+                            let block_verifier_router_response =
+                                block_verifier_router.ready().await;
+                            if block_verifier_router_response.is_err() {
+                                return false;
+                            }
+                            let block_verifier_router_response =
+                                block_verifier_router_response.unwrap();
+
                             // .map_err(|error| ErrorObject::owned(0, error.to_string(), None::<()>))?
-                            .unwrap()
-                            .call(zebra_consensus::Request::Commit(block))
-                            .await;
+                            let block_verifier_router_response = block_verifier_router_response
+                                .call(zebra_consensus::Request::Commit(block))
+                                .await;
 
-                        let chain_error = match block_verifier_router_response {
-                            // Currently, this match arm returns `null` (Accepted) for blocks committed
-                            // to any chain, but Accepted is only for blocks in the best chain.
-                            //
-                            // TODO (#5487):
-                            // - Inconclusive: check if the block is on a side-chain
-                            // The difference is important to miners, because they want to mine on the best chain.
-                            Ok(hash) => {
-                                tracing::info!(?hash, ?height, "submit block accepted");
+                            match block_verifier_router_response {
+                                // Currently, this match arm returns `null` (Accepted) for blocks committed
+                                // to any chain, but Accepted is only for blocks in the best chain.
+                                //
+                                // TODO (#5487):
+                                // - Inconclusive: check if the block is on a side-chain
+                                // The difference is important to miners, because they want to mine on the best chain.
+                                Ok(hash) => {
+                                    tracing::info!(?hash, ?height, "submit block accepted");
 
-                                gbt.advertise_mined_block(hash, height)
-                                    // .map_error_with_prefix(0, "failed to send mined block")?;
-                                    .unwrap();
+                                    // gbt.advertise_mined_block(hash, height)
+                                    //     // .map_error_with_prefix(0, "failed to send mined block")?;
+                                    //     .unwrap();
 
-                                // return Ok(submit_block::Response::Accepted);
+                                    // return Ok(submit_block::Response::Accepted);
+                                    true
+                                }
+
+                                // Turns BoxError into Result<VerifyChainError, BoxError>,
+                                // by downcasting from Any to VerifyChainError.
+                                Err(box_error) => {
+                                    let error = box_error
+                                        .downcast::<zebra_consensus::RouterError>()
+                                        .map(|boxed_chain_error| *boxed_chain_error);
+
+                                    tracing::error!(
+                                        ?error,
+                                        ?block_hash,
+                                        ?height,
+                                        "submit block failed verification"
+                                    );
+
+                                    // error
+                                    false
+                                }
                             }
+                        })
+                        .await;
 
-                            // Turns BoxError into Result<VerifyChainError, BoxError>,
-                            // by downcasting from Any to VerifyChainError.
-                            Err(box_error) => {
-                                let error = box_error
-                                    .downcast::<zebra_consensus::RouterError>()
-                                    .map(|boxed_chain_error| *boxed_chain_error);
-
-                                tracing::error!(
-                                    ?error,
-                                    ?block_hash,
-                                    ?height,
-                                    "submit block failed verification"
-                                );
-
-                                // error
+                        match attempt_result {
+                            Ok(success) => {
+                                return success;
                             }
-                        };
+                            Err(_) => {
+                                tracing::error!(?height, ?block_hash, ?parent_hash, "submit block timed out");
+                                return false;
+                            }
+                        }
                     })
                 }),
                 config.crosslink.clone(),

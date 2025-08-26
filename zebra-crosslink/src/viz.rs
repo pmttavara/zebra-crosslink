@@ -5,6 +5,7 @@
 // [ ] non-finalized side-chain
 // [ ] uncross edges
 
+
 use crate::{test_format::*, *};
 use macroquad::{
     camera::*,
@@ -13,7 +14,7 @@ use macroquad::{
     math::{vec2, Circle, FloatExt, Rect, Vec2},
     shapes::{self, draw_triangle},
     telemetry::{self, end_zone as end_zone_unchecked, ZoneGuard},
-    text::{self, TextDimensions, TextParams},
+    text::{self, Font, TextDimensions, TextParams},
     texture::{self, Texture2D},
     time,
     ui::{self, hash, root_ui, widgets},
@@ -22,7 +23,8 @@ use macroquad::{
 use static_assertions::*;
 use std::{
     cmp::{max, min},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::Arc,
     thread::JoinHandle,
 };
@@ -235,8 +237,9 @@ pub struct VizState {
     /// Ascending in height from `lo_height`. Parallel to `blocks`.
     pub height_hashes: Vec<(BlockHeight, BlockHash)>,
     /// A range of blocks from the PoW chain, as requested by the visualizer.
-    /// Ascending in height from `lo_height`. Parallel to `hashes`.
+    /// Ascending in height from `lo_height`. Parallel to `height_hashes`.
     pub blocks: Vec<Option<Arc<Block>>>,
+    pub block_finalities: Vec<Option<TFLBlockFinality>>,
 
     /// Value that this finalizer is currently intending to propose for the next BFT block.
     pub internal_proposed_bft_string: Option<String>,
@@ -245,7 +248,7 @@ pub struct VizState {
     /// Vector of all decided BFT blocks, indexed by height-1.
     pub bft_blocks: Vec<BftBlock>,
     /// Fat pointer to the BFT tip (all other fat pointers are available at height+1)
-    pub fat_pointer_to_bft_tip: FatPointerToBftBlock,
+    pub fat_pointer_to_bft_tip: FatPointerToBftBlock2,
 }
 
 /// Functions & structures for serializing visualizer state to/from disk.
@@ -531,11 +534,20 @@ pub struct VizGlobals {
     // TODO: bft_req_h: (i32, i32),
     /// Value for this finalizer node to propose for the next BFT block.
     pub proposed_bft_string: Option<String>,
+
+    /// If true then we should propose no new BFT blocks.
+    pub bft_pause_button: bool,
+
+    /// validators_at_current_height
+    pub validators_at_current_height: Vec<MalValidator>,
 }
-static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
+
+pub static MINER_NONCE_BYTE: std::sync::Mutex<u8> = std::sync::Mutex::new(1);
 
 /// Blocks to be injected into zebra via getblocktemplate, submitblock etc
-static G_FORCE_BLOCKS: std::sync::Mutex<Vec<Arc<Block>>> = std::sync::Mutex::new(Vec::new());
+static G_FORCE_INSTRS: std::sync::Mutex<(Vec<u8>, Vec<TFInstr>)> =
+    std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 const VIZ_REQ_N: u32 = zebra_state::MAX_BLOCK_REORG_HEIGHT;
 
@@ -574,11 +586,12 @@ pub async fn service_viz_requests(
 
             height_hashes: Vec::new(),
             blocks: Vec::new(),
+            block_finalities: Vec::new(),
 
             internal_proposed_bft_string: None,
             bft_msg_flags: 0,
             bft_blocks: Vec::new(),
-            fat_pointer_to_bft_tip: FatPointerToBftBlock::null(),
+            fat_pointer_to_bft_tip: FatPointerToBftBlock2::null(),
         }),
 
         // NOTE: bitwise not of x (!x in rust) is the same as -1 - x
@@ -587,6 +600,8 @@ pub async fn service_viz_requests(
         bc_req_h: (!VIZ_REQ_N as i32, !0),
         proposed_bft_string: None,
         consumed: true,
+        bft_pause_button: false,
+        validators_at_current_height: Vec::new(),
     });
 
     loop {
@@ -604,16 +619,61 @@ pub async fn service_viz_requests(
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
+        new_g.validators_at_current_height = tfl_handle.internal.lock().await.validators_at_current_height.clone();
+
+        // ALT: do 1 or the other of force/read, not both
+        // NOTE: we have to use force blocks, otherwise we miss side-chains
+        // TODO: try not to miss side-chains for normal reads
+        let mut height_hashes: Vec<(BlockHeight, BlockHash)> = Vec::new();
+        let mut pow_blocks: Vec<Option<Arc<Block>>> = Vec::new();
         {
-            let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-            let mut force_feed_blocks: &mut Vec<Arc<Block>> = lock.as_mut();
-            for block in force_feed_blocks.drain(..) {
-                (call.force_feed_pow)(block);
+            // TODO: is there a reason to not reuse the existing TEST_INSTRS global?
+            let mut force_instrs = {
+                let mut lock = G_FORCE_INSTRS.lock().unwrap();
+                let copy = lock.clone();
+                lock.0 = Vec::new();
+                lock.1 = Vec::new();
+                copy
+            };
+            let internal_handle = tfl_handle.clone();
+
+            for instr_i in 0..force_instrs.1.len() {
+                // mostly DUP of test_format::read_instrs
+                // ALT: add closure to read_instrs
+                let instr_val = &force_instrs.1[instr_i];
+                info!(
+                    "Loading instruction {}: {} ({})",
+                    instr_i,
+                    TFInstr::str_from_kind(instr_val.kind),
+                    instr_val.kind
+                );
+
+                if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
+                    // push to zebra
+                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_val.flags, instr_i).await;
+
+                    // push PoW to visualizer
+                    // NOTE: this has to be interleaved with pushes, otherwise some nodes seem to
+                    // disappear (as they're known to not be on the best chain?)
+                    if let TestInstr::LoadPoW(block) = instr {
+                        let hash = block.hash();
+                        info!("trying to push {:?}", hash);
+                        if let Some(h) = block_height_from_hash(&call, hash).await {
+                            info!("pushing {:?}", (h, hash));
+                            height_hashes.push((h, hash));
+                            pow_blocks.push(Some(Arc::new(block)));
+                        }
+                    }
+                } else {
+                    panic!("Failed to do {}", TFInstr::str_from_kind(instr_val.kind));
+                }
+
+                *TEST_INSTR_C.lock().unwrap() = instr_i + 1; // accounts for end
             }
         }
 
         #[allow(clippy::never_loop)]
-        let (lo_height, bc_tip, hashes, blocks) = loop {
+        let (lo_height, bc_tip, height_hashes, seq_blocks) = loop {
             let (lo, hi) = (new_g.bc_req_h.0, new_g.bc_req_h.1);
             assert!(
                 lo <= hi || (lo >= 0 && hi < 0),
@@ -623,12 +683,12 @@ pub async fn service_viz_requests(
             );
 
             let tip_height_hash: (BlockHeight, BlockHash) = {
-                if let Ok(ReadStateResponse::Tip(Some(tip_height_hash))) =
-                    (call.read_state)(ReadStateRequest::Tip).await
+                if let Ok(StateResponse::Tip(Some(tip_height_hash))) =
+                    (call.state)(StateRequest::Tip).await
                 {
                     tip_height_hash
                 } else {
-                    error!("Failed to read tip");
+                    //error!("Failed to read tip");
                     break (BlockHeight(0), None, Vec::new(), Vec::new());
                 }
             };
@@ -654,8 +714,8 @@ pub async fn service_viz_requests(
                 if h == existing_height_hash.0 {
                     // avoid duplicating work if we've already got that value
                     Some(existing_height_hash)
-                } else if let Ok(ReadStateResponse::BlockHeader { hash, .. }) =
-                    (call.read_state)(ReadStateRequest::BlockHeader(h.into())).await
+                } else if let Ok(StateResponse::BlockHeader { hash, .. }) =
+                    (call.state)(StateRequest::BlockHeader(h.into())).await
                 {
                     Some((h, hash))
                 } else {
@@ -680,11 +740,29 @@ pub async fn service_viz_requests(
                 break (BlockHeight(0), None, Vec::new(), Vec::new());
             };
 
-            let (hashes, blocks) =
+            let (height_hashes, blocks) =
                 tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
-            break (lo_height_hash.0, Some(tip_height_hash), hashes, blocks);
+            break (lo_height_hash.0, Some(tip_height_hash), height_hashes, blocks);
         };
 
+        if height_hashes.len() != pow_blocks.len() {
+            // warn!("expected hashes & blocks to be parallel, actually have {} hashes, {} blocks", hashes.len(), pow_blocks.len());
+        }
+        for i in 0..seq_blocks.len() {
+            pow_blocks.push(seq_blocks[i].clone());
+        }
+
+        // TODO: smarter caching
+        let mut block_finalities = Vec::with_capacity(height_hashes.len());
+        for i in 0..height_hashes.len() {
+            block_finalities.push(
+                tfl_block_finality_from_height_hash(tfl_handle.clone(), height_hashes[i].0, height_hashes[i].1)
+                    .await
+                    .unwrap_or(None),
+            );
+        }
+
+        // BFT /////////////////////////////////////////////////////////////////////////
         let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
@@ -717,16 +795,12 @@ pub async fn service_viz_requests(
             )
         };
 
-        let mut height_hashes = Vec::with_capacity(hashes.len());
-        for i in 0..hashes.len() {
-            height_hashes.push((BlockHeight(lo_height.0 + i as u32), hashes[i]));
-        }
-
         let new_state = VizState {
             latest_final_block: tfl_final_block_height_hash(&tfl_handle).await,
             bc_tip,
             height_hashes,
-            blocks,
+            blocks: pow_blocks,
+            block_finalities,
             internal_proposed_bft_string,
             bft_msg_flags,
             bft_blocks,
@@ -843,6 +917,17 @@ fn tfl_nominee_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     }
 }
 
+fn pos_link_from_pow_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        _ => None,
+    }
+}
+
 fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
     match &node.header {
         VizHeader::BftBlock(bft_block) => {
@@ -854,6 +939,25 @@ fn tfl_finalized_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
         }
 
         _ => None,
+    }
+}
+
+fn cross_chain_link_from_node(ctx: &VizCtx, node: &Node) -> NodeRef {
+    match &node.header {
+        VizHeader::BftBlock(bft_block) => {
+            if let Some(pow_block) = bft_block.block.headers.first() {
+                ctx.find_bc_node_by_hash(&pow_block.hash())
+            } else {
+                None
+            }
+        }
+
+        VizHeader::BlockHeader(pow_hdr) => {
+            let pos_hash_bytes = pow_hdr.fat_pointer_to_bft_block.points_at_block_hash();
+            ctx.find_bft_node_by_hash(&Blake3Hash(pos_hash_bytes))
+        }
+
+        VizHeader::None => None,
     }
 }
 
@@ -1241,15 +1345,17 @@ impl VizCtx {
                 let parent_ref = self.find_bc_node_by_hash(&BlockHash(parent_hash));
                 if let Some(parent) = self.node(parent_ref) {
                     assert!(new_node.parent.is_none() || new_node.parent == parent_ref);
-                    assert!(
-                        // NOTE(Sam): Spurius crash sometimes
-                        parent.height + 1 == new_node.height,
-                        "parent height: {}, new height: {}",
-                        parent.height,
-                        new_node.height
-                    );
+                    if parent.height + 1 == new_node.height {
+                    // assert!(
+                    //     // NOTE(Sam): Spurius crash sometimes
+                    //     parent.height + 1 == new_node.height,
+                    //     "parent height: {}, new height: {}",
+                    //     parent.height,
+                    //     new_node.height
+                    // );
 
                     new_node.parent = parent_ref;
+                    }
                 } else if parent_hash != [0; 32] {
                     self.missing_bc_parents.insert(parent_hash, node_ref);
                 }
@@ -1375,7 +1481,7 @@ impl VizCtx {
 
                     hash: height_hash.1 .0,
                     height: height_hash.0 .0,
-                    header: *block.header,
+                    header: block.header.as_ref().clone(),
                     difficulty: Some(block.header.difficulty_threshold),
                     txs_n: block.transactions.len() as u32,
                     is_real: true,
@@ -1393,6 +1499,8 @@ impl VizCtx {
         self.missing_bc_parents.clear();
         self.bft_block_hi_i = 0;
         self.bc_by_hash.clear();
+        self.bft_by_hash.clear();
+        self.bft_last_added = None;
         self.nodes_bbox = BBox::_0;
         self.accel.y_to_nodes.clear();
     }
@@ -1571,7 +1679,13 @@ fn draw_crosshair(pt: Vec2, rad: f32, thick: f32, col: color::Color) {
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
-    text::draw_text(text, pt.x, pt.y, font_size, col)
+    text::draw_text_ex(text, pt.x, pt.y, TextParams {
+            font: Some(&PIXEL_FONT),
+            font_size: font_size as u16,
+            font_scale: 1.,
+            color: col,
+            ..Default::default()
+        })
 }
 fn draw_multiline_text(
     text: &str,
@@ -1620,6 +1734,7 @@ fn get_text_align_pt(text: &str, pt: Vec2, font_size: f32, align: Vec2) -> Vec2 
         text,
         pt,
         &TextParams {
+            font: Some(&PIXEL_FONT),
             font_size: font_size as u16,
             font_scale: 1.,
             ..Default::default()
@@ -1648,6 +1763,7 @@ fn draw_text_align(
         text,
         pt,
         TextParams {
+            font: Some(&PIXEL_FONT),
             font_size: font_size as u16,
             font_scale: 1.0,
             color: col,
@@ -1786,12 +1902,25 @@ fn color_lerp(a: color::Color, b: color::Color, t: f32) -> color::Color {
     }
 }
 
+fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str, font_size: f32) {
+    ui.push_skin(&ui::Skin {
+        label_style: ui
+            .style_builder()
+            .font_size(font_size as u16)
+            .text_color(col)
+            .build(),
+        ..skin.clone()
+    });
+    ui.label(None, str);
+    ui.pop_skin();
+}
+
 /// Viz implementation root
 #[allow(clippy::never_loop)]
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
-) -> Result<(), crate::service::TFLServiceError> {
+) -> Result<(), TFLServiceError> {
     let mut ctx = VizCtx {
         old_mouse_pt: {
             let (x, y) = mouse_position();
@@ -1840,10 +1969,11 @@ pub async fn viz_main(
     // we track this as you have to mouse down *and* up on the same node to count as clicking on it
     let mut mouse_dn_node_i: NodeRef = None;
     let mut click_node_i: NodeRef = None;
-    let font_size = 30.;
+    let font_size = 32.;
 
     let base_style = root_ui()
         .style_builder()
+        .with_font(&PIXEL_FONT).unwrap()
         .font_size(font_size as u16)
         .build();
     let skin = ui::Skin {
@@ -1856,12 +1986,16 @@ pub async fn viz_main(
     root_ui().push_skin(&skin);
 
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
+    let mut instr_path_str = "blocks.zeccltf".to_string();
+    let mut pow_block_nonce_str = "0".to_string();
     let mut goto_str = String::new();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
-    let mut edit_proposed_bft_string = String::new();
+    let mut edit_proposed_bft_string = "/ip4/127.0.0.1/udp/45869/quic-v1".to_string();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
+    let mut bft_pause_button = false;
+    let mut tray_make_wider = false;
 
     let mut track_node_h: Option<i32> = None;
     let mut track_continuously: bool = true;
@@ -1899,6 +2033,7 @@ pub async fn viz_main(
     let mut bft_msg_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
+    let mut finalized_pow_blocks = HashSet::new();
     let mut edit_tf = (Vec::<u8>::new(), Vec::<TFInstr>::new());
 
     init_audio(&config).await;
@@ -1984,6 +2119,7 @@ pub async fn viz_main(
 
             lock.as_mut().unwrap().bc_req_h = bc_req_h;
             lock.as_mut().unwrap().proposed_bft_string = proposed_bft_string;
+            lock.as_mut().unwrap().bft_pause_button = bft_pause_button;
             lock.as_mut().unwrap().consumed = true;
             proposed_bft_string = None;
             new_h_rng = None;
@@ -2006,6 +2142,10 @@ pub async fn viz_main(
 
             if is_new_bc_hi {
                 for (i, height_hash) in g.state.height_hashes.iter().enumerate() {
+                    if let Some(TFLBlockFinality::Finalized) = g.state.block_finalities[i] {
+                        finalized_pow_blocks.insert(height_hash.1);
+                    }
+
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
@@ -2017,6 +2157,10 @@ pub async fn viz_main(
                 }
             } else {
                 for (i, height_hash) in g.state.height_hashes.iter().enumerate().rev() {
+                    if let Some(TFLBlockFinality::Finalized) = g.state.block_finalities[i] {
+                        finalized_pow_blocks.insert(height_hash.1);
+                    }
+
                     if let Some(block) = g.state.blocks[i].as_ref() {
                         ctx.push_bc_block(&config, &block, height_hash);
                     } else {
@@ -2041,7 +2185,7 @@ pub async fn viz_main(
                         (i + 1) as u64,
                     ) {
                         let bft_parent =
-                            if bft_block.previous_block_fat_ptr == FatPointerToBftBlock::null() {
+                            if bft_block.previous_block_fat_ptr == FatPointerToBftBlock2::null() {
                                 if i != 0 {
                                     error!(
                                         "block at height {} does not have a previous_block_hash",
@@ -2077,7 +2221,7 @@ pub async fn viz_main(
                                     fat_ptr,
                                 },
                                 text: "".to_string(),
-                                height: bft_parent.map_or(Some(1), |_| None),
+                                height: if ctx.get_node(bft_parent).is_none() { Some(i as u32 + 1) } else { None },
                             },
                             None,
                         );
@@ -2170,7 +2314,11 @@ pub async fn viz_main(
             }
             // window::clear_background(BLUE); // TODO: we may want a more subtle version of this
         } else {
-            let (scroll_x, scroll_y) = mouse_wheel();
+            let (scroll_x, scroll_y) = if mouse_is_over_ui {
+                (0.0, 0.0)
+            } else {
+                mouse_wheel()
+            };
             // Potential per platform conditional compilation needed.
             ctx.screen_vel += vec2(8.0 * scroll_x, 8.0 * scroll_y);
 
@@ -2346,7 +2494,7 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_fat_ptr: FatPointerToBftBlock::null(),
+                            previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: loop {
                                 let bc: Option<u32> = target_bc_str.trim().parse().ok();
@@ -2363,11 +2511,12 @@ pub async fn viz_main(
                                     break Vec::new();
                                 };
 
-                                break match node.header {
-                                    VizHeader::BlockHeader(hdr) => vec![hdr],
+                                break match &node.header {
+                                    VizHeader::BlockHeader(hdr) => vec![hdr.clone()],
                                     _ => Vec::new(),
                                 };
                             },
+                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         ctx.bft_last_added = ctx.push_node(
@@ -2380,7 +2529,7 @@ pub async fn viz_main(
 
                                 bft_block: BftBlockAndFatPointerToIt {
                                     block: bft_block,
-                                    fat_ptr: FatPointerToBftBlock::null(),
+                                    fat_ptr: FatPointerToBftBlock2::null(),
                                 },
                                 text: node_str.clone(),
                                 height: ctx.bft_last_added.map_or(Some(0), |_| None),
@@ -2391,14 +2540,6 @@ pub async fn viz_main(
                         node_str = "".to_string();
                         target_bc_str = "".to_string();
                     }
-
-                    if widgets::Editbox::new(hash!(), vec2(32. * ch_w, font_size))
-                        .multiline(false)
-                        .ui(ui, &mut edit_proposed_bft_string)
-                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter))
-                    {
-                        proposed_bft_string = Some(edit_proposed_bft_string.clone())
-                    }
                 },
             );
         }
@@ -2408,7 +2549,7 @@ pub async fn viz_main(
         let goto_button_txt = "Goto height";
         let controls_txt_size = vec2(12. * ch_w, font_size);
         let controls_wnd_size =
-            controls_txt_size + vec2((track_button_txt.len() + 2) as f32 * ch_w, 2.2 * font_size);
+            controls_txt_size + vec2((track_button_txt.len() + 4) as f32 * ch_w, 2.2 * font_size);
         ui_dynamic_window(
             hash!(),
             vec2(
@@ -2608,6 +2749,8 @@ pub async fn viz_main(
                             difficulty_threshold: INVALID_COMPACT_DIFFICULTY,
                             nonce: zebra_chain::fmt::HexDebug([0; 32]),
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
+                            fat_pointer_to_bft_block:
+                                zebra_chain::block::FatPointerToBftBlock::null(),
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)
@@ -2617,15 +2760,16 @@ pub async fn viz_main(
                         let bft_block = BftBlock {
                             version: 0,
                             height: 0,
-                            previous_block_fat_ptr: FatPointerToBftBlock::null(),
+                            previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
+                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
                         let bft_block_and_ptr = BftBlockAndFatPointerToIt {
                             block: bft_block,
-                            fat_ptr: FatPointerToBftBlock::null(),
+                            fat_ptr: FatPointerToBftBlock2::null(),
                         };
                         (VizHeader::BftBlock(bft_block_and_ptr), id, None)
                     }
@@ -2689,6 +2833,7 @@ pub async fn viz_main(
         }
 
         // calculate forces
+        // TODO: tiebreak nodes at the same height by timestamp and tiebreak those by array index
         let spring_stiffness = 160.;
         for node_ref in &on_screen_node_refs {
             let node_ref = *node_ref;
@@ -2961,24 +3106,16 @@ pub async fn viz_main(
                 &world_camera,
                 vec2(click_node.pt.x - 350., click_node.pt.y),
                 vec2(72. * ch_w, 200.),
-                |ui| {
+                |mut ui| {
                     if let Some(hash_str) = click_node.hash_string() {
                         // draw emphasized/deemphasized hash string (unpleasant API!)
                         // TODO: different hash presentations?
                         let (remain_hash_str, unique_hash_str) =
                             str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
                         ui.label(None, "Hash: ");
-                        ui.push_skin(&ui::Skin {
-                            label_style: ui
-                                .style_builder()
-                                .font_size(font_size as u16)
-                                .text_color(GRAY)
-                                .build(),
-                            ..skin.clone()
-                        });
+
                         ui.same_line(0.);
-                        ui.label(None, remain_hash_str);
-                        ui.pop_skin();
+                        ui_color_label(&mut ui, &skin, GRAY, remain_hash_str, font_size);
 
                         // NOTE: unfortunately this sometimes offsets the text!
                         ui.same_line(0.);
@@ -2995,8 +3132,28 @@ pub async fn viz_main(
 
                     match &click_node.header {
                         VizHeader::None => {}
-                        VizHeader::BlockHeader(hdr) => {}
+                        VizHeader::BlockHeader(hdr) => {
+                            let string = format!("PoS fp all: {}", hdr.fat_pointer_to_bft_block);
+                            let mut iter = string.chars();
+
+                            loop {
+                                let mut buf = String::new();
+                                let mut got = iter.next();
+                                if got.is_none() {
+                                    break;
+                                }
+                                let mut count = 0;
+                                while count < 70 && got.is_some() {
+                                    buf.push_str(&got.unwrap().to_string());
+                                    got = iter.next();
+                                    count += 1;
+                                }
+                                ui.label(None, &buf);
+                            }
+                        }
                         VizHeader::BftBlock(bft_block) => {
+                            let cmd = String::from_utf8_lossy(&bft_block.block.temp_roster_edit_command_string,);
+                            ui.label(None, &format!("CMD: '{}'", cmd));
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {
                                 let pow_hdr = &bft_block.block.headers[i];
@@ -3053,23 +3210,31 @@ pub async fn viz_main(
                 if let Some(link) = if false {
                     ctx.get_node(tfl_nominee_from_node(&ctx, node))
                 } else {
-                    ctx.get_node(tfl_finalized_from_node(&ctx, node))
+                    ctx.get_node(cross_chain_link_from_node(&ctx, node))
                 } {
-                    draw_arrow_between_circles(circle, link.circle(), 2., 9., PINK);
+                    let col = if node.kind == NodeKind::BFT {
+                        PINK
+                    } else {
+                        ORANGE
+                    };
+                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col);
                 }
             }
 
-            if circle.overlaps_rect(&world_rect) {
+            let bigger_world_rect = Rect { x: world_rect.x - world_rect.w, y: world_rect.y - world_rect.h, w: world_rect.w*3.0, h: world_rect.h*3.0 };
+
+            if circle.overlaps_rect(&bigger_world_rect) || true {
                 // node is on screen
 
                 let is_final = if node.kind == NodeKind::BC {
-                    bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
-                    bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
-                    if let Some((final_h, _)) = g.state.latest_final_block {
-                        node.height <= final_h.0
-                    } else {
-                        false
-                    }
+                    finalized_pow_blocks.contains(&BlockHash(node.hash().unwrap()))
+                    // bc_h_lo = Some(bc_h_lo.map_or(node.height, |h| min(h, node.height)));
+                    // bc_h_hi = Some(bc_h_hi.map_or(node.height, |h| max(h, node.height)));
+                    // if let Some((final_h, _)) = g.state.latest_final_block {
+                    //     node.height <= final_h.0
+                    // } else {
+                    //     false
+                    // }
                 } else {
                     true
                 };
@@ -3183,7 +3348,7 @@ pub async fn viz_main(
 
         // CONTROL TRAY
         {
-            let tray_w = 32. * ch_w; // NOTE: below ~26*ch_w this starts clipping the checkbox
+            let tray_w = 32. * ch_w * if tray_make_wider { 2.0 } else { 1.0 }; // NOTE: below ~26*ch_w this starts clipping the checkbox
             let target_tray_x = if tray_is_open { tray_w } else { 0. };
             tray_x = tray_x.lerp(target_tray_x, 0.1);
 
@@ -3278,15 +3443,19 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    let path: std::path::PathBuf = "blocks.zeccltf".into();
-                    const NODE_LOAD_INSTRS: usize = 0;
-                    const NODE_LOAD_VIZ: usize = 1;
-                    const NODE_LOAD_ZEBRA: usize = 2;
+                    widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
+                        .multiline(false)
+                        .ui(ui, &mut instr_path_str);
+
+                    let path: PathBuf = instr_path_str.clone().into();
+                    const NODE_LOAD_ZEBRA: usize = 0;
+                    const NODE_LOAD_INSTRS: usize = 1;
+                    const NODE_LOAD_VIZ: usize = 2;
                     const NODE_LOAD_STRS: [&str; 3] = {
                         let mut strs = [""; 3];
+                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs[NODE_LOAD_INSTRS] = "edit";
                         strs[NODE_LOAD_VIZ] = "visualizer";
-                        strs[NODE_LOAD_ZEBRA] = "zebra";
                         strs
                     };
                     widgets::ComboBox::new(hash!(), &NODE_LOAD_STRS)
@@ -3294,74 +3463,22 @@ pub async fn viz_main(
                         .ui(ui, &mut config.node_load_kind);
 
                     if ui.button(None, "Load from serialization") {
-                        if let Ok((bytes, tf)) = TF::read_from_file(&path) {
-                            // TODO: this needs an API pass
-                            for instr_i in 0..tf.instrs.len() {
-                                let instr = &tf.instrs[instr_i];
+                        match TF::read_from_file(&path) {
+                            Ok((bytes, tf)) => {
                                 info!(
-                                    "Loading instruction {} ({})",
-                                    TFInstr::str_from_kind(instr.kind),
-                                    instr.kind
+                                    "read {} bytes and {} instructions",
+                                    bytes.len(),
+                                    tf.instrs.len()
                                 );
-
-                                match tf_read_instr(&bytes, instr) {
-                                    Some(TestInstr::LoadPoW(block)) => {
-                                        let block: Arc<Block> = Arc::new(block);
-
-                                        // NOTE (perf): block.hash() immediately reserializes the block to
-                                        // hash the canonical form...
-
-                                        let height_hash = (
-                                            block
-                                                .coinbase_height()
-                                                .expect("Block should have a valid height"),
-                                            block.hash(),
-                                        );
-
-                                        info!(
-                                            "Successfully loaded block at height {:?}, hash {}",
-                                            height_hash.0, height_hash.1
-                                        );
-
-                                        match config.node_load_kind {
-                                            NODE_LOAD_VIZ => {
-                                                ctx.push_bc_block(&config, &block, &height_hash)
-                                            }
-                                            NODE_LOAD_ZEBRA => {
-                                                let mut lock = G_FORCE_BLOCKS.lock().unwrap();
-                                                let mut force_feed_blocks: &mut Vec<Arc<Block>> =
-                                                    lock.as_mut();
-                                                force_feed_blocks.push(block);
-                                            }
-                                            _ | NODE_LOAD_INSTRS => {}
-                                        };
-                                    }
-
-                                    Some(TestInstr::LoadPoS(_)) => {
-                                        todo!("LOAD_POS");
-                                    }
-
-                                    Some(TestInstr::SetParams(params)) => {
-                                        debug_assert!(
-                                            instr_i == 0,
-                                            "should only be set at the beginning"
-                                        );
-                                        todo!("Actually set params");
-                                    }
-
-                                    Some(TestInstr::ExpectPoWChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    Some(TestInstr::ExpectPoSChainLength(_)) => {
-                                        todo!();
-                                    }
-
-                                    None => {}
+                                if config.node_load_kind == NODE_LOAD_ZEBRA {
+                                    let mut lock = G_FORCE_INSTRS.lock().unwrap();
+                                    *lock = (bytes.clone(), tf.instrs.clone());
                                 }
+
+                                edit_tf = (bytes, tf.instrs);
                             }
 
-                            edit_tf = (bytes, tf.instrs);
+                            Err(err) => error!("{}", err),
                         }
                     }
 
@@ -3389,16 +3506,52 @@ pub async fn viz_main(
                         tf.write_to_file(&path);
                     }
 
-                    widgets::Group::new(hash!(), vec2(tray_w - 5., tray_w)).ui(ui, |ui| {
-                        for instr_i in 0..edit_tf.1.len() {
-                            let instr = &edit_tf.1[instr_i];
+                    {
+                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
+                            .multiline(false)
+                            .ui(ui, &mut pow_block_nonce_str);
+                        let try_parse : Option<u8> = pow_block_nonce_str.parse().ok();
+                        if let Some(byte) = try_parse {
+                            *MINER_NONCE_BYTE.lock().unwrap() = byte;
+                        }
+                        checkbox(ui, hash!(), "BFT Paused", &mut bft_pause_button);
+                    }
+                    {
+                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
+                            .multiline(false)
+                            .ui(ui, &mut edit_proposed_bft_string);
 
-                            match tf_read_instr(&edit_tf.0, instr) {
-                                Some(TestInstr::LoadPoW(block)) => {
-                                    ui.label(None, &format!("PoW block: {}", block.hash()));
-                                }
-                                _ => ui.label(None, TFInstr::str_from_kind(instr.kind)),
-                            }
+                        if ui.button(None, "Submit BFT CMD") {
+                            proposed_bft_string = Some(edit_proposed_bft_string.clone());
+                        }
+                        checkbox(ui, hash!(), "Wider tray", &mut tray_make_wider);
+                    }
+
+                    widgets::Group::new(hash!(), vec2(tray_w - 15., tray_w)).ui(ui, |mut ui| {
+                        let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+                        let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+                        let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+                        let mut failed_instr_idx_i = 0;
+
+                        for instr_i in 0..edit_tf.1.len() {
+                            let col = if failed_instr_idx_i < failed_instr_idxs.len()
+                                && instr_i == failed_instr_idxs[failed_instr_idx_i]
+                            {
+                                failed_instr_idx_i += 1;
+                                RED
+                            } else if instr_i < done_instr_c {
+                                GREEN
+                            } else {
+                                GRAY
+                            };
+                            let instr = &edit_tf.1[instr_i];
+                            ui_color_label(
+                                &mut ui,
+                                &skin,
+                                col,
+                                &TFInstr::string_from_instr(&edit_tf.0, instr),
+                                font_size,
+                            );
                         }
                     });
                 },
@@ -3406,9 +3559,12 @@ pub async fn viz_main(
         }
 
         if config.show_bft_msgs {
+            let min_y = 150.;
+            let w = 0.6 * font_size;
+            let y_pad = 2.;
+            let mut i = 0;
             for variant in BFTMsgFlag::iter() {
                 // animates up, stays lit for a bit, then animates down
-                let i = variant as usize;
                 if !config.pause_incoming_blocks {
                     let target_val = ((bft_msg_flags >> i) & 1) * 255; // number of frames each direction
 
@@ -3423,9 +3579,6 @@ pub async fn viz_main(
 
                 let t = min(bft_msg_vals[i], 30) as f32 / 30.;
                 let col = color_lerp(DARKGREEN, GREEN, t);
-                let w = 0.6 * font_size;
-                let y_pad = 2.;
-                let min_y = 150.;
                 let y = min_y + i as f32 * (w + y_pad);
                 let mut rect = Rect {
                     x: window::screen_width() - w,
@@ -3445,6 +3598,29 @@ pub async fn viz_main(
                         ch_w,
                     );
                 }
+                i += 1;
+            }
+            let min_y = min_y + i as f32 * (w + y_pad) + 20.0;
+            let mut i = 0;
+            draw_text_right_align(
+                "(Vote Power) (Trnkd PK)",
+                vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
+                font_size/2.0,
+                WHITE,
+                ch_w/2.0,
+            );
+            i += 1;
+            for val in &g.validators_at_current_height {
+                let mut string = format!("{:?}", MalPublicKey2(val.public_key));
+                string.truncate(16);
+                draw_text_right_align(
+                    &format!("{} - {}", val.voting_power, &string,),
+                    vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
+                    font_size/2.0,
+                    WHITE,
+                    ch_w/2.0,
+                );
+                i += 1;
             }
         }
 
@@ -3510,6 +3686,15 @@ pub async fn viz_main(
         ctx.old_mouse_pt = mouse_pt;
         window::next_frame().await
     }
+}
+
+lazy_static! {
+    static ref PIXEL_FONT: Font = {
+        let font_bytes = include_bytes!("../../crosslink-test-data/gohum_pixel.ttf");
+        let mut font = text::load_ttf_font_from_bytes(font_bytes).unwrap();
+        font.set_filter(texture::FilterMode::Nearest);
+        font
+    };
 }
 
 /// Sync vizualization entry point wrapper (has to take place on main thread as an OS requirement)

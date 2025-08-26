@@ -152,7 +152,7 @@ use tower::ServiceExt;
 use zcash_keys::address::Address;
 
 use zebra_chain::{
-    block::{self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash, Height},
+    block::{self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash, FatPointerToBftBlock, Height},
     parameters::{
         testnet::ConfiguredActivationHeights,
         Network::{self, *},
@@ -3520,6 +3520,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         block_template.height(),
         block_template.max_time(),
         block_template.submit_old(),
+        FatPointerToBftBlock::null(),
     );
 
     let proposal_block = proposal_block_from_template(&block_template, None, &network)?;
@@ -3578,6 +3579,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         block_template.height(),
         block_template.max_time(),
         block_template.submit_old(),
+        FatPointerToBftBlock::null(),
     );
 
     let proposal_block = proposal_block_from_template(&block_template, None, &network)?;

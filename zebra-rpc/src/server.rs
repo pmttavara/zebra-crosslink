@@ -18,7 +18,7 @@ use tracing::*;
 use zebra_chain::{
     block, chain_sync_status::ChainSyncStatus, chain_tip::ChainTip, parameters::Network,
 };
-use zebra_crosslink::service::{TFLServiceRequest, TFLServiceResponse};
+use zebra_state::crosslink::{TFLServiceRequest, TFLServiceResponse};
 use zebra_network::AddressBookPeers;
 use zebra_node_services::mempool;
 

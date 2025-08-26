@@ -8963,6 +8963,7 @@ dependencies = [
  "informalsystems-malachitebft-core-types",
  "informalsystems-malachitebft-proto",
  "informalsystems-malachitebft-sync",
+ "lazy_static",
  "libp2p-identity",
  "macroquad",
  "macroquad-profiler",

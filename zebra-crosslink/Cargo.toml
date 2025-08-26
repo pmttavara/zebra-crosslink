@@ -57,6 +57,7 @@ macroquad-profiler = { version = "0.2.0", optional = true }
 image = { version = "0.24", default-features = false, features = ["png", "tga"], optional = true }
 miniquad = { version = "0.4.8", optional = true }
 hex                = { version = "0.4.3", features = ["serde"] }
+lazy_static = "1.5"
 
 [dev-dependencies]
 zebra-test = { path = "../zebra-test", version = "1.0.0-beta.45" }
@@ -115,10 +116,6 @@ version = "0.2.0"
 git = "https://github.com/ShieldedLabs/malachite.git"
 rev = "4c2a9560ceb75868af23de388991a1eafc42ec9b"
 package = "informalsystems-malachitebft-sync"
-
-[[bin]]
-name = "viz_test_driver"
-path = "tests/bin/viz_test_driver.rs"
 
 [build-dependencies]
 prost-build = "0.13"

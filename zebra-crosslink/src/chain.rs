@@ -16,7 +16,7 @@ use zebra_chain::serialization::{
     ReadZcashExt, SerializationError, ZcashDeserialize, ZcashSerialize,
 };
 
-use crate::mal_system::FatPointerToBftBlock;
+use crate::mal_system::FatPointerToBftBlock2;
 
 /// The BFT block content for Crosslink
 ///
@@ -66,12 +66,14 @@ pub struct BftBlock {
     // @Zooko: possibly not unique, may be bug-prone, maybe remove...
     pub height: u32,
     /// Hash of the previous BFT Block.
-    pub previous_block_fat_ptr: FatPointerToBftBlock,
+    pub previous_block_fat_ptr: FatPointerToBftBlock2,
     /// The height of the PoW block that is the finalization candidate.
     pub finalization_candidate_height: u32,
     /// The PoW Headers
     // @Zooko: PoPoW?
     pub headers: Vec<BcBlockHeader>,
+    /// A command string used during development.
+    pub temp_roster_edit_command_string: Vec<u8>,
 }
 
 impl ZcashSerialize for BftBlock {
@@ -85,6 +87,12 @@ impl ZcashSerialize for BftBlock {
         for header in &self.headers {
             header.zcash_serialize(&mut writer)?;
         }
+        if self.version > 0 {
+            writer.write_u32::<LittleEndian>(self.temp_roster_edit_command_string.len().try_into().unwrap())?;
+            for byte in &self.temp_roster_edit_command_string {
+                writer.write_u8(*byte)?;
+            }
+        }
         Ok(())
     }
 }
@@ -93,7 +101,7 @@ impl ZcashDeserialize for BftBlock {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         let height = reader.read_u32::<LittleEndian>()?;
-        let previous_block_fat_ptr = FatPointerToBftBlock::zcash_deserialize(&mut reader)?;
+        let previous_block_fat_ptr = FatPointerToBftBlock2::zcash_deserialize(&mut reader)?;
         let finalization_candidate_height = reader.read_u32::<LittleEndian>()?;
         let header_count = reader.read_u32::<LittleEndian>()?;
         if header_count > 2048 {
@@ -106,6 +114,19 @@ impl ZcashDeserialize for BftBlock {
         for i in 0..header_count {
             array.push(zebra_chain::block::Header::zcash_deserialize(&mut reader)?);
         }
+        let mut array2 = Vec::new();
+        if version > 0 {
+            let command_bytes_count = reader.read_u32::<LittleEndian>()?;
+            if command_bytes_count > 2048 {
+                // Fail on unreasonably large number.
+                return Err(SerializationError::Parse(
+                    "command_bytes_count was greater than 2048.",
+                ));
+            }
+            for i in 0..command_bytes_count {
+                array2.push(reader.read_u8()?);
+            }
+        }
 
         Ok(BftBlock {
             version,
@@ -113,6 +134,7 @@ impl ZcashDeserialize for BftBlock {
             previous_block_fat_ptr,
             finalization_candidate_height,
             headers: array,
+            temp_roster_edit_command_string: array2,
         })
     }
 }
@@ -129,7 +151,7 @@ impl BftBlock {
     pub fn try_from(
         params: &ZcashCrosslinkParameters,
         height: u32,
-        previous_block_fat_ptr: FatPointerToBftBlock,
+        previous_block_fat_ptr: FatPointerToBftBlock2,
         finalization_candidate_height: u32,
         headers: Vec<BcBlockHeader>,
     ) -> Result<Self, InvalidBftBlock> {
@@ -142,11 +164,12 @@ impl BftBlock {
         error!("not yet implemented: all the documented validations");
 
         Ok(BftBlock {
-            version: 0,
+            version: 1,
             height,
             previous_block_fat_ptr,
             finalization_candidate_height,
             headers,
+            temp_roster_edit_command_string: Vec::new(),
         })
     }
 
@@ -193,7 +216,7 @@ pub enum InvalidBftBlock {
 /// This is provided as a trait so that downstream users can define or plug in their own alternative parameters.
 ///
 /// Ref: [Zcash Trailing Finality Layer §3.3.3 Parameters](https://electric-coin-company.github.io/tfl-book/design/crosslink/construction.html#parameters)
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ZcashCrosslinkParameters {
     /// The best-chain confirmation depth, `σ`
     ///
@@ -258,14 +281,14 @@ pub struct BftBlockAndFatPointerToIt {
     /// A BFT block
     pub block: BftBlock,
     /// The fat pointer to block, showing it has been signed
-    pub fat_ptr: FatPointerToBftBlock,
+    pub fat_ptr: FatPointerToBftBlock2,
 }
 
 impl ZcashDeserialize for BftBlockAndFatPointerToIt {
     fn zcash_deserialize<R: std::io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         Ok(BftBlockAndFatPointerToIt {
             block: BftBlock::zcash_deserialize(&mut reader)?,
-            fat_ptr: FatPointerToBftBlock::zcash_deserialize(&mut reader)?,
+            fat_ptr: FatPointerToBftBlock2::zcash_deserialize(&mut reader)?,
         })
     }
 }
