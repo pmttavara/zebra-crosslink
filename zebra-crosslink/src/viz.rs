@@ -1970,6 +1970,7 @@ fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str
 
 /// Viz implementation root
 #[allow(clippy::never_loop)]
+#[allow(clippy::overly_complex_bool_expr)]
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
