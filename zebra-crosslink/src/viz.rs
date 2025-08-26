@@ -1145,10 +1145,10 @@ pub(crate) struct VizCtx {
     bc_lo: NodeRef,
     bc_hi: NodeRef,
     bc_work_max: u128,
-    missing_bc_parents: HashMap<[u8; 32], NodeRef>,
-    bc_by_hash: HashMap<[u8; 32], NodeRef>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
+    missing_bc_parents: HashMap<[u8; 32], NodeHdl>,
+    bc_by_hash: HashMap<[u8; 32], NodeHdl>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
 
-    bft_by_hash: HashMap<[u8; 32], NodeRef>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
+    bft_by_hash: HashMap<[u8; 32], NodeHdl>, // ALT: unify BC/BFT maps, assuming hashes don't conflict
     bft_block_hi_i: usize,
     bft_last_added: NodeRef,
     bft_fake_id: usize,
@@ -1332,17 +1332,18 @@ impl VizCtx {
 
         let i = self.nodes.len();
         // NOTE: currently referencing OOB until this is added
-        let node_ref = Some(NodeHdl { idx: i as u32 });
+        let node_hdl = NodeHdl { idx: i as u32 };
+        let node_ref = Some(node_hdl);
 
         if let Some(node_hash) = new_node.hash() {
             match new_node.kind {
                 NodeKind::BC => {
                     info!("inserting PoW node {} at {} with parent {}", BlockHash(node_hash), i, BlockHash(parent_hash.unwrap_or([0; 32])));
-                    self.bc_by_hash.insert(node_hash, node_ref)
+                    self.bc_by_hash.insert(node_hash, node_hdl)
                 },
                 NodeKind::BFT => {
                     info!("inserting PoS node {} at {} with parent {}", Blake3Hash(node_hash), i, Blake3Hash(parent_hash.unwrap_or([0; 32])));
-                    self.bft_by_hash.insert(node_hash, node_ref)
+                    self.bft_by_hash.insert(node_hash, node_hdl)
                 },
             };
         }
@@ -1370,14 +1371,14 @@ impl VizCtx {
                     new_node.parent = parent_ref;
                     }
                 } else if parent_hash != [0; 32] {
-                    self.missing_bc_parents.insert(parent_hash, node_ref);
+                    self.missing_bc_parents.insert(parent_hash, node_hdl);
                 }
             }
 
             // find & link possible child
             if let Some(node_hash) = new_node.hash() {
-                if let Some(&child_ref_) = self.missing_bc_parents.get(&node_hash) {
-                    child_ref = child_ref_;
+                child_ref = self.missing_bc_parents.get(&node_hash).cloned();
+                if child_ref.is_some() {
                     if let Some(child) = self.node(child_ref) {
                         new_node.pt = child.pt + vec2(0., child.rad + new_node.rad + 30.); // TODO: handle positioning when both parent & child are set
 
@@ -1521,12 +1522,12 @@ impl VizCtx {
 
     fn find_bc_node_by_hash(&self, hash: &BlockHash) -> NodeRef {
         let _z = ZoneGuard::new("find_bc_node_by_hash");
-        *self.bc_by_hash.get(&hash.0).unwrap_or(&None)
+        self.bc_by_hash.get(&hash.0).cloned()
     }
 
     fn find_bft_node_by_hash(&self, hash: &Blake3Hash) -> NodeRef {
         let _z = ZoneGuard::new("find_bft_node_by_hash");
-        *self.bft_by_hash.get(&hash.0).unwrap_or(&None)
+        self.bft_by_hash.get(&hash.0).cloned()
     }
 
     fn move_node_to(&mut self, node_ref: NodeRef, new_pos: Vec2) {
