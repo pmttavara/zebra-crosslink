@@ -2218,7 +2218,7 @@ pub async fn viz_main(
                                     fat_ptr,
                                 },
                                 text: "".to_string(),
-                                height: bft_parent.map_or(Some(1), |_| None),
+                                height: if ctx.get_node(bft_parent).is_none() { Some(i as u32 + 1) } else { None },
                             },
                             None,
                         );
