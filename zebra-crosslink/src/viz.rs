@@ -818,6 +818,13 @@ enum NodeKind {
     BFT,
 }
 
+fn str_from_node_kind(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::BC => "PoW",
+        NodeKind::BFT => "PoS",
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum NodeId {
     None,
@@ -1329,8 +1336,14 @@ impl VizCtx {
 
         if let Some(node_hash) = new_node.hash() {
             match new_node.kind {
-                NodeKind::BC => self.bc_by_hash.insert(node_hash, node_ref),
-                NodeKind::BFT => self.bft_by_hash.insert(node_hash, node_ref),
+                NodeKind::BC => {
+                    info!("inserting PoW node {} at {} with parent {}", BlockHash(node_hash), i, BlockHash(parent_hash.unwrap_or([0; 32])));
+                    self.bc_by_hash.insert(node_hash, node_ref)
+                },
+                NodeKind::BFT => {
+                    info!("inserting PoS node {} at {} with parent {}", Blake3Hash(node_hash), i, Blake3Hash(parent_hash.unwrap_or([0; 32])));
+                    self.bft_by_hash.insert(node_hash, node_ref)
+                },
             };
         }
 
@@ -1394,10 +1407,10 @@ impl VizCtx {
                     if let Some(parent) = self.get_node(new_node.parent) {
                         (
                             Some(parent.pt),
-                            node_dy_from_work(&new_node, self.bc_work_max),
+                            node_dy_from_work_difficulty(new_node.difficulty, self.bc_work_max),
                         )
                     } else if let Some(child) = self.get_node(child_ref) {
-                        (Some(child.pt), -node_dy_from_work(child, self.bc_work_max))
+                        (Some(child.pt), -node_dy_from_work_difficulty(child.difficulty, self.bc_work_max))
                     } else {
                         (None, 0.)
                     }
@@ -1884,8 +1897,8 @@ fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
         .ui(ui, data);
 }
 
-fn node_dy_from_work(node: &Node, bc_work_max: u128) -> f32 {
-    node.difficulty
+fn node_dy_from_work_difficulty(difficulty: Option<CompactDifficulty>, bc_work_max: u128) -> f32 {
+    difficulty
         .and_then(|difficulty| difficulty.to_work())
         .map_or(100., |work| {
             150. * work.as_u128() as f32 / bc_work_max as f32
@@ -2926,7 +2939,7 @@ pub async fn viz_main(
 
                     if !y_is_set {
                         let intended_dy =
-                            node_dy_from_work(ctx.get_node(node_ref).unwrap(), ctx.bc_work_max);
+                            node_dy_from_work_difficulty(ctx.get_node(node_ref).unwrap().difficulty, ctx.bc_work_max);
                         target_pt.y = parent.pt.y - intended_dy;
                         y_counterpart = a_parent;
                         y_is_set = true;
