@@ -362,7 +362,8 @@ fn crosslink_test_basic_finality() {
                 if i < 1 {
                     Some(TFLBlockFinality::NotYetFinalized)
                 } else {
-                    Some(TFLBlockFinality::CantBeFinalized)
+                    // Some(TFLBlockFinality::CantBeFinalized)
+                    None
                 }
             } else if i2 <= REGTEST_POW_IDX_FINALIZED_BY_POS_BLOCK[i] {
                 Some(TFLBlockFinality::Finalized)

@@ -253,10 +253,13 @@ impl NonFinalizedState {
         self.chain_set = new_chain_set;
     }
 
-    pub fn crosslink_finalized(&self, hash: block::Hash) -> Option<Vec<ContextuallyVerifiedBlock>> {
+    // ALT: return height
+    pub fn crosslink_finalize(&mut self, hash: block::Hash) -> Option<Vec<ContextuallyVerifiedBlock>> {
         if let Some(chain_containing_finalized_block) = self.find_chain(|chain| chain.height_by_hash(hash).is_some()) {
             info!("crosslink finalize: found block in chain: {}", hash);
             let height = chain_containing_finalized_block.height_by_hash(hash).unwrap();
+
+            self.chain_set.retain(|c| c.contains_block_hash(hash));
 
             Some(chain_containing_finalized_block.blocks
                 .range(..=height)
