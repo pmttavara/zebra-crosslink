@@ -1499,6 +1499,8 @@ impl VizCtx {
         self.missing_bc_parents.clear();
         self.bft_block_hi_i = 0;
         self.bc_by_hash.clear();
+        self.bft_by_hash.clear();
+        self.bft_last_added = None;
         self.nodes_bbox = BBox::_0;
         self.accel.y_to_nodes.clear();
     }
@@ -3553,7 +3555,7 @@ pub async fn viz_main(
                 },
             );
         }
-        
+
         if config.show_bft_msgs {
             let min_y = 150.;
             let w = 0.6 * font_size;
