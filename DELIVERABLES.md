@@ -8,8 +8,8 @@ The active list of [Code Deliverables](https://github.com/ShieldedLabs/zebra-cro
 
 - a full node implementation of the Crosslink protocol - intended for use by all full node users
   - [GH #105](https://github.com/ShieldedLabs/zebra-crosslink/issues/105) augmentation of existing RPC APIs for blocks and transactions to include finality status
-  - [GH #104](https://github.com/ShieldedLabs/zebra-crosslink/issues/104) new RPC APIs related to proof-of-stake
-  - [GH #104](https://github.com/ShieldedLabs/zebra-crosslink/issues/104) new RPC APIs related to finality, BFT stalls, contingency mode, and other Crosslink-specific status
+  - [GH #104](https://github.com/ShieldedLabs/zebra-crosslink/issues/104) new RPC APIs related to Proof-of-Stake: finalizer identities, staking weights, delegation info
+  - [GH #172](https://github.com/ShieldedLabs/zebra-crosslink/issues/172) new RPC APIs related to Crosslink: contingency mode, finality traversal
 - [GH #154](https://github.com/ShieldedLabs/zebra-crosslink/issues/154) a basic working commandline finalizer (probably as a configured mode of the full node) - potentially used by production finalizers
 - [GH #106](https://github.com/ShieldedLabs/zebra-crosslink/issues/106) a basic, minimal stake delegation tool - this will not be an easily usable or recommended product for end users
 - [GH #112](https://github.com/ShieldedLabs/zebra-crosslink/issues/112) all necessary Continuous Integration / Continuous Deployment source code is an explicit code deliverable
