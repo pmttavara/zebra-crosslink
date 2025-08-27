@@ -1150,6 +1150,7 @@ struct VizConfig {
     pause_incoming_blocks: bool,
     node_load_kind: usize,
     new_node_ratio: f32,
+    scroll_sensitivity: f32,
     audio_on: bool,
     audio_volume: f32,
     draw_resultant_forces: bool,
@@ -2085,7 +2086,12 @@ pub async fn viz_main(
         show_profiler: true,
         show_bft_msgs: true,
         pause_incoming_blocks: false,
-        new_node_ratio: 0.9,
+        new_node_ratio: 0.95,
+        scroll_sensitivity: if cfg!(target_os = "linux") {
+            8.
+        } else {
+            1.
+        },
         node_load_kind: 0,
         audio_on: false,
         audio_volume: 0.6,
@@ -2392,7 +2398,7 @@ pub async fn viz_main(
                 mouse_wheel()
             };
             // Potential per platform conditional compilation needed.
-            ctx.screen_vel += vec2(8.0 * scroll_x, 8.0 * scroll_y);
+            ctx.screen_vel += config.scroll_sensitivity * vec2(scroll_x, scroll_y);
 
             ctx.fix_screen_o -= ctx.screen_vel; // apply "momentum"
             ctx.screen_vel = ctx.screen_vel.lerp(Vec2::_0, 0.12); // apply friction
@@ -3523,6 +3529,8 @@ pub async fn viz_main(
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
+                    ui.label(None, "Scroll sensitivity");
+                    ui.slider(hash!(), "", 0.1..10., &mut config.scroll_sensitivity);
 
                     #[cfg(feature = "audio")]
                     {
