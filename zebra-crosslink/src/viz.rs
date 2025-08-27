@@ -1059,7 +1059,11 @@ impl Node {
 
     fn hash_string(&self) -> Option<String> {
         let _z = ZoneGuard::new("hash_string()");
-        self.hash().map(|hash| BlockHash(hash).to_string())
+        self.hash().map(|hash| if self.kind == NodeKind::BC {
+                BlockHash(hash).to_string()
+        } else {
+                Blake3Hash(hash).to_string()
+        })
     }
 }
 
@@ -3335,35 +3339,47 @@ pub async fn viz_main(
                 let circle_text_o = circle.r + 10.;
 
                 let z_hash_string = begin_zone("hash string");
-                if let Some(hash_str) = node.hash_string() {
-                    let (remain_hash_str, unique_hash_str) =
-                        str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
-
-                    let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
-
-                    let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text_right_align(
-                        &format!("{} - {}", unique_hash_str, node.height),
-                        pt,
-                        font_size,
-                        WHITE,
-                        ch_w,
-                    );
-                    end_zone(z_get_text_align_1);
-                    let z_get_text_align_2 = begin_zone("get_text_align_2");
-                    draw_text_right_align(
-                        remain_hash_str,
-                        pt - vec2(text_dims.width, 0.),
-                        font_size,
-                        LIGHTGRAY,
-                        ch_w,
-                    );
-                    end_zone(z_get_text_align_2);
+                let text_side = if node.kind == NodeKind::BC {
+                    -1.0
                 } else {
-                    let pt = vec2(circle.x + circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+                    1.0
+                };
+                let text_pt = vec2(circle.x + text_side * circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
 
+                if let Some(hash_str) = node.hash_string() {
+                    if node.kind == NodeKind::BC {
+                        let (remain_hash_str, unique_hash_str) =
+                            str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+
+                        let z_get_text_align_1 = begin_zone("get_text_align_1");
+                        let text_dims = draw_text_right_align(
+                            &format!("{} - {}", unique_hash_str, node.height),
+                            text_pt,
+                            font_size,
+                            WHITE,
+                            ch_w,
+                        );
+                        end_zone(z_get_text_align_1);
+                        let z_get_text_align_2 = begin_zone("get_text_align_2");
+                        draw_text_right_align(
+                            remain_hash_str,
+                            text_pt - vec2(text_dims.width, 0.),
+                            font_size,
+                            LIGHTGRAY,
+                            ch_w,
+                        );
+                        end_zone(z_get_text_align_2);
+                    } else {
+                        draw_text(
+                            &format!("{} - {}", node.height, hash_str),
+                            text_pt,
+                            font_size,
+                            WHITE,
+                        );
+                    }
+                } else {
                     let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text(&format!("{}", node.height), pt, font_size, WHITE);
+                    let text_dims = draw_text(&format!("{}", node.height), text_pt, font_size, WHITE);
                     end_zone(z_get_text_align_1);
                 }
                 end_zone(z_hash_string);
