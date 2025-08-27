@@ -786,7 +786,13 @@ pub async fn service_viz_requests(
         }
 
         // BFT /////////////////////////////////////////////////////////////////////////
-        let (bft_msg_flags, bft_err_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
+        let (
+            bft_msg_flags,
+            bft_err_flags,
+            mut bft_blocks,
+            fat_pointer_to_bft_tip,
+            internal_proposed_bft_string,
+        ) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
             internal.bft_msg_flags = 0;
@@ -1059,10 +1065,12 @@ impl Node {
 
     fn hash_string(&self) -> Option<String> {
         let _z = ZoneGuard::new("hash_string()");
-        self.hash().map(|hash| if self.kind == NodeKind::BC {
+        self.hash().map(|hash| {
+            if self.kind == NodeKind::BC {
                 BlockHash(hash).to_string()
-        } else {
+            } else {
                 Blake3Hash(hash).to_string()
+            }
         })
     }
 }
@@ -2087,11 +2095,7 @@ pub async fn viz_main(
         show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.95,
-        scroll_sensitivity: if cfg!(target_os = "linux") {
-            8.
-        } else {
-            1.
-        },
+        scroll_sensitivity: if cfg!(target_os = "linux") { 8. } else { 1. },
         node_load_kind: 0,
         audio_on: false,
         audio_volume: 0.6,
@@ -3345,12 +3349,11 @@ pub async fn viz_main(
                 let circle_text_o = circle.r + 10.;
 
                 let z_hash_string = begin_zone("hash string");
-                let text_side = if node.kind == NodeKind::BC {
-                    -1.0
-                } else {
-                    1.0
-                };
-                let text_pt = vec2(circle.x + text_side * circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+                let text_side = if node.kind == NodeKind::BC { -1.0 } else { 1.0 };
+                let text_pt = vec2(
+                    circle.x + text_side * circle_text_o,
+                    circle.y + 0.3 * font_size,
+                ); // TODO: DPI?
 
                 if let Some(hash_str) = node.hash_string() {
                     if node.kind == NodeKind::BC {
@@ -3385,7 +3388,8 @@ pub async fn viz_main(
                     }
                 } else {
                     let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text(&format!("{}", node.height), text_pt, font_size, WHITE);
+                    let text_dims =
+                        draw_text(&format!("{}", node.height), text_pt, font_size, WHITE);
                     end_zone(z_get_text_align_1);
                 }
                 end_zone(z_hash_string);
@@ -3713,7 +3717,8 @@ pub async fn viz_main(
 
             let mut i = 0;
             draw_text_right_align(
-                &format!("{} signature{} for PoS tip",
+                &format!(
+                    "{} signature{} for PoS tip",
                     bft_sigs_n,
                     if bft_sigs_n == 1 { "" } else { "s" }
                 ),
