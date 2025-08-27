@@ -2661,7 +2661,7 @@ pub async fn viz_main(
                 if let Some(node) = find_bft_node_by_height(&ctx.nodes, abs_h as u32) {
                     let mut is_done = false;
                     if let Some(bft_block) = node.header.as_bft() {
-                        if let Some(bc_hdr) = bft_block.block.headers.last() {
+                        if let Some(bc_hdr) = bft_block.block.headers.first() {
                             if ctx.find_bc_node_by_hash(&bc_hdr.hash()).is_none() {
                                 clear_bft_bc_h = Some(
                                     bft_block.block.finalization_candidate_height
