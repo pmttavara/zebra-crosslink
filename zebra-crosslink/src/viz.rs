@@ -244,6 +244,8 @@ pub struct VizState {
     pub internal_proposed_bft_string: Option<String>,
     /// Flags of the BFT messages
     pub bft_msg_flags: u64,
+    /// Additional flags set when the BFT message hit some kind of error condition
+    pub bft_err_flags: u64,
     /// Vector of all decided BFT blocks, indexed by height-1.
     pub bft_blocks: Vec<BftBlock>,
     /// Fat pointer to the BFT tip (all other fat pointers are available at height+1)
@@ -589,6 +591,7 @@ pub async fn service_viz_requests(
 
             internal_proposed_bft_string: None,
             bft_msg_flags: 0,
+            bft_err_flags: 0,
             bft_blocks: Vec::new(),
             fat_pointer_to_bft_tip: FatPointerToBftBlock2::null(),
         }),
@@ -783,10 +786,12 @@ pub async fn service_viz_requests(
         }
 
         // BFT /////////////////////////////////////////////////////////////////////////
-        let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
+        let (bft_msg_flags, bft_err_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
             internal.bft_msg_flags = 0;
+            let bft_err_flags = internal.bft_err_flags;
+            internal.bft_err_flags = 0;
 
             // TODO: is this still necessary?
             // TODO: O(<n)
@@ -809,6 +814,7 @@ pub async fn service_viz_requests(
 
             (
                 bft_msg_flags,
+                bft_err_flags,
                 internal.bft_blocks.clone(),
                 internal.fat_pointer_to_tip.clone(),
                 internal.proposed_bft_string.clone(),
@@ -823,6 +829,7 @@ pub async fn service_viz_requests(
             block_finalities,
             internal_proposed_bft_string,
             bft_msg_flags,
+            bft_err_flags,
             bft_blocks,
             fat_pointer_to_bft_tip,
         };
@@ -1052,7 +1059,11 @@ impl Node {
 
     fn hash_string(&self) -> Option<String> {
         let _z = ZoneGuard::new("hash_string()");
-        self.hash().map(|hash| BlockHash(hash).to_string())
+        self.hash().map(|hash| if self.kind == NodeKind::BC {
+                BlockHash(hash).to_string()
+        } else {
+                Blake3Hash(hash).to_string()
+        })
     }
 }
 
@@ -2086,6 +2097,7 @@ pub async fn viz_main(
     };
 
     let mut bft_msg_flags = 0;
+    let mut bft_err_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
     let mut finalized_pow_blocks = HashSet::new();
@@ -2228,6 +2240,7 @@ pub async fn viz_main(
             }
 
             bft_msg_flags |= g.state.bft_msg_flags;
+            bft_err_flags |= g.state.bft_err_flags;
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
@@ -3326,35 +3339,47 @@ pub async fn viz_main(
                 let circle_text_o = circle.r + 10.;
 
                 let z_hash_string = begin_zone("hash string");
-                if let Some(hash_str) = node.hash_string() {
-                    let (remain_hash_str, unique_hash_str) =
-                        str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
-
-                    let pt = vec2(circle.x - circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
-
-                    let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text_right_align(
-                        &format!("{} - {}", unique_hash_str, node.height),
-                        pt,
-                        font_size,
-                        WHITE,
-                        ch_w,
-                    );
-                    end_zone(z_get_text_align_1);
-                    let z_get_text_align_2 = begin_zone("get_text_align_2");
-                    draw_text_right_align(
-                        remain_hash_str,
-                        pt - vec2(text_dims.width, 0.),
-                        font_size,
-                        LIGHTGRAY,
-                        ch_w,
-                    );
-                    end_zone(z_get_text_align_2);
+                let text_side = if node.kind == NodeKind::BC {
+                    -1.0
                 } else {
-                    let pt = vec2(circle.x + circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
+                    1.0
+                };
+                let text_pt = vec2(circle.x + text_side * circle_text_o, circle.y + 0.3 * font_size); // TODO: DPI?
 
+                if let Some(hash_str) = node.hash_string() {
+                    if node.kind == NodeKind::BC {
+                        let (remain_hash_str, unique_hash_str) =
+                            str_partition_at(&hash_str, hash_str.len() - unique_chars_n);
+
+                        let z_get_text_align_1 = begin_zone("get_text_align_1");
+                        let text_dims = draw_text_right_align(
+                            &format!("{} - {}", unique_hash_str, node.height),
+                            text_pt,
+                            font_size,
+                            WHITE,
+                            ch_w,
+                        );
+                        end_zone(z_get_text_align_1);
+                        let z_get_text_align_2 = begin_zone("get_text_align_2");
+                        draw_text_right_align(
+                            remain_hash_str,
+                            text_pt - vec2(text_dims.width, 0.),
+                            font_size,
+                            LIGHTGRAY,
+                            ch_w,
+                        );
+                        end_zone(z_get_text_align_2);
+                    } else {
+                        draw_text(
+                            &format!("{} - {}", node.height, hash_str),
+                            text_pt,
+                            font_size,
+                            WHITE,
+                        );
+                    }
+                } else {
                     let z_get_text_align_1 = begin_zone("get_text_align_1");
-                    let text_dims = draw_text(&format!("{}", node.height), pt, font_size, WHITE);
+                    let text_dims = draw_text(&format!("{}", node.height), text_pt, font_size, WHITE);
                     end_zone(z_get_text_align_1);
                 }
                 end_zone(z_hash_string);
@@ -3462,6 +3487,7 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show BFT messages", &mut config.show_bft_msgs);
                     if !config.show_bft_msgs {
                         bft_msg_flags = 0; // prevent buildup
+                        bft_err_flags = 0; // prevent buildup
                     }
 
                     checkbox(
@@ -3638,13 +3664,21 @@ pub async fn viz_main(
                         bft_msg_vals[i] += 1;
                     } else if target_val < bft_msg_vals[i] as u64 {
                         bft_msg_vals[i] -= 1;
+                        if bft_msg_vals[i] == 0 {
+                            bft_err_flags &= !(1 << i); // TODO: keep prev val
+                        }
                     } else {
                         bft_msg_flags &= !(1 << i);
                     }
                 }
 
                 let t = min(bft_msg_vals[i], 30) as f32 / 30.;
-                let col = color_lerp(DARKGREEN, GREEN, t);
+                let (lo_col, hi_col) = if ((bft_err_flags >> i) & 1) != 0 {
+                    (BROWN, RED)
+                } else {
+                    (DARKGREEN, GREEN)
+                };
+                let col = color_lerp(lo_col, hi_col, t);
                 let y = min_y + i as f32 * (w + y_pad);
                 let mut rect = Rect {
                     x: window::screen_width() - w,
@@ -3667,7 +3701,23 @@ pub async fn viz_main(
                 i += 1;
             }
             let min_y = min_y + i as f32 * (w + y_pad) + 20.0;
+            let bft_sigs_n = g.state.fat_pointer_to_bft_tip.signatures.len();
+
             let mut i = 0;
+            draw_text_right_align(
+                &format!("{} signature{} for PoS tip",
+                    bft_sigs_n,
+                    if bft_sigs_n == 1 { "" } else { "s" }
+                ),
+                vec2(
+                    window::screen_width() - ch_w,
+                    min_y + i as f32 * font_size / 2.0,
+                ),
+                font_size / 2.0,
+                WHITE,
+                ch_w / 2.0,
+            );
+            i += 1;
             draw_text_right_align(
                 "(Vote Power) (Trnkd PK)",
                 vec2(

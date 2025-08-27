@@ -107,6 +107,7 @@ pub fn spawn_new_tfl_service(
         stakers: Vec::new(),
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,
+        bft_err_flags: 0,
         bft_blocks: Vec::new(),
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
         proposed_bft_string: None,

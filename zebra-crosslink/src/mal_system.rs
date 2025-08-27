@@ -145,6 +145,7 @@ async fn malachite_system_main_loop(
     > = None;
 
     let mut bft_msg_flags = 0;
+    let mut bft_err_flags = 0;
     let mut at_this_height_previously_seen_proposals: Vec<
         Option<Box<MalProposedValue<MalContext>>>,
     > = Vec::new();
@@ -273,12 +274,14 @@ async fn malachite_system_main_loop(
                     timeout,
                     reply,
                 } => {
-                    bft_msg_flags |= 1 << BFTMsgFlag::GetValue as u64;
+                    let msg_flag = 1 << BFTMsgFlag::GetValue as u64;
+                    bft_msg_flags |= msg_flag;
                     let round = round.as_u32().unwrap() as usize;
                     info!(%height, %round, "Consensus is requesting a value to propose. Timeout = {} ms.", timeout.as_millis());
 
                     if pending_block_to_push_to_core.is_some() {
                         warn!("Still waiting to push previous block.");
+                        bft_err_flags |= msg_flag;
                         break;
                     }
 
@@ -333,6 +336,7 @@ async fn malachite_system_main_loop(
                             other_type
                         } else {
                             warn!("Asked to propose but had nothing to offer!");
+                            // bft_err_flags |= msg_flag;
                             break;
                         }
                     };
@@ -443,7 +447,8 @@ async fn malachite_system_main_loop(
                     // We should therefore be able to pospone validation until after decided. Should a catastrophe occur malachite can be restarted.
 
                     info!(%height, %round, "Processing synced value");
-                    bft_msg_flags |= 1 << BFTMsgFlag::ProcessSyncedValue as u64;
+                    let msg_flag = 1 << BFTMsgFlag::ProcessSyncedValue as u64;
+                    bft_msg_flags |= msg_flag;
 
                     let mal_value: MalValue = codec.decode(value_bytes).unwrap();
                     let mut value: MalProposedValue<MalContext> = MalProposedValue {
@@ -456,6 +461,7 @@ async fn malachite_system_main_loop(
                     };
                     if value.height.as_u64() != lock.height {
                         // Omg, we have to reject blocks ahead of the current height.
+                        bft_err_flags |= msg_flag;
                         value.validity = MalValidity::Invalid;
                     } else {
                         lock.round = value.round.as_u32().unwrap();
@@ -542,10 +548,12 @@ async fn malachite_system_main_loop(
                     extension,
                     reply,
                 } => {
-                    bft_msg_flags |= 1 << BFTMsgFlag::VerifyVoteExtension as u64;
+                    let msg_flag = 1 << BFTMsgFlag::VerifyVoteExtension as u64;
+                    bft_msg_flags |= msg_flag;
                     if extension.len() == 0 {
                         reply.send(Ok(())).unwrap();
                     } else {
+                        bft_err_flags |= msg_flag;
                         reply
                             .send(Err(MalVoteExtensionError::InvalidVoteExtension))
                             .unwrap();
@@ -558,7 +566,8 @@ async fn malachite_system_main_loop(
                 // have all its constituent parts. Then we send that value back to consensus for it to
                 // consider and vote for or against it (ie. vote `nil`), depending on its validity.
                 BFTAppMsg::ReceivedProposalPart { from, part, reply } => {
-                    bft_msg_flags |= 1 << BFTMsgFlag::ReceivedProposalPart as u64;
+                    let msg_flag = 1 << BFTMsgFlag::ReceivedProposalPart as u64;
+                    bft_msg_flags |= msg_flag;
                     let sequence = part.sequence;
 
                     use malctx::MalStreamedProposal;
@@ -567,6 +576,7 @@ async fn malachite_system_main_loop(
                     let msg = part;
 
                     if msg.content.as_data().is_none() {
+                        bft_err_flags |= msg_flag;
                         reply.send(None).unwrap();
                         break;
                     }
@@ -588,6 +598,7 @@ async fn malachite_system_main_loop(
                         || proposal_round > lock.round as i64 + 1
                     {
                         warn!("Outdated or future proposal, ignoring");
+                        bft_err_flags |= msg_flag;
                         reply.send(None).unwrap();
                         break;
                     }
@@ -603,6 +614,7 @@ async fn malachite_system_main_loop(
                     if my_signing_provider.verify(&hash, &parts.signature, &parts.proposer) == false
                     {
                         warn!("Invalid signature, ignoring");
+                        bft_err_flags |= msg_flag;
                         reply.send(None).unwrap();
                         break;
                     }
@@ -617,6 +629,7 @@ async fn malachite_system_main_loop(
                     let validity = if validate_bft_block_from_malachite(&tfl_handle, &block).await {
                         MalValidity::Valid
                     } else {
+                        bft_err_flags |= msg_flag;
                         MalValidity::Invalid
                     };
 
@@ -650,7 +663,7 @@ async fn malachite_system_main_loop(
             break;
         }
 
-        push_new_bft_msg_flags(&tfl_handle, bft_msg_flags).await;
+        push_new_bft_msg_flags(&tfl_handle, bft_msg_flags, bft_err_flags).await;
     }
 }
 
