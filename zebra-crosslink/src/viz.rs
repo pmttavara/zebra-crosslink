@@ -244,6 +244,8 @@ pub struct VizState {
     pub internal_proposed_bft_string: Option<String>,
     /// Flags of the BFT messages
     pub bft_msg_flags: u64,
+    /// Additional flags set when the BFT message hit some kind of error condition
+    pub bft_err_flags: u64,
     /// Vector of all decided BFT blocks, indexed by height-1.
     pub bft_blocks: Vec<BftBlock>,
     /// Fat pointer to the BFT tip (all other fat pointers are available at height+1)
@@ -589,6 +591,7 @@ pub async fn service_viz_requests(
 
             internal_proposed_bft_string: None,
             bft_msg_flags: 0,
+            bft_err_flags: 0,
             bft_blocks: Vec::new(),
             fat_pointer_to_bft_tip: FatPointerToBftBlock2::null(),
         }),
@@ -783,10 +786,12 @@ pub async fn service_viz_requests(
         }
 
         // BFT /////////////////////////////////////////////////////////////////////////
-        let (bft_msg_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
+        let (bft_msg_flags, bft_err_flags, mut bft_blocks, fat_pointer_to_bft_tip, internal_proposed_bft_string) = {
             let mut internal = tfl_handle.internal.lock().await;
             let bft_msg_flags = internal.bft_msg_flags;
             internal.bft_msg_flags = 0;
+            let bft_err_flags = internal.bft_err_flags;
+            internal.bft_err_flags = 0;
 
             // TODO: is this still necessary?
             // TODO: O(<n)
@@ -809,6 +814,7 @@ pub async fn service_viz_requests(
 
             (
                 bft_msg_flags,
+                bft_err_flags,
                 internal.bft_blocks.clone(),
                 internal.fat_pointer_to_tip.clone(),
                 internal.proposed_bft_string.clone(),
@@ -823,6 +829,7 @@ pub async fn service_viz_requests(
             block_finalities,
             internal_proposed_bft_string,
             bft_msg_flags,
+            bft_err_flags,
             bft_blocks,
             fat_pointer_to_bft_tip,
         };
@@ -2086,6 +2093,7 @@ pub async fn viz_main(
     };
 
     let mut bft_msg_flags = 0;
+    let mut bft_err_flags = 0;
     let mut bft_msg_vals = [0_u8; BFTMsgFlag::COUNT];
 
     let mut finalized_pow_blocks = HashSet::new();
@@ -2228,6 +2236,7 @@ pub async fn viz_main(
             }
 
             bft_msg_flags |= g.state.bft_msg_flags;
+            bft_err_flags |= g.state.bft_err_flags;
 
             let blocks = &g.state.bft_blocks;
             for i in ctx.bft_block_hi_i..blocks.len() {
@@ -3462,6 +3471,7 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show BFT messages", &mut config.show_bft_msgs);
                     if !config.show_bft_msgs {
                         bft_msg_flags = 0; // prevent buildup
+                        bft_err_flags = 0; // prevent buildup
                     }
 
                     checkbox(
@@ -3638,13 +3648,21 @@ pub async fn viz_main(
                         bft_msg_vals[i] += 1;
                     } else if target_val < bft_msg_vals[i] as u64 {
                         bft_msg_vals[i] -= 1;
+                        if bft_msg_vals[i] == 0 {
+                            bft_err_flags &= !(1 << i); // TODO: keep prev val
+                        }
                     } else {
                         bft_msg_flags &= !(1 << i);
                     }
                 }
 
                 let t = min(bft_msg_vals[i], 30) as f32 / 30.;
-                let col = color_lerp(DARKGREEN, GREEN, t);
+                let (lo_col, hi_col) = if ((bft_err_flags >> i) & 1) != 0 {
+                    (BROWN, RED)
+                } else {
+                    (DARKGREEN, GREEN)
+                };
+                let col = color_lerp(lo_col, hi_col, t);
                 let y = min_y + i as f32 * (w + y_pad);
                 let mut rect = Rect {
                     x: window::screen_width() - w,

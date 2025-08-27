@@ -121,7 +121,8 @@ pub(crate) struct TFLServiceInternal {
     // channels
     final_change_tx: broadcast::Sender<(BlockHeight, BlockHash)>,
 
-    bft_msg_flags: u64, // ALT: Vec of messages, Vec/flags of success/failure
+    bft_msg_flags: u64, // ALT: Vec of messages/combine flags
+    bft_err_flags: u64,
     bft_blocks: Vec<BftBlock>,
     fat_pointer_to_tip: FatPointerToBftBlock2,
     proposed_bft_string: Option<String>,
@@ -293,9 +294,10 @@ pub fn rng_private_public_key_from_address(
     (rng, private_key, public_key)
 }
 
-async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u64) {
+async fn push_new_bft_msg_flags(tfl_handle: &TFLServiceHandle, bft_msg_flags: u64, bft_err_flags: u64) {
     let mut internal = tfl_handle.internal.lock().await;
     internal.bft_msg_flags |= bft_msg_flags;
+    internal.bft_err_flags |= bft_err_flags;
 }
 
 async fn propose_new_bft_block(
