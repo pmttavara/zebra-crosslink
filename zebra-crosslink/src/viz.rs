@@ -3701,7 +3701,23 @@ pub async fn viz_main(
                 i += 1;
             }
             let min_y = min_y + i as f32 * (w + y_pad) + 20.0;
+            let bft_sigs_n = g.state.fat_pointer_to_bft_tip.signatures.len();
+
             let mut i = 0;
+            draw_text_right_align(
+                &format!("{} signature{} for PoS tip",
+                    bft_sigs_n,
+                    if bft_sigs_n == 1 { "" } else { "s" }
+                ),
+                vec2(
+                    window::screen_width() - ch_w,
+                    min_y + i as f32 * font_size / 2.0,
+                ),
+                font_size / 2.0,
+                WHITE,
+                ch_w / 2.0,
+            );
+            i += 1;
             draw_text_right_align(
                 "(Vote Power) (Trnkd PK)",
                 vec2(
