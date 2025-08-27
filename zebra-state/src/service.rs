@@ -697,8 +697,13 @@ impl StateService {
 
         if self.block_write_sender.finalized.is_none() {
             if let Some(tx) = &self.block_write_sender.non_finalized {
-                if let Err(err) = tx.send(NonFinalizedWriteMessage::CrosslinkFinalized(hash, rsp_tx)) {
-                    tracing::warn!(?err, "failed to send Crosslink-finalized hash to NonFinalizedState");
+                if let Err(err) =
+                    tx.send(NonFinalizedWriteMessage::CrosslinkFinalized(hash, rsp_tx))
+                {
+                    tracing::warn!(
+                        ?err,
+                        "failed to send Crosslink-finalized hash to NonFinalizedState"
+                    );
                 };
             } else {
                 let _ = rsp_tx.send(Err("not ready to crosslink-finalize blocks".into()));

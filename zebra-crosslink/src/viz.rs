@@ -5,7 +5,6 @@
 // [ ] non-finalized side-chain
 // [ ] uncross edges
 
-
 use crate::{test_format::*, *};
 use macroquad::{
     camera::*,
@@ -619,7 +618,12 @@ pub async fn service_viz_requests(
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
-        new_g.validators_at_current_height = tfl_handle.internal.lock().await.validators_at_current_height.clone();
+        new_g.validators_at_current_height = tfl_handle
+            .internal
+            .lock()
+            .await
+            .validators_at_current_height
+            .clone();
 
         // ALT: do 1 or the other of force/read, not both
         // NOTE: we have to use force blocks, otherwise we miss side-chains
@@ -650,7 +654,14 @@ pub async fn service_viz_requests(
 
                 if let Some(instr) = tf_read_instr(&force_instrs.0, instr_val) {
                     // push to zebra
-                    handle_instr(&internal_handle, &force_instrs.0, instr.clone(), instr_val.flags, instr_i).await;
+                    handle_instr(
+                        &internal_handle,
+                        &force_instrs.0,
+                        instr.clone(),
+                        instr_val.flags,
+                        instr_i,
+                    )
+                    .await;
 
                     // push PoW to visualizer
                     // NOTE: this has to be interleaved with pushes, otherwise some nodes seem to
@@ -742,7 +753,12 @@ pub async fn service_viz_requests(
 
             let (height_hashes, blocks) =
                 tfl_block_sequence(&call, lo_height_hash.1, Some(hi_height_hash), true, true).await;
-            break (lo_height_hash.0, Some(tip_height_hash), height_hashes, blocks);
+            break (
+                lo_height_hash.0,
+                Some(tip_height_hash),
+                height_hashes,
+                blocks,
+            );
         };
 
         if height_hashes.len() != pow_blocks.len() {
@@ -756,9 +772,13 @@ pub async fn service_viz_requests(
         let mut block_finalities = Vec::with_capacity(height_hashes.len());
         for i in 0..height_hashes.len() {
             block_finalities.push(
-                tfl_block_finality_from_height_hash(tfl_handle.clone(), height_hashes[i].0, height_hashes[i].1)
-                    .await
-                    .unwrap_or(None),
+                tfl_block_finality_from_height_hash(
+                    tfl_handle.clone(),
+                    height_hashes[i].0,
+                    height_hashes[i].1,
+                )
+                .await
+                .unwrap_or(None),
             );
         }
 
@@ -1338,13 +1358,23 @@ impl VizCtx {
         if let Some(node_hash) = new_node.hash() {
             match new_node.kind {
                 NodeKind::BC => {
-                    info!("inserting PoW node {} at {} with parent {}", BlockHash(node_hash), i, BlockHash(parent_hash.unwrap_or([0; 32])));
+                    info!(
+                        "inserting PoW node {} at {} with parent {}",
+                        BlockHash(node_hash),
+                        i,
+                        BlockHash(parent_hash.unwrap_or([0; 32]))
+                    );
                     self.bc_by_hash.insert(node_hash, node_hdl)
-                },
+                }
                 NodeKind::BFT => {
-                    info!("inserting PoS node {} at {} with parent {}", Blake3Hash(node_hash), i, Blake3Hash(parent_hash.unwrap_or([0; 32])));
+                    info!(
+                        "inserting PoS node {} at {} with parent {}",
+                        Blake3Hash(node_hash),
+                        i,
+                        Blake3Hash(parent_hash.unwrap_or([0; 32]))
+                    );
                     self.bft_by_hash.insert(node_hash, node_hdl)
-                },
+                }
             };
         }
 
@@ -1360,15 +1390,15 @@ impl VizCtx {
                 if let Some(parent) = self.node(parent_ref) {
                     assert!(new_node.parent.is_none() || new_node.parent == parent_ref);
                     if parent.height + 1 == new_node.height {
-                    // assert!(
-                    //     // NOTE(Sam): Spurius crash sometimes
-                    //     parent.height + 1 == new_node.height,
-                    //     "parent height: {}, new height: {}",
-                    //     parent.height,
-                    //     new_node.height
-                    // );
+                        // assert!(
+                        //     // NOTE(Sam): Spurius crash sometimes
+                        //     parent.height + 1 == new_node.height,
+                        //     "parent height: {}, new height: {}",
+                        //     parent.height,
+                        //     new_node.height
+                        // );
 
-                    new_node.parent = parent_ref;
+                        new_node.parent = parent_ref;
                     }
                 } else if parent_hash != [0; 32] {
                     self.missing_bc_parents.insert(parent_hash, node_hdl);
@@ -1412,7 +1442,10 @@ impl VizCtx {
                             node_dy_from_work_difficulty(new_node.difficulty, self.bc_work_max),
                         )
                     } else if let Some(child) = self.get_node(child_ref) {
-                        (Some(child.pt), -node_dy_from_work_difficulty(child.difficulty, self.bc_work_max))
+                        (
+                            Some(child.pt),
+                            -node_dy_from_work_difficulty(child.difficulty, self.bc_work_max),
+                        )
                     } else {
                         (None, 0.)
                     }
@@ -1694,13 +1727,18 @@ fn draw_crosshair(pt: Vec2, rad: f32, thick: f32, col: color::Color) {
 }
 
 fn draw_text(text: &str, pt: Vec2, font_size: f32, col: color::Color) -> TextDimensions {
-    text::draw_text_ex(text, pt.x, pt.y, TextParams {
+    text::draw_text_ex(
+        text,
+        pt.x,
+        pt.y,
+        TextParams {
             font: Some(&PIXEL_FONT),
             font_size: font_size as u16,
             font_scale: 1.,
             color: col,
             ..Default::default()
-        })
+        },
+    )
 }
 fn draw_multiline_text(
     text: &str,
@@ -1932,6 +1970,7 @@ fn ui_color_label(ui: &mut ui::Ui, skin: &ui::Skin, col: color::Color, str: &str
 
 /// Viz implementation root
 #[allow(clippy::never_loop)]
+#[allow(clippy::overly_complex_bool_expr)]
 pub async fn viz_main(
     png: image::DynamicImage,
     tokio_root_thread_handle: Option<JoinHandle<()>>,
@@ -1988,7 +2027,8 @@ pub async fn viz_main(
 
     let base_style = root_ui()
         .style_builder()
-        .with_font(&PIXEL_FONT).unwrap()
+        .with_font(&PIXEL_FONT)
+        .unwrap()
         .font_size(font_size as u16)
         .build();
     let skin = ui::Skin {
@@ -2236,7 +2276,11 @@ pub async fn viz_main(
                                     fat_ptr,
                                 },
                                 text: "".to_string(),
-                                height: if ctx.get_node(bft_parent).is_none() { Some(i as u32 + 1) } else { None },
+                                height: if ctx.get_node(bft_parent).is_none() {
+                                    Some(i as u32 + 1)
+                                } else {
+                                    None
+                                },
                             },
                             None,
                         );
@@ -2941,8 +2985,10 @@ pub async fn viz_main(
                     }
 
                     if !y_is_set {
-                        let intended_dy =
-                            node_dy_from_work_difficulty(ctx.get_node(node_ref).unwrap().difficulty, ctx.bc_work_max);
+                        let intended_dy = node_dy_from_work_difficulty(
+                            ctx.get_node(node_ref).unwrap().difficulty,
+                            ctx.bc_work_max,
+                        );
                         target_pt.y = parent.pt.y - intended_dy;
                         y_counterpart = a_parent;
                         y_is_set = true;
@@ -3167,7 +3213,9 @@ pub async fn viz_main(
                             }
                         }
                         VizHeader::BftBlock(bft_block) => {
-                            let cmd = String::from_utf8_lossy(&bft_block.block.temp_roster_edit_command_string,);
+                            let cmd = String::from_utf8_lossy(
+                                &bft_block.block.temp_roster_edit_command_string,
+                            );
                             ui.label(None, &format!("CMD: '{}'", cmd));
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {
@@ -3236,7 +3284,12 @@ pub async fn viz_main(
                 }
             }
 
-            let bigger_world_rect = Rect { x: world_rect.x - world_rect.w, y: world_rect.y - world_rect.h, w: world_rect.w*3.0, h: world_rect.h*3.0 };
+            let bigger_world_rect = Rect {
+                x: world_rect.x - world_rect.w,
+                y: world_rect.y - world_rect.h,
+                w: world_rect.w * 3.0,
+                h: world_rect.h * 3.0,
+            };
 
             if circle.overlaps_rect(&bigger_world_rect) {
                 // node is on screen
@@ -3523,7 +3576,7 @@ pub async fn viz_main(
                         widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
                             .multiline(false)
                             .ui(ui, &mut pow_block_nonce_str);
-                        let try_parse : Option<u8> = pow_block_nonce_str.parse().ok();
+                        let try_parse: Option<u8> = pow_block_nonce_str.parse().ok();
                         if let Some(byte) = try_parse {
                             *MINER_NONCE_BYTE.lock().unwrap() = byte;
                         }
@@ -3617,10 +3670,13 @@ pub async fn viz_main(
             let mut i = 0;
             draw_text_right_align(
                 "(Vote Power) (Trnkd PK)",
-                vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
-                font_size/2.0,
+                vec2(
+                    window::screen_width() - ch_w,
+                    min_y + i as f32 * font_size / 2.0,
+                ),
+                font_size / 2.0,
                 WHITE,
-                ch_w/2.0,
+                ch_w / 2.0,
             );
             i += 1;
             for val in &g.validators_at_current_height {
@@ -3628,10 +3684,13 @@ pub async fn viz_main(
                 string.truncate(16);
                 draw_text_right_align(
                     &format!("{} - {}", val.voting_power, &string,),
-                    vec2(window::screen_width() - ch_w, min_y + i as f32 * font_size/2.0),
-                    font_size/2.0,
+                    vec2(
+                        window::screen_width() - ch_w,
+                        min_y + i as f32 * font_size / 2.0,
+                    ),
+                    font_size / 2.0,
                     WHITE,
-                    ch_w/2.0,
+                    ch_w / 2.0,
                 );
                 i += 1;
             }

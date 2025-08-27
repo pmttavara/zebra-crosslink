@@ -81,7 +81,9 @@ pub async fn start_malachite_with_start_delay(
             bft_node_handle,
             bft_config,
             Some(MalHeight::new(at_height)),
-            MalValidatorSet { validators: validators_at_current_height },
+            MalValidatorSet {
+                validators: validators_at_current_height,
+            },
         )
         .await
         .unwrap();
@@ -120,8 +122,8 @@ async fn malachite_system_terminate_engine(
                 MalHeight::new(0),
                 MalValidatorSet {
                     validators: Vec::new(),
-                })
-            )
+                },
+            ))
             .unwrap();
     }
 }
@@ -162,9 +164,9 @@ async fn malachite_system_main_loop(
         };
 
         if let Some((pending_block, fat_pointer)) = &pending_block_to_push_to_core {
-            let (accepted, validator_set) = new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await;
-            if !accepted
-            {
+            let (accepted, validator_set) =
+                new_decided_bft_block_from_malachite(&tfl_handle, pending_block, fat_pointer).await;
+            if !accepted {
                 tokio::time::sleep(Duration::from_millis(800)).await;
 
                 let mut lock = running_malachite.lock().await;
@@ -181,18 +183,18 @@ async fn malachite_system_main_loop(
 
             {
                 let mut lock = running_malachite.lock().await;
-                
+
                 pending_block_to_push_to_core = None;
                 post_pending_block_to_push_to_core_reply
-                .take()
-                .unwrap()
-                .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
-                    MalHeight::new(lock.height),
-                    MalValidatorSet {
-                        validators: validator_set,
-                    })
-                )
-                .unwrap();
+                    .take()
+                    .unwrap()
+                    .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                        MalHeight::new(lock.height),
+                        MalValidatorSet {
+                            validators: validator_set,
+                        },
+                    ))
+                    .unwrap();
             }
         }
 
@@ -226,7 +228,11 @@ async fn malachite_system_main_loop(
                         .send((
                             MalHeight::new(lock.height),
                             MalValidatorSet {
-                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
+                                validators:
+                                    malachite_wants_to_know_what_the_current_validator_set_is(
+                                        &tfl_handle,
+                                    )
+                                    .await,
                             },
                         ))
                         .unwrap();
@@ -468,7 +474,11 @@ async fn malachite_system_main_loop(
                     if height.as_u64() == lock.height {
                         reply
                             .send(MalValidatorSet {
-                                validators: malachite_wants_to_know_what_the_current_validator_set_is(&tfl_handle,).await,
+                                validators:
+                                    malachite_wants_to_know_what_the_current_validator_set_is(
+                                        &tfl_handle,
+                                    )
+                                    .await,
                             })
                             .unwrap();
                     }
@@ -744,6 +754,7 @@ impl FatPointerToBftBlock2 {
         }
         buf
     }
+    #[allow(clippy::reversed_empty_ranges)]
     pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock2> {
         if bytes.len() < 76 - 32 + 2 {
             return None;

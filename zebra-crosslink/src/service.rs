@@ -18,17 +18,14 @@ use tracing::{error, info, warn};
 
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
 use zebra_chain::transaction::Hash as TxHash;
-use zebra_state::{
-    Request as StateRequest,
-    Response as StateResponse,
-    crosslink::*
-};
+use zebra_state::{crosslink::*, Request as StateRequest, Response as StateResponse};
 
 use crate::chain::BftBlock;
 use crate::mal_system::FatPointerToBftBlock2;
 use crate::malctx::MalValidator;
 use crate::{
-    rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster, TFLServiceInternal
+    rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster,
+    TFLServiceInternal,
 };
 
 use tower::Service;
@@ -56,12 +53,8 @@ pub(crate) type StateServiceProcedure = Arc<
             StateRequest,
         ) -> Pin<
             Box<
-                dyn Future<
-                        Output = Result<
-                            StateResponse,
-                            Box<dyn std::error::Error + Send + Sync>,
-                        >,
-                    > + Send,
+                dyn Future<Output = Result<StateResponse, Box<dyn std::error::Error + Send + Sync>>>
+                    + Send,
             >,
         > + Send
         + Sync,
@@ -128,9 +121,11 @@ pub fn spawn_new_tfl_service(
 
             if array.is_empty() {
                 let public_ip_string = config
-                    .public_address.clone()
+                    .public_address
+                    .clone()
                     .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
-                let (_, _, public_key) = rng_private_public_key_from_address(&public_ip_string.as_bytes());
+                let (_, _, public_key) =
+                    rng_private_public_key_from_address(&public_ip_string.as_bytes());
                 array.push(MalValidator::new(public_key, 1));
             }
 
@@ -144,7 +139,9 @@ pub fn spawn_new_tfl_service(
     let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
         let handle = handle_mtx2.lock().unwrap().clone().unwrap();
         Box::pin(async move {
-            let (accepted, _) = crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await;
+            let (accepted, _) =
+                crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
+                    .await;
             if accepted {
                 info!("Successfully force-fed BFT block");
                 true
@@ -168,10 +165,10 @@ pub fn spawn_new_tfl_service(
     *handle_mtx.lock().unwrap() = Some(handle1.clone());
 
     let handle2 = handle1.clone();
-    *read_crosslink_procedure_callback.lock().unwrap() = Some(Arc::new(move |req| handle2.clone().call(req)));
+    *read_crosslink_procedure_callback.lock().unwrap() =
+        Some(Arc::new(move |req| handle2.clone().call(req)));
 
     let handle3 = handle1.clone();
-
 
     (
         handle1,

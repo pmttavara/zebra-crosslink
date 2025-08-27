@@ -32,8 +32,8 @@ pub struct TFLStaker {
     pub id: u64, // TODO: IP/malachite identifier/...
     /// Placeholder stake weight
     pub stake: u64, // TODO: do we want to store flat/tree delegators
-             // ALT: delegate_stake_to_id
-             // ...
+                    // ALT: delegate_stake_to_id
+                    // ...
 }
 
 /// Placeholder representation for group of stakers that are to be treated as finalizers.
@@ -42,7 +42,6 @@ pub struct TFLRoster {
     /// The list of stakers whose votes(?) will count. Sorted by weight(?)
     pub finalizers: Vec<TFLStaker>,
 }
-
 
 /// Types of requests that can be made to the TFLService.
 ///
@@ -94,7 +93,6 @@ pub enum TFLServiceResponse {
     FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
 }
 
-
 /// Errors that can occur when interacting with the TFLService.
 #[derive(Debug)]
 pub enum TFLServiceError {
@@ -122,16 +120,9 @@ impl Error for TFLServiceError {}
 pub type ReadCrosslinkServiceProcedure = Arc<
     dyn Fn(
             TFLServiceRequest,
-        ) -> Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            TFLServiceResponse,
-                            TFLServiceError,
-                        >,
-                    > + Send,
-            >,
-        > + Send
+        )
+            -> Pin<Box<dyn Future<Output = Result<TFLServiceResponse, TFLServiceError>> + Send>>
+        + Send
         + Sync,
 >;
 
@@ -142,4 +133,6 @@ pub type ReadCrosslinkServiceProcedure = Arc<
 //         })
 //     }
 // )));
-pub static read_crosslink_procedure_callback: std::sync::Mutex<Option<ReadCrosslinkServiceProcedure>> = std::sync::Mutex::new(None);
+pub static read_crosslink_procedure_callback: std::sync::Mutex<
+    Option<ReadCrosslinkServiceProcedure>,
+> = std::sync::Mutex::new(None);

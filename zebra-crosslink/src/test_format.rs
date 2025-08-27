@@ -92,8 +92,22 @@ impl TFInstr {
         str += " (";
 
         match tf_read_instr(&bytes, instr) {
-            Some(TestInstr::LoadPoW(block)) => str += &format!("{} - {}, parent: {}", block.coinbase_height().unwrap().0, block.hash(), block.header.previous_block_hash),
-            Some(TestInstr::LoadPoS((block, fat_ptr))) => str += &format!("{}, hdrs: [{} .. {}]", block.blake3_hash(), block.headers[0].hash(), block.headers.last().unwrap().hash()),
+            Some(TestInstr::LoadPoW(block)) => {
+                str += &format!(
+                    "{} - {}, parent: {}",
+                    block.coinbase_height().unwrap().0,
+                    block.hash(),
+                    block.header.previous_block_hash
+                )
+            }
+            Some(TestInstr::LoadPoS((block, fat_ptr))) => {
+                str += &format!(
+                    "{}, hdrs: [{} .. {}]",
+                    block.blake3_hash(),
+                    block.headers[0].hash(),
+                    block.headers.last().unwrap().hash()
+                )
+            }
             Some(TestInstr::SetParams(_)) => str += &format!("{} {}", instr.val[0], instr.val[1]),
             Some(TestInstr::ExpectPoWChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
@@ -107,7 +121,7 @@ impl TFInstr {
 
         if instr.flags != 0 {
             str += " [";
-            if (instr.flags & SHOULD_FAIL) != 0{
+            if (instr.flags & SHOULD_FAIL) != 0 {
                 str += " SHOULD_FAIL";
             }
             str += " ]";
@@ -239,7 +253,6 @@ impl TF {
         self.push_instr_serialize_ex(kind, 0, data, [0; 2])
     }
 
-
     pub fn push_instr_load_pow(&mut self, data: &Block, flags: u32) {
         self.push_instr_serialize_ex(TFInstr::LOAD_POW, flags, data, [0; 2])
     }
@@ -255,15 +268,35 @@ impl TF {
     }
 
     pub fn push_instr_expect_pow_chain_length(&mut self, length: usize, flags: u32) {
-        self.push_instr_ex(TFInstr::EXPECT_POW_CHAIN_LENGTH, flags, &[0; 0], [length as u64, 0])
+        self.push_instr_ex(
+            TFInstr::EXPECT_POW_CHAIN_LENGTH,
+            flags,
+            &[0; 0],
+            [length as u64, 0],
+        )
     }
 
     pub fn push_instr_expect_pos_chain_length(&mut self, length: usize, flags: u32) {
-        self.push_instr_ex(TFInstr::EXPECT_POS_CHAIN_LENGTH, flags, &[0; 0], [length as u64, 0])
+        self.push_instr_ex(
+            TFInstr::EXPECT_POS_CHAIN_LENGTH,
+            flags,
+            &[0; 0],
+            [length as u64, 0],
+        )
     }
 
-    pub fn push_instr_expect_pow_block_finality(&mut self, pow_hash: &BlockHash, finality: Option<TFLBlockFinality>, flags: u32) {
-        self.push_instr_ex(TFInstr::EXPECT_POW_BLOCK_FINALITY, flags, &pow_hash.0, test_format::val_from_finality(finality))
+    pub fn push_instr_expect_pow_block_finality(
+        &mut self,
+        pow_hash: &BlockHash,
+        finality: Option<TFLBlockFinality>,
+        flags: u32,
+    ) {
+        self.push_instr_ex(
+            TFInstr::EXPECT_POW_BLOCK_FINALITY,
+            flags,
+            &pow_hash.0,
+            test_format::val_from_finality(finality),
+        )
     }
 
     fn is_a_power_of_2(v: usize) -> bool {
@@ -438,7 +471,7 @@ pub(crate) async fn handle_instr(
     flags: u32,
     instr_i: usize,
 ) {
-    const SUCCESS_STRS: [&str; 2] = [ "failed", "succeeded" ];
+    const SUCCESS_STRS: [&str; 2] = ["failed", "succeeded"];
 
     match instr {
         TestInstr::LoadPoW(block) => {
@@ -449,8 +482,13 @@ pub(crate) async fn handle_instr(
 
             let should_succeed = (flags & SHOULD_FAIL) == 0;
             let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
-            test_check(pow_force_feed_ok == should_succeed,
-                &format!("PoW force feed unexpectedly {}", SUCCESS_STRS[pow_force_feed_ok as usize]));
+            test_check(
+                pow_force_feed_ok == should_succeed,
+                &format!(
+                    "PoW force feed unexpectedly {}",
+                    SUCCESS_STRS[pow_force_feed_ok as usize]
+                ),
+            );
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -462,8 +500,13 @@ pub(crate) async fn handle_instr(
             let should_succeed = (flags & SHOULD_FAIL) == 0;
             let pos_force_feed_ok =
                 (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            test_check(pos_force_feed_ok == should_succeed,
-                &format!("PoS force feed unexpectedly {}", SUCCESS_STRS[pos_force_feed_ok as usize]));
+            test_check(
+                pos_force_feed_ok == should_succeed,
+                &format!(
+                    "PoS force feed unexpectedly {}",
+                    SUCCESS_STRS[pos_force_feed_ok as usize]
+                ),
+            );
         }
 
         TestInstr::SetParams(_) => {
@@ -500,9 +543,10 @@ pub(crate) async fn handle_instr(
             let height = block_height_from_hash(&internal_handle.call.clone(), hash).await;
             let actual = if let Some(height) = height {
                 tfl_block_finality_from_height_hash(internal_handle.clone(), height, hash).await
-                } else {
-                    Ok(None)
-                }.expect("valid response, even if None");
+            } else {
+                Ok(None)
+            }
+            .expect("valid response, even if None");
             test_check(
                 expect == actual,
                 &format!(
@@ -525,7 +569,14 @@ pub async fn read_instrs(internal_handle: TFLServiceHandle, bytes: &[u8], instrs
         // );
 
         if let Some(instr) = tf_read_instr(bytes, &instrs[instr_i]) {
-            handle_instr(&internal_handle, bytes, instr, instrs[instr_i].flags, instr_i).await;
+            handle_instr(
+                &internal_handle,
+                bytes,
+                instr,
+                instrs[instr_i].flags,
+                instr_i,
+            )
+            .await;
         } else {
             panic!("Failed to read {}", TFInstr::str_from_kind(instr_val.kind));
         }
@@ -540,8 +591,7 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
     println!("waiting for tip before starting the test...");
     let before_time = Instant::now();
     loop {
-        if let Ok(StateResponse::Tip(Some(_))) = (call.state)(StateRequest::Tip).await
-        {
+        if let Ok(StateResponse::Tip(Some(_))) = (call.state)(StateRequest::Tip).await {
             break;
         } else {
             // warn!("Failed to read tip");
@@ -572,7 +622,11 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
     // make sure the test as a whole actually fails for failed instructions
-    assert!(TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty(), "failed test {}", TEST_NAME.lock().unwrap());
+    assert!(
+        TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty(),
+        "failed test {}",
+        TEST_NAME.lock().unwrap()
+    );
     println!("Test done, shutting down");
     #[cfg(feature = "viz_gui")]
     tokio::time::sleep(Duration::from_secs(120)).await;

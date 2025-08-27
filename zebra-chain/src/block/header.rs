@@ -147,6 +147,7 @@ impl FatPointerToBftBlock {
         buf
     }
     /// Try to deserialize a fat pointer from the provided dynamic array of bytes.
+    #[allow(clippy::reversed_empty_ranges)]
     pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock> {
         if bytes.len() < 76 - 32 + 2 {
             return None;

@@ -88,7 +88,12 @@ impl ZcashSerialize for BftBlock {
             header.zcash_serialize(&mut writer)?;
         }
         if self.version > 0 {
-            writer.write_u32::<LittleEndian>(self.temp_roster_edit_command_string.len().try_into().unwrap())?;
+            writer.write_u32::<LittleEndian>(
+                self.temp_roster_edit_command_string
+                    .len()
+                    .try_into()
+                    .unwrap(),
+            )?;
             for byte in &self.temp_roster_edit_command_string {
                 writer.write_u8(*byte)?;
             }

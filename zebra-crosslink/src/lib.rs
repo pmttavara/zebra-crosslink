@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
-use zebra_state::crosslink::*;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
+use zebra_state::crosslink::*;
 
 use multiaddr::Multiaddr;
 use rand::{CryptoRng, RngCore};
@@ -84,9 +84,7 @@ pub mod test_format;
 #[cfg(feature = "viz_gui")]
 pub mod viz;
 
-use crate::service::{
-    TFLServiceCalls, TFLServiceHandle,
-};
+use crate::service::{TFLServiceCalls, TFLServiceHandle};
 
 // TODO: do we want to start differentiating BCHeight/PoWHeight, MalHeight/PoSHeigh etc?
 use zebra_chain::block::{
@@ -307,7 +305,9 @@ async fn propose_new_bft_block(
 ) -> Option<BftBlock> {
     #[cfg(feature = "viz_gui")]
     if let Some(state) = viz::VIZ_G.lock().unwrap().as_ref() {
-        if state.bft_pause_button { return None; }
+        if state.bft_pause_button {
+            return None;
+        }
     }
 
     let call = tfl_handle.call.clone();
@@ -360,10 +360,7 @@ async fn propose_new_bft_block(
         return None;
     }
 
-    let resp = (call.state)(StateRequest::BlockHeader(
-        finality_candidate_height.into(),
-    ))
-    .await;
+    let resp = (call.state)(StateRequest::BlockHeader(finality_candidate_height.into())).await;
 
     let candidate_hash = if let Ok(StateResponse::BlockHeader { hash, .. }) = resp {
         hash
@@ -393,8 +390,12 @@ async fn propose_new_bft_block(
     let mut internal = tfl_handle.internal.lock().await;
 
     if internal.bft_blocks.len() as u64 + 1 != at_height {
-        warn!("Malachite is out of sync with us due to out of band syncing. Let us force reboot it.");
-        internal.malachite_watchdog = Instant::now().checked_sub(Duration::from_secs(60*60*24*365)).unwrap();
+        warn!(
+            "Malachite is out of sync with us due to out of band syncing. Let us force reboot it."
+        );
+        internal.malachite_watchdog = Instant::now()
+            .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
+            .unwrap();
         return None;
     }
 
@@ -406,7 +407,12 @@ async fn propose_new_bft_block(
         headers,
     ) {
         Ok(mut v) => {
-            v.temp_roster_edit_command_string = internal.proposed_bft_string.take().unwrap_or("".to_string()).as_bytes().into();
+            v.temp_roster_edit_command_string = internal
+                .proposed_bft_string
+                .take()
+                .unwrap_or("".to_string())
+                .as_bytes()
+                .into();
             return Some(v);
         }
         Err(e) => {
@@ -416,8 +422,15 @@ async fn propose_new_bft_block(
     };
 }
 
-async fn malachite_wants_to_know_what_the_current_validator_set_is(tfl_handle: &TFLServiceHandle) -> Vec<MalValidator> {
-    tfl_handle.internal.lock().await.validators_at_current_height.clone()
+async fn malachite_wants_to_know_what_the_current_validator_set_is(
+    tfl_handle: &TFLServiceHandle,
+) -> Vec<MalValidator> {
+    tfl_handle
+        .internal
+        .lock()
+        .await
+        .validators_at_current_height
+        .clone()
 }
 
 async fn new_decided_bft_block_from_malachite(
@@ -489,7 +502,10 @@ async fn new_decided_bft_block_from_malachite(
     match (call.state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
         Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
             info!("Successfully crosslink-finalized {}", hash);
-            assert_eq!(hash, new_final_hash, "PoW finalized hash should now match ours");
+            assert_eq!(
+                hash, new_final_hash,
+                "PoW finalized hash should now match ours"
+            );
         }
         Ok(_) => unreachable!("wrong response type"),
         Err(err) => {
@@ -505,7 +521,11 @@ async fn new_decided_bft_block_from_malachite(
             if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
                 let cmd = &cmd[4..];
                 let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                if roster.iter().position(|cmp| cmp.public_key == public_key).is_none() {
+                if roster
+                    .iter()
+                    .position(|cmp| cmp.public_key == public_key)
+                    .is_none()
+                {
                     roster.push(MalValidator::new(public_key, 0));
                 }
             }
@@ -517,10 +537,12 @@ async fn new_decided_bft_block_from_malachite(
             if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
                 let cmd = &cmd[4..];
                 let mut split_at = 0;
-                while split_at < cmd.len() && cmd[split_at] != b'|' { split_at += 1; }
+                while split_at < cmd.len() && cmd[split_at] != b'|' {
+                    split_at += 1;
+                }
                 if split_at < cmd.len() {
                     let num_str = &cmd[0..split_at];
-                    let cmd = &cmd[split_at+1..];
+                    let cmd = &cmd[split_at + 1..];
 
                     if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
                         let (_, _, public_key) = rng_private_public_key_from_address(cmd);
@@ -782,11 +804,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
-    if let Some(position) = bft_config.consensus
-                                    .p2p
-                                    .persistent_peers
-                                    .iter()
-                                    .position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap()) {
+    if let Some(position) = bft_config
+        .consensus
+        .p2p
+        .persistent_peers
+        .iter()
+        .position(|x| *x == Multiaddr::from_str(&public_ip_string).unwrap())
+    {
         bft_config.consensus.p2p.persistent_peers.remove(position);
     }
 
@@ -817,10 +841,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             start_malachite_with_start_delay(
                 internal_handle.clone(),
                 1,
-                internal_handle.internal.lock().await.validators_at_current_height.clone(),
+                internal_handle
+                    .internal
+                    .lock()
+                    .await
+                    .validators_at_current_height
+                    .clone(),
                 my_private_key,
                 bft_config.clone(),
-                Duration::from_secs(0)
+                Duration::from_secs(0),
             )
             .await,
         );
@@ -838,8 +867,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     loop {
         // Calculate this prior to message handling so that handlers can use it:
-        let new_bc_tip = if let Ok(StateResponse::Tip(val)) =
-            (call.state)(StateRequest::Tip).await
+        let new_bc_tip = if let Ok(StateResponse::Tip(val)) = (call.state)(StateRequest::Tip).await
         {
             val
         } else {
@@ -1079,7 +1107,7 @@ async fn tfl_block_finality_from_height_hash(
 
                 _ => {
                     return Err(TFLServiceError::Misc(
-                            "Invalid BlockHeader response type".to_string(),
+                        "Invalid BlockHeader response type".to_string(),
                     ))
                 }
             }
@@ -1112,7 +1140,7 @@ async fn tfl_service_incoming_request(
         )),
 
         TFLServiceRequest::FinalBlockHeightHash => Ok(TFLServiceResponse::FinalBlockHeightHash(
-            tfl_final_block_height_hash(&internal_handle).await
+            tfl_final_block_height_hash(&internal_handle).await,
         )),
 
         TFLServiceRequest::FinalBlockRx => {
@@ -1323,7 +1351,9 @@ async fn tfl_block_sequence(
         }
 
         if let Some(val) = chunk.get(chunk_i) {
-            let height = BlockHeight(start_height.0 + <u32>::try_from(hashes.len()).expect("should fit in u32"));
+            let height = BlockHeight(
+                start_height.0 + <u32>::try_from(hashes.len()).expect("should fit in u32"),
+            );
             // debug_assert!(if let Some(h) = block_height_from_hash(call, *val).await {
             //     if h != height {
             //         error!("expected: {:?}, actual: {:?}", height, h);
