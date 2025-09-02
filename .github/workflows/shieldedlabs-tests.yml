@@ -26,7 +26,7 @@ env:
 jobs:
   test:
     name: Crosslink Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: awalsh128/cache-apt-pkgs-action@latest
@@ -51,7 +51,7 @@ jobs:
           cargo nextest run --locked --workspace --manifest-path=zebrad/Cargo.toml -- crosslink_
 
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     name: Static Analysis and Docs
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +70,7 @@ jobs:
         run: cargo doc
 
   nix:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     name: Check Nix Flake
     permissions:
       actions: write
