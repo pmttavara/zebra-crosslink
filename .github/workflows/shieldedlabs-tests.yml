@@ -24,7 +24,7 @@ env:
 jobs:
   test:
     name: Crosslink Tests
-    runs-on: ubuntu-latest-xl
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: awalsh128/cache-apt-pkgs-action@latest
@@ -52,7 +52,7 @@ jobs:
         run: cargo test
 
   build:
-    runs-on: ubuntu-latest-xl
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Static Analysis and Docs
     steps:
       - uses: actions/checkout@v4
@@ -93,7 +93,7 @@ jobs:
           path: target/llvm-cov/html
 
   nix:
-    runs-on: ubuntu-latest-xl
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     name: Check Nix Flake
     permissions:
       actions: write
