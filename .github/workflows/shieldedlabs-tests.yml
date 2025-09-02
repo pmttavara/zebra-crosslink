@@ -35,9 +35,9 @@ jobs:
           version: 1.0
       - run: rustup toolchain install stable --profile minimal
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run generate > zebrad.toml
       - name: Configure Regtest network
         run: |
+          cargo run generate > zebrad.toml
           sed -i -E 's/^([[:space:]]*ephemeral[[:space:]]*=[[:space:]]*)false/\1true/' zebrad.toml
           sed -i -E 's/^([[:space:]]*network[[:space:]]*=[[:space:]]*)"Mainnet"/\1"Regtest"/' zebrad.toml
           mkdir -p ~/.config
