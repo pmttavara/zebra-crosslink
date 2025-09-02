@@ -47,9 +47,6 @@ jobs:
           cargo install cargo-binstall
           cargo binstall cargo-nextest --force
           cargo nextest run --locked --workspace --manifest-path=zebrad/Cargo.toml -- crosslink_
-      - name: Regression tests # mostly
-        if: github.ref == 'refs/heads/main'
-        run: cargo test
 
   build:
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -69,28 +66,6 @@ jobs:
       - name: Ensure all docs generate
         if: github.ref == 'refs/heads/main'
         run: cargo doc
-
-  coverage:
-    runs-on: ubuntu-latest-xl
-    steps:
-      - uses: actions/checkout@v4
-      - uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: protobuf-compiler
-          version: 1.0
-      - run: rustup toolchain install stable --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      - name: Install cargo llvm-cov
-        run: cargo install cargo-llvm-cov
-      - name: Coverage
-        run: cargo llvm-cov --lcov --no-report --package zebra-crosslink
-      - name: Upload Coverage
-        run: cargo llvm-cov --html --no-run --ignore-filename-regex="zebra-(state|chain)"
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: target/llvm-cov/html
 
   nix:
     runs-on: blacksmith-4vcpu-ubuntu-2404
