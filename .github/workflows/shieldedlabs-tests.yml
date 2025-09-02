@@ -37,7 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Configure Regtest network
         run: |
-          cargo run generate > zebrad.toml
+          cargo run --bin zebrad generate > zebrad.toml
           sed -i -E 's/^([[:space:]]*ephemeral[[:space:]]*=[[:space:]]*)false/\1true/' zebrad.toml
           sed -i -E 's/^([[:space:]]*network[[:space:]]*=[[:space:]]*)"Mainnet"/\1"Regtest"/' zebrad.toml
           mkdir -p ~/.config
