@@ -42,13 +42,11 @@ jobs:
           sed -i -E 's/^([[:space:]]*network[[:space:]]*=[[:space:]]*)"Mainnet"/\1"Regtest"/' zebrad.toml
           mkdir -p ~/.config
           mv zebrad.toml ~/.config/zebrad.toml
-      - name: Build Test Binary
-        run: cargo test --locked --workspace --no-run --all-features
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - name: Run Crosslink tests with nextest
-        run: |
-          cargo install cargo-binstall
-          cargo binstall cargo-nextest --force
-          cargo nextest run --locked --workspace --manifest-path=zebrad/Cargo.toml -- crosslink_
+        run: cargo nextest run --locked --workspace --manifest-path=zebrad/Cargo.toml -- crosslink_
 
   build:
     runs-on: blacksmith-8vcpu-ubuntu-2404
