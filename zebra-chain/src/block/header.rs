@@ -19,6 +19,14 @@ use super::{merkle, Commitment, CommitmentError, Hash, Height};
 #[cfg(any(test, feature = "proptest-impl"))]
 use proptest_derive::Arbitrary;
 
+#[serde_with::serde_as]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct CommandBuf {
+    #[serde_as(as = "serde_with::Bytes")]
+    /// Data buffer to contain short command
+    pub data: [u8; 128],
+}
+
 /// A block header, containing metadata about a block.
 ///
 /// How are blocks chained together? They are chained together via the
@@ -88,6 +96,9 @@ pub struct Header {
 
     /// Crosslink fat pointer to PoS block.
     pub fat_pointer_to_bft_block: FatPointerToBftBlock,
+
+    /// A command string used during development.
+    pub temp_command_buf: CommandBuf,
 }
 
 /// A bundle of signed votes for a block

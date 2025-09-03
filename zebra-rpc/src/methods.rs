@@ -281,6 +281,10 @@ pub trait Rpc {
     #[method(name = "get_tfl_fat_pointer_to_bft_chain_tip")]
     async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock>;
 
+    /// Get BFT command buffer
+    #[method(name = "get_tfl_command_buf")]
+    async fn get_tfl_command_buf(&self) -> Option<zebra_chain::block::CommandBuf>;
+
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
     /// something already. If the new `stake` is 0, the staker is removed.
@@ -1824,6 +1828,23 @@ where
         }
     }
 
+    async fn get_tfl_command_buf(&self) -> Option<zebra_chain::block::CommandBuf> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::GetCommandBuf)
+            .await;
+        if let Ok(TFLServiceResponse::GetCommandBuf(buf)) = ret {
+            Some(buf)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
+        }
+    }
+
     async fn update_tfl_staker(&self, staker: TFLStaker) {
         if let Ok(TFLServiceResponse::UpdateStaker) = self
             .tfl_service
@@ -3147,6 +3168,8 @@ where
             .await
             .expect("get fat pointer should never fail only return a null pointer");
 
+        let temp_roster_edit_command_buf = self.get_tfl_command_buf().await.expect("dev call shouldn't fail");
+
         // - After this point, the template only depends on the previously fetched data.
 
         let response = BlockTemplateResponse::new_internal(
@@ -3158,6 +3181,7 @@ where
             submit_old,
             extra_coinbase_data,
             fat_pointer,
+            temp_roster_edit_command_buf,
         );
 
         Ok(response.into())

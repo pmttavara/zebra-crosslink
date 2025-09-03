@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, Mutex};
 
-use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
+use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight, CommandBuf};
 
 /// The finality status of a block
 #[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +66,8 @@ pub enum TFLServiceRequest {
     UpdateStaker(TFLStaker),
     /// Get the fat pointer to the BFT chain tip
     FatPointerToBFTChainTip,
+    /// Get the command buffer
+    GetCommandBuf,
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -91,6 +93,8 @@ pub enum TFLServiceResponse {
     UpdateStaker, // TODO: batch?
     /// Fat pointer to the BFT chain tip
     FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
+    /// Get command buf
+    GetCommandBuf(CommandBuf),
 }
 
 /// Errors that can occur when interacting with the TFLService.

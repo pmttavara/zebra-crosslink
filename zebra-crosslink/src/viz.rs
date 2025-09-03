@@ -2833,6 +2833,7 @@ pub async fn viz_main(
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
                             fat_pointer_to_bft_block:
                                 zebra_chain::block::FatPointerToBftBlock::null(),
+                            temp_command_buf: zebra_chain::block::CommandBuf { data: [0; 128] },
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)

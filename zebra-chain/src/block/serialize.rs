@@ -110,8 +110,15 @@ impl ZcashDeserialize for Header {
                 if version < 5 {
                     super::FatPointerToBftBlock::null()
                 } else {
-                    super::FatPointerToBftBlock::zcash_deserialize(reader)?
+                    super::FatPointerToBftBlock::zcash_deserialize(&mut reader)?
                 }
+            },
+            temp_command_buf: {
+                let mut buf = crate::block::CommandBuf { data: [0_u8; 128] };
+                if version >= 6 {
+                    reader.read_exact(&mut buf.data)?
+                }
+                buf
             },
         })
     }
