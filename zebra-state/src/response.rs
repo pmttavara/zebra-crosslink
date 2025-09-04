@@ -125,6 +125,7 @@ pub enum KnownBlockLocation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// The location (which chain/queue) and height of a block that zebra is aware of
 pub struct KnownBlock {
     /// Where is the block located?
     pub location: KnownBlockLocation,

@@ -721,22 +721,22 @@ impl<'de> Deserialize<'de> for Config {
             max_connections_per_ip,
         } = DConfig::deserialize(deserializer)?;
 
-        /// Accepts an [`IndexSet`] of initial peers,
-        ///
-        /// Returns true if any of them are the default Testnet or Mainnet initial peers.
-        fn contains_default_initial_peers(initial_peers: &IndexSet<String>) -> bool {
-            let Config {
-                initial_mainnet_peers: mut default_initial_peers,
-                initial_testnet_peers: default_initial_testnet_peers,
-                ..
-            } = Config::default();
-            default_initial_peers.extend(default_initial_testnet_peers);
+        // /// Accepts an [`IndexSet`] of initial peers,
+        // ///
+        // /// Returns true if any of them are the default Testnet or Mainnet initial peers.
+        // fn contains_default_initial_peers(initial_peers: &IndexSet<String>) -> bool {
+        //     let Config {
+        //         initial_mainnet_peers: mut default_initial_peers,
+        //         initial_testnet_peers: default_initial_testnet_peers,
+        //         ..
+        //     } = Config::default();
+        //     default_initial_peers.extend(default_initial_testnet_peers);
 
-            initial_peers
-                .intersection(&default_initial_peers)
-                .next()
-                .is_some()
-        }
+        //     initial_peers
+        //         .intersection(&default_initial_peers)
+        //         .next()
+        //         .is_some()
+        // }
 
         let network = match (network_kind, testnet_parameters) {
             (NetworkKind::Mainnet, _) => Network::Mainnet,

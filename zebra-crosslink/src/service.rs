@@ -166,14 +166,10 @@ pub fn spawn_new_tfl_service(
     *handle_mtx.lock().unwrap() = Some(handle1.clone());
 
     let handle2 = handle1.clone();
-    *read_crosslink_procedure_callback.lock().unwrap() =
-        Some(Arc::new(move |req| handle2.clone().call(req)));
-
-    let handle3 = handle1.clone();
 
     (
         handle1,
-        tokio::spawn(async move { crate::tfl_service_main_loop(handle3).await }),
+        tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
     )
 }
 

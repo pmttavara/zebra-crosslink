@@ -21,6 +21,7 @@ use proptest_derive::Arbitrary;
 
 #[serde_with::serde_as]
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+/// A (temporary) small fixed-size buffer for communicating crosslink dev/test commands
 pub struct CommandBuf {
     #[serde_as(as = "serde_with::Bytes")]
     /// Data buffer to contain short command

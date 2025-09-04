@@ -1,9 +1,8 @@
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
+//! Types & commands for crosslink
 
-use tokio::sync::{broadcast, Mutex};
+use std::fmt;
+
+use tokio::sync::broadcast;
 
 use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight, CommandBuf};
 
@@ -114,29 +113,3 @@ impl fmt::Display for TFLServiceError {
 
 use std::error::Error;
 impl Error for TFLServiceError {}
-
-/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
-/// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
-///
-/// The error is boxed to allow for dynamic error types.
-///
-/// Set at start by zebra-crosslink
-pub type ReadCrosslinkServiceProcedure = Arc<
-    dyn Fn(
-            TFLServiceRequest,
-        )
-            -> Pin<Box<dyn Future<Output = Result<TFLServiceResponse, TFLServiceError>> + Send>>
-        + Send
-        + Sync,
->;
-
-// pub static read_crosslink_procedure_callback: Mutex<Option<ReadCrosslinkServiceProcedure>> = Arc::new(Mutex::new(Arc::new(
-//     move |req| {
-//         Box::pin(async move {
-//             Err(Box::new(TFLServiceError::Misc("This callback needs to be replaced".to_string())) as Box<dyn Error + Send + Sync>)
-//         })
-//     }
-// )));
-pub static read_crosslink_procedure_callback: std::sync::Mutex<
-    Option<ReadCrosslinkServiceProcedure>,
-> = std::sync::Mutex::new(None);

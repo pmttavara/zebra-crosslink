@@ -355,7 +355,7 @@ impl WriteBlockWorkerTask {
                         );
 
                         // info!("finalized {}, which implicitly finalizes:", hash);
-                        for block in newly_finalized_blocks {
+                        for _block in newly_finalized_blocks {
                             let finalizable_block = non_finalized_state.finalize();
                             match finalized_state.commit_finalized_direct(
                                 finalizable_block,
@@ -376,12 +376,12 @@ impl WriteBlockWorkerTask {
                         //     non_finalized_state.finalize();
                         // }
 
-                        rsp_tx.send(Ok(hash));
+                        let _ = rsp_tx.send(Ok(hash));
                     } else if finalized_state.db.contains_hash(hash) {
                         // already de-facto finalized as below reorg height
-                        rsp_tx.send(Ok(hash));
+                        let _ = rsp_tx.send(Ok(hash));
                     } else {
-                        rsp_tx.send(Err("Couldn't find finalized block".into()));
+                        let _ = rsp_tx.send(Err("Couldn't find finalized block".into()));
                     }
 
                     // TODO: we may want to add db data here
