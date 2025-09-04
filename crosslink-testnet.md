@@ -11,22 +11,3 @@ To join the Milestone 4 demo network follow these steps:
 
 
 We can manually add your node to the roster. Before that your node should still be able to sync and observe the dual-chain progress.
-
-
-## What's Changed
-* fix broken links to github tickets/queries, minor edits, remove stale… by @zookoatshieldedlabs in https://github.com/ShieldedLabs/zebra-crosslink/pull/152
-* MS3 Upstreaming by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/162
-* Upstream Test by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/96
-* add GH #158 "Auto-compounding" by @zookoatshieldedlabs in https://github.com/ShieldedLabs/zebra-crosslink/pull/159
-* Integrate `nixfmt` by @shielded-nate in https://github.com/ShieldedLabs/zebra-crosslink/pull/160
-* Replace all the upstream issue templates with a single template. by @shielded-nate in https://github.com/ShieldedLabs/zebra-crosslink/pull/156
-* feat: mdbook rendering by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/171
-* Ms3 book integrate project definition docs and links by @shielded-nate in https://github.com/ShieldedLabs/zebra-crosslink/pull/170
-* Import deliverables doc from retired `crosslink-deployment` repo by @shielded-nate in https://github.com/ShieldedLabs/zebra-crosslink/pull/157
-* `ms3-dev` -> `ms3` by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/169
-* `ms3` -> `main` by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/168
-* fix: cargo fmt by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/174
-* fix: update versions in shieldedlabs-main by @aphelionz in https://github.com/ShieldedLabs/zebra-crosslink/pull/175
-
-
-**Full Changelog**: https://github.com/ShieldedLabs/zebra-crosslink/compare/v2.3.0...v2.5.0
