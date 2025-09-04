@@ -4,12 +4,10 @@ Welcome to the Milestone 4 Demo!
 
 To join the Milestone 4 demo network follow these steps:
 
-1. Download a [`zebra-crosslink` prebuilt binary for Milestone 3](https://github.com/ShieldedLabs/zebra-crosslink/releases/tag/v2.5.0) for your architecture. They are named as `<arch>_zebrad` for a headless binary, or `<arch>_viz_zebrad` for a binary with the integrated visualizer gui. <!-- xxx not currently up to date -->
-2. Generate a default configuration with: `zebrad generate > myconfig.toml`
-3. Edit the config for the demo network to configure the node to use the Crosslink testnet, connection parameters, and your node identity see example below.
-4. Join the [Zcash global discord](https://discord.gg/CWSCEWvq4C), and we'll be on the stage.
-5. Join the network with `zebrad --config ./myconfig.toml`. If you are using the `viz` binary, the gui should open right away. Congrats, you are now running a hybrid PoW/BFT finalizer node! 🎉
-6. Post your `crosslink.public_address` to the discord chat.
+1. Join the [Zcash global discord](https://discord.gg/CWSCEWvq4C), and we'll be on the stage.
+2. Download a [`zebra-crosslink` prebuilt binary for Milestone 4](INSERT URL HERE) for your architecture. They are named as `<arch>_zebrad` for a headless binary, or `<arch>_viz_zebrad` for a binary with the integrated visualizer gui. <!-- xxx not currently up to date -->
+3. Run `cargo run`. If you are using the `viz` binary, the gui should open right away. Congrats, you are now running a hybrid PoW/BFT finalizer node! 🎉
+4. Post your `crosslink.public_address` to the discord chat.
 
 <!-- The above 2-6 steps should be automated so when you just run `cargo run` it does all of that. Except step 4. -->
 
