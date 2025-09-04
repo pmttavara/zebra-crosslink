@@ -115,7 +115,7 @@ impl ZcashDeserialize for Header {
                 }
             },
             temp_command_buf: {
-                let mut buf = crate::block::CommandBuf { data: [0_u8; 128] };
+                let mut buf = crate::block::CommandBuf::empty();
                 if 5 <= version {
                     reader.read_exact(&mut buf.data)?
                 }

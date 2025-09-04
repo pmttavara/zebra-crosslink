@@ -155,7 +155,7 @@ use zcash_keys::address::Address;
 use zebra_chain::{
     block::{
         self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash,
-        FatPointerToBftBlock, Height,
+        CommandBuf, FatPointerToBftBlock, Height,
     },
     parameters::{
         testnet::ConfiguredActivationHeights,
@@ -3533,6 +3533,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         block_template.max_time(),
         block_template.submit_old(),
         FatPointerToBftBlock::null(),
+        CommandBuf::empty(),
     );
 
     let proposal_block = proposal_block_from_template(&block_template, None, &network)?;
@@ -3592,6 +3593,7 @@ async fn nu6_funding_streams_and_coinbase_balance() -> Result<()> {
         block_template.max_time(),
         block_template.submit_old(),
         FatPointerToBftBlock::null(),
+        CommandBuf::empty(),
     );
 
     let proposal_block = proposal_block_from_template(&block_template, None, &network)?;

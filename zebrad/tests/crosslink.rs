@@ -437,6 +437,7 @@ fn crosslink_test_pow_to_pos_link() {
     pow_5.header = Arc::new(BlockHeader {
         version: 5,
         fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
+        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
         ..*pow_5.header
     });
     // let pow_5_hash = pow_5.hash();

@@ -27,6 +27,12 @@ pub struct CommandBuf {
     /// Data buffer to contain short command
     pub data: [u8; 128],
 }
+impl CommandBuf {
+    /// Create an empty command buffer
+    pub fn empty() -> Self {
+        CommandBuf { data: [0; 128] }
+    }
+}
 
 /// A block header, containing metadata about a block.
 ///
