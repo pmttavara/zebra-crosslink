@@ -1,71 +1,17 @@
-# Milestone 4 Guide
+# Crosslink Testnet Guide
 
 Welcome to the Milestone 4 Demo!
 
 To join the Milestone 4 demo network follow these steps:
 
 1. Join the [Zcash global discord](https://discord.gg/CWSCEWvq4C), and we'll be on the stage.
-2. Download a [`zebra-crosslink` prebuilt binary for Milestone 4](INSERT URL HERE) for your architecture. They are named as `<arch>_zebrad` for a headless binary, or `<arch>_viz_zebrad` for a binary with the integrated visualizer gui. <!-- xxx not currently up to date -->
-3. Run `cargo run`. If you are using the `viz` binary, the gui should open right away. Congrats, you are now running a hybrid PoW/BFT finalizer node! 🎉
-4. Post your `crosslink.public_address` to the discord chat.
+2. Download a [`zebra-crosslink` prebuilt binary](https://github.com/ShieldedLabs/zebra-crosslink/releases/latest) for your architecture. They are named as `zebra-<architecture>` for a headless binary, or `zebra-viz-<architecture>` for a binary with the integrated visualizer gui.
+3. Run `zebra-<viz? And architecture>` to start your node and connect to the network.
+4. Run `zebra-<viz? And architecture> crosslink-bftid` and post that value to the discord. This is your node’s BFT identifier.
 
-<!-- The above 2-6 steps should be automated so when you just run `cargo run` it does all of that. Except step 4. -->
 
 We can manually add your node to the roster. Before that your node should still be able to sync and observe the dual-chain progress.
 
-## Configuration
-
-The default configuration that `zebrad generate` produces is not yet tailored this workshop demo. You need to make these modifications:
-
-### Basic Zebra Configuration
-
-First, we change the network settings:
-
-```toml
-[network]
-network = "Testnet"
-initial_testnet_peers = [
-    "80.78.31.51:8233",
-    "80.78.31.32:8233",
-]
-```
-
-Any other settings in `[network]` can remain unchanged.
-
-Next we instruct zebra to only connect to Crosslink networks and not other Zcash testnets by adding this section:
-
-```
-[network.testnet_parameters]
-network_magic = [67, 108, 84, 110]
-slow_start_interval = 0
-```
-
-### Crosslink-specific settings
-
-Now for the Crosslink goodies!
-
-For this demo we have overloaded the meaning of `public_address` which serves two different purposes: one is the node's (pretend) cryptographic identity, and one is only relevant if you want to accept incoming TCP connections to your publicly routable IP address.
-
-If you DO want to accept incoming TCP connections, make sure your IP address is publicly routable then use that address and port. You must also set the `listen_address` as in the example below (with the same port).
-
-If you DO NOT want/need/care about accepting incoming TCP connections, use the IP address 7.7.7.7 and pick a random port between 10,000 and 20,000.
-
-```
-[crosslink]
-# An example for a participant without a public IP address:
-public_address = "/ip4/7.7.7.7/tcp/<YOUR PORT>"
-
-# An example for a participant who wants incoming TCP connections:
-#public_address = "/ip4/<YOUR PUBLIC IP>/tcp/<YOUR PORT>"
-#listen_address = "/ip4/0.0.0.0/tcp/<YOUR PORT>"
-
-# These peers are necessary to bootstrap:
-malachite_peers = [
-    "/ip4/80.78.31.51/tcp/8234",
-    "/ip4/80.78.31.32/tcp/8234",
-    "/ip4/5.5.5.5/tcp/5555",
-]
-```
 
 ## What's Changed
 * fix broken links to github tickets/queries, minor edits, remove stale… by @zookoatshieldedlabs in https://github.com/ShieldedLabs/zebra-crosslink/pull/152
