@@ -167,28 +167,7 @@
             mdbook
             mdbook-mermaid
           ];
-          builder = pkgs.writeShellScript "${name}-builder.sh" ''
-            source "$stdenv/setup"
-
-            set -x
-
-            cp -r "$src/" ./build
-            cd ./build/book
-
-            # Create the rendering output dir:
-            chmod u+w .
-            mkdir ./book
-            chmod u-w .
-
-            # Render:
-            mdbook build
-
-            # Copy to output:
-            mkdir -p "$out/book"
-            cp -r . "$out/book/"
-
-            set +x
-          '';
+          builder = pkgs.writeShellScript "${name}-builder.sh" ''mdbook build --dest-dir "$out/book/book" "$src/book"'';
         };
 
         zebra-all-pkgs = pkgs.symlinkJoin {
