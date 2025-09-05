@@ -1491,21 +1491,23 @@ async fn getaddresstxids_single_equals_object_full_range() {
 
     let mut mempool: MockService<_, _, _, BoxError> = MockService::build().for_unit_tests();
     let state: MockService<_, _, _, BoxError> = MockService::build().for_unit_tests();
+    let tfl_service: MockService<_, _, _, BoxError> = MockService::build().for_unit_tests();
 
     let (_tx, rx) = tokio::sync::watch::channel(None);
 
     let (rpc, queue) = RpcImpl::new(
-        network,
+        Mainnet,
         Default::default(),
-        false,
+        Default::default(),
         "0.0.1",
         "RPC test",
         Buffer::new(mempool.clone(), 1),
-        state,
-        Buffer::new(read_state, 1),
+        Buffer::new(tfl_service.clone(), 1),
+        Buffer::new(state, 1),
+        Buffer::new(read_state.clone(), 1),
         MockService::build().for_unit_tests(),
         MockSyncStatus::default(),
-        tip,
+        NoChainTip,
         MockAddressBookPeers::default(),
         rx,
         None,
