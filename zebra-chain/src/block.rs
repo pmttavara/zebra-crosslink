@@ -38,8 +38,7 @@ pub use commitment::{
 };
 pub use hash::Hash;
 pub use header::{
-    CommandBuf,
-    BlockTimeError, CountedHeader, FatPointerSignature, FatPointerToBftBlock, Header,
+    BlockTimeError, CommandBuf, CountedHeader, FatPointerSignature, FatPointerToBftBlock, Header,
     ZCASH_BLOCK_VERSION,
 };
 pub use height::{Height, HeightDiff, TryIntoHeight};

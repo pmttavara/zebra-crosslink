@@ -4,7 +4,7 @@ use std::fmt;
 
 use tokio::sync::broadcast;
 
-use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight, CommandBuf};
+use zebra_chain::block::{CommandBuf, Hash as BlockHash, Height as BlockHeight};
 
 /// The finality status of a block
 #[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]

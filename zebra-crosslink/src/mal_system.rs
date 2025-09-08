@@ -462,7 +462,8 @@ async fn malachite_system_main_loop(
                         value: mal_value,
                         validity: MalValidity::Valid,
                     };
-                    if value.height.as_u64() != lock.height { // TODO(Sam): maybe change how this works
+                    if value.height.as_u64() != lock.height {
+                        // TODO(Sam): maybe change how this works
                         reply.send(None);
                     } else {
                         lock.round = value.round.as_u32().unwrap();

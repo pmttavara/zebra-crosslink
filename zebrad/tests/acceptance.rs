@@ -154,8 +154,8 @@ use zcash_keys::address::Address;
 
 use zebra_chain::{
     block::{
-        self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash,
-        CommandBuf, FatPointerToBftBlock, Height,
+        self, genesis::regtest_genesis_block, ChainHistoryBlockTxAuthCommitmentHash, CommandBuf,
+        FatPointerToBftBlock, Height,
     },
     parameters::{
         testnet::ConfiguredActivationHeights,

@@ -412,9 +412,7 @@ async fn propose_new_bft_block(
         0,
         headers,
     ) {
-        Ok(v) => {
-            Some(v)
-        }
+        Ok(v) => Some(v),
         Err(e) => {
             warn!("Unable to create BftBlock to propose, Error={:?}", e,);
             None
@@ -1226,7 +1224,9 @@ async fn tfl_service_incoming_request(
             info!("BFT command string: {:?}", internal.proposed_bft_string);
             let str = internal.proposed_bft_string.take().unwrap_or(String::new());
             // let str = internal.proposed_bft_string.clone().unwrap_or(String::new());
-            Ok(TFLServiceResponse::GetCommandBuf(zebra_chain::block::CommandBuf::from_str(&str)))
+            Ok(TFLServiceResponse::GetCommandBuf(
+                zebra_chain::block::CommandBuf::from_str(&str),
+            ))
         }
 
         _ => Err(TFLServiceError::NotImplemented),

@@ -3,18 +3,16 @@
 #![cfg(test)]
 
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 
 use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader};
-use zebra_chain::parameters::testnet::ConfiguredActivationHeights;
 use zebra_chain::parameters::Network;
 use zebra_chain::serialization::*;
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
-use zebra_crosslink::*;
 use zebra_state::crosslink::*;
 use zebrad::application::CROSSLINK_TEST_CONFIG_OVERRIDE;
 use zebrad::config::ZebradConfig;

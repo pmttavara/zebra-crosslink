@@ -62,7 +62,8 @@ use zcash_primitives::consensus::Parameters;
 use zebra_chain::{
     amount::{self, Amount, NegativeAllowed, NonNegative},
     block::{
-        self, Block, CommandBuf, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight
+        self, Block, CommandBuf, Commitment, FatPointerToBftBlock, Height, SerializedBlock,
+        TryIntoHeight,
     },
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
