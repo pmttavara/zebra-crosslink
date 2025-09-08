@@ -2,6 +2,7 @@ use std::{ops::Deref, panic::AssertUnwindSafe, sync::Weak};
 
 use color_eyre::owo_colors::OwoColorize;
 use futures::FutureExt;
+use malachitebft_app::engine::host::Next;
 use malachitebft_core_types::{NilOrVal, VoteType};
 use tracing_subscriber::fmt::format::PrettyVisitor;
 use zerocopy::IntoBytes;
@@ -77,9 +78,10 @@ pub async fn start_malachite_with_start_delay(
         tokio::time::sleep(start_delay).await;
         let (channels, engine_handle) = malachitebft_app_channel::start_engine(
             ctx,
-            codec,
             bft_node_handle,
             bft_config,
+            codec,
+            codec,
             Some(MalHeight::new(at_height)),
             MalValidatorSet {
                 validators: validators_at_current_height,
@@ -112,13 +114,13 @@ pub async fn start_malachite_with_start_delay(
 async fn malachite_system_terminate_engine(
     mut engine_handle: EngineHandle,
     mut post_pending_block_to_push_to_core_reply: Option<
-        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+        tokio::sync::oneshot::Sender<Next<MalContext>>,
     >,
 ) {
     engine_handle.actor.stop(None);
     if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
         reply
-            .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+            .send(Next::Start(
                 MalHeight::new(0),
                 MalValidatorSet {
                     validators: Vec::new(),
@@ -141,7 +143,7 @@ async fn malachite_system_main_loop(
 
     let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock2)> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<
-        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+        tokio::sync::oneshot::Sender<Next<MalContext>>,
     > = None;
 
     let mut bft_msg_flags = 0;
@@ -189,7 +191,7 @@ async fn malachite_system_main_loop(
                 post_pending_block_to_push_to_core_reply
                     .take()
                     .unwrap()
-                    .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                    .send(Next::Start(
                         MalHeight::new(lock.height),
                         MalValidatorSet {
                             validators: validator_set,
@@ -247,11 +249,12 @@ async fn malachite_system_main_loop(
                     round,
                     proposer,
                     reply_value,
+                    role,
                 } => {
                     assert_eq!(height.as_u64(), lock.height);
                     let round = round.as_u32().unwrap() as u32;
 
-                    info!(%height, %round, %proposer, "Started round");
+                    info!(%height, %round, %proposer, ?role, "Started round");
                     bft_msg_flags |= 1 << BFTMsgFlag::StartedRound as u64;
                     lock.round = round;
 
@@ -263,9 +266,9 @@ async fn malachite_system_main_loop(
                         .flatten();
                     if let Some(proposal) = maybe_prev_seen_block {
                         info!(%height, %round, "Replaying already known proposed value: {}", proposal.value.id());
-                        reply_value.send(Some(proposal.as_ref().clone())).unwrap();
+                        reply_value.send(vec![proposal.as_ref().clone()]).unwrap();
                     } else {
-                        reply_value.send(None).unwrap();
+                        reply_value.send(vec![]).unwrap();
                     }
                 }
                 BFTAppMsg::GetValue {
@@ -459,10 +462,8 @@ async fn malachite_system_main_loop(
                         value: mal_value,
                         validity: MalValidity::Valid,
                     };
-                    if value.height.as_u64() != lock.height {
-                        // Omg, we have to reject blocks ahead of the current height.
-                        bft_err_flags |= msg_flag;
-                        value.validity = MalValidity::Invalid;
+                    if value.height.as_u64() != lock.height { // TODO(Sam): maybe change how this works
+                        reply.send(None);
                     } else {
                         lock.round = value.round.as_u32().unwrap();
                         while at_this_height_previously_seen_proposals.len()
@@ -472,21 +473,23 @@ async fn malachite_system_main_loop(
                         }
                         at_this_height_previously_seen_proposals[lock.round as usize] =
                             Some(Box::new(value.clone()));
+                        reply.send(Some(value)).unwrap();
                     }
-                    reply.send(value).unwrap();
                 }
                 BFTAppMsg::GetValidatorSet { height, reply } => {
                     bft_msg_flags |= 1 << BFTMsgFlag::GetValidatorSet as u64;
                     if height.as_u64() == lock.height {
                         reply
-                            .send(MalValidatorSet {
+                            .send(Some(MalValidatorSet {
                                 validators:
                                     malachite_wants_to_know_what_the_current_validator_set_is(
                                         &tfl_handle,
                                     )
                                     .await,
-                            })
+                            }))
                             .unwrap();
+                    } else {
+                        reply.send(None);
                     }
                 }
                 BFTAppMsg::Decided {

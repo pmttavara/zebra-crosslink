@@ -62,7 +62,7 @@ use zcash_primitives::consensus::Parameters;
 use zebra_chain::{
     amount::{self, Amount, NegativeAllowed, NonNegative},
     block::{
-        self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight,
+        self, Block, CommandBuf, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight
     },
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
@@ -3168,7 +3168,10 @@ where
             .await
             .expect("get fat pointer should never fail only return a null pointer");
 
-        let temp_roster_edit_command_buf = self.get_tfl_command_buf().await.expect("dev call shouldn't fail");
+        let temp_roster_edit_command_buf = self.get_tfl_command_buf().await.unwrap_or_else(|| {
+            tracing::error!("Failed to get temp roster command, inserting null bytes instead.");
+            CommandBuf { data: [0_u8; 128] }
+        });
 
         // - After this point, the template only depends on the previously fetched data.
 

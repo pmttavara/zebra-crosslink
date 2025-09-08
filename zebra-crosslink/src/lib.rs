@@ -835,6 +835,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         bootstrap_protocol: mconfig::BootstrapProtocol::Full,
         num_outbound_peers: 10,
         num_inbound_peers: 30,
+        max_connections_per_peer: 30,
         ephemeral_connection_timeout: Duration::from_secs(10),
         enabled: true,
     };
