@@ -412,20 +412,14 @@ async fn propose_new_bft_block(
         0,
         headers,
     ) {
-        Ok(mut v) => {
-            v.temp_roster_edit_command_string = internal
-                .proposed_bft_string
-                .take()
-                .unwrap_or("".to_string())
-                .as_bytes()
-                .into();
-            return Some(v);
+        Ok(v) => {
+            Some(v)
         }
         Err(e) => {
             warn!("Unable to create BftBlock to propose, Error={:?}", e,);
-            return None;
+            None
         }
-    };
+    }
 }
 
 async fn malachite_wants_to_know_what_the_current_validator_set_is(
@@ -1225,6 +1219,14 @@ async fn tfl_service_incoming_request(
             Ok(TFLServiceResponse::FatPointerToBFTChainTip(
                 internal.fat_pointer_to_tip.clone().to_non_two(),
             ))
+        }
+
+        TFLServiceRequest::GetCommandBuf => {
+            let mut internal = internal_handle.internal.lock().await;
+            info!("BFT command string: {:?}", internal.proposed_bft_string);
+            let str = internal.proposed_bft_string.take().unwrap_or(String::new());
+            // let str = internal.proposed_bft_string.clone().unwrap_or(String::new());
+            Ok(TFLServiceResponse::GetCommandBuf(zebra_chain::block::CommandBuf::from_str(&str)))
         }
 
         _ => Err(TFLServiceError::NotImplemented),

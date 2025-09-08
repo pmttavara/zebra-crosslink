@@ -3170,7 +3170,7 @@ where
 
         let temp_roster_edit_command_buf = self.get_tfl_command_buf().await.unwrap_or_else(|| {
             tracing::error!("Failed to get temp roster command, inserting null bytes instead.");
-            CommandBuf { data: [0_u8; 128] }
+            CommandBuf::empty()
         });
 
         // - After this point, the template only depends on the previously fetched data.

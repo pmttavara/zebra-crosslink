@@ -28,9 +28,32 @@ pub struct CommandBuf {
     pub data: [u8; 128],
 }
 impl CommandBuf {
+    /// size of the internal buffer
+    pub const SIZE: usize = 128;
+
     /// Create an empty command buffer
     pub fn empty() -> Self {
         CommandBuf { data: [0; 128] }
+    }
+
+    /// get a rust string from the fixed-size buffer
+    pub fn from_str(str: &str) -> Self {
+        let mut buf = Self::empty();
+        let n = std::cmp::min(str.len(), Self::SIZE);
+        buf.data[..n].copy_from_slice(&str.as_bytes()[..n]);
+        buf
+    }
+
+    /// get a rust string from the fixed-size buffer
+    pub fn to_str(&self) -> &str {
+        let mut c = 0;
+        while c < self.data.len() {
+            if self.data[c] == 0 {
+                break;
+            }
+            c += 1;
+        }
+        std::str::from_utf8(&self.data[..c]).expect("init with valid UTF-8")
     }
 }
 
