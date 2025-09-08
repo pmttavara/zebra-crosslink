@@ -1378,21 +1378,21 @@ impl VizCtx {
         if let Some(node_hash) = new_node.hash() {
             match new_node.kind {
                 NodeKind::BC => {
-                    info!(
-                        "inserting PoW node {} at {} with parent {}",
-                        BlockHash(node_hash),
-                        i,
-                        BlockHash(parent_hash.unwrap_or([0; 32]))
-                    );
+                    // info!(
+                    //     "inserting PoW node {} at {} with parent {}",
+                    //     BlockHash(node_hash),
+                    //     i,
+                    //     BlockHash(parent_hash.unwrap_or([0; 32]))
+                    // );
                     self.bc_by_hash.insert(node_hash, node_hdl)
                 }
                 NodeKind::BFT => {
-                    info!(
-                        "inserting PoS node {} at {} with parent {}",
-                        Blake3Hash(node_hash),
-                        i,
-                        Blake3Hash(parent_hash.unwrap_or([0; 32]))
-                    );
+                    // info!(
+                    //     "inserting PoS node {} at {} with parent {}",
+                    //     Blake3Hash(node_hash),
+                    //     i,
+                    //     Blake3Hash(parent_hash.unwrap_or([0; 32]))
+                    // );
                     self.bft_by_hash.insert(node_hash, node_hdl)
                 }
             };
@@ -3218,6 +3218,7 @@ pub async fn viz_main(
                     match &click_node.header {
                         VizHeader::None => {}
                         VizHeader::BlockHeader(hdr) => {
+                            ui.label(None, &format!("CMD: '{}'", hdr.temp_command_buf.to_str()));
                             let string = format!("PoS fp all: {}", hdr.fat_pointer_to_bft_block);
                             let mut iter = string.chars();
 

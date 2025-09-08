@@ -355,14 +355,14 @@ impl WriteBlockWorkerTask {
                         );
 
                         // info!("finalized {}, which implicitly finalizes:", hash);
-                        for _block in newly_finalized_blocks {
+                        for i in 0..newly_finalized_blocks.len() {
                             let finalizable_block = non_finalized_state.finalize();
                             match finalized_state.commit_finalized_direct(
                                 finalizable_block,
                                 None,
                                 "commit Crosslink-finalized block",
                             ) {
-                                Ok((hash, _)) => info!("  {}", hash),
+                                Ok((hash, _)) => info!("  {}: {}", i, hash),
                                 Err(err) => {
                                     unreachable!("unexpected finalized block commit error: {}", err)
                                 }
