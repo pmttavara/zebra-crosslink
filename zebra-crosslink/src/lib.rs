@@ -707,11 +707,16 @@ pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
     tokio::task::spawn(test_format::instr_reader(internal_handle));
 }
 
-fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::block::CommandBuf) {
+fn mutate_roster_by_cmd(
+    roster: &mut Vec<MalValidator>,
+    cmd_buf: &zebra_chain::block::CommandBuf,
+) -> bool {
+    let mut is_cmd = false;
     let cmd_str = cmd_buf.to_str();
     let cmd = cmd_str.as_bytes();
     if cmd.len() >= 4 && cmd[3] == b'|' {
         if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
+            is_cmd = true;
             let cmd = &cmd[4..];
             let (_, _, public_key) = rng_private_public_key_from_address(cmd);
             if roster
@@ -723,11 +728,13 @@ fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::b
             }
         }
         if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
+            is_cmd = true;
             let cmd = &cmd[4..];
             let (_, _, public_key) = rng_private_public_key_from_address(cmd);
             roster.retain(|cmp| cmp.public_key != public_key);
         }
         if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
+            is_cmd = true;
             let cmd = &cmd[4..];
             let mut split_at = 0;
             while split_at < cmd.len() && cmd[split_at] != b'|' {
@@ -748,6 +755,7 @@ fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::b
             }
         }
     }
+    is_cmd
 }
 
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
@@ -976,12 +984,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                     if let Some(new_final_block) = &new_final_blocks[i] {
                         let cmd = &new_final_block.header.temp_command_buf;
-                        info!(
-                            "mutating roster from PoW height {} with command: \"{}\"",
-                            new_final_height_hashes[i].0 .0,
-                            cmd.to_str()
-                        );
-                        mutate_roster_by_cmd(&mut internal.validators_at_current_height, cmd);
+                        if mutate_roster_by_cmd(&mut internal.validators_at_current_height, cmd) {
+                            info!(
+                                "Applied command to roster from PoW height {}: \"{}\"",
+                                new_final_height_hashes[i].0 .0,
+                                cmd.to_str()
+                            );
+                        }
                     } else {
                         error!(
                             "failed to get known block at {:?}",
