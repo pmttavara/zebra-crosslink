@@ -474,7 +474,6 @@ async fn new_decided_bft_block_from_malachite(
             },
             finalization_candidate_height: 0,
             headers: Vec::new(),
-            temp_roster_edit_command_string: Vec::new(),
         });
     }
 
@@ -508,50 +507,6 @@ async fn new_decided_bft_block_from_malachite(
         Ok(_) => unreachable!("wrong response type"),
         Err(err) => {
             error!(?err);
-        }
-    }
-
-    // MUTATE ROSTER BY COMMAND
-    {
-        let roster = &mut internal.validators_at_current_height;
-        let cmd = new_block.temp_roster_edit_command_string.as_slice();
-        if cmd.len() >= 4 && cmd[3] == b'|' {
-            if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
-                let cmd = &cmd[4..];
-                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                if roster
-                    .iter()
-                    .position(|cmp| cmp.public_key == public_key)
-                    .is_none()
-                {
-                    roster.push(MalValidator::new(public_key, 0));
-                }
-            }
-            if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
-                let cmd = &cmd[4..];
-                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                roster.retain(|cmp| cmp.public_key != public_key);
-            }
-            if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
-                let cmd = &cmd[4..];
-                let mut split_at = 0;
-                while split_at < cmd.len() && cmd[split_at] != b'|' {
-                    split_at += 1;
-                }
-                if split_at < cmd.len() {
-                    let num_str = &cmd[0..split_at];
-                    let cmd = &cmd[split_at + 1..];
-
-                    if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
-                        let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                        for cmp in roster {
-                            if cmp.public_key == public_key {
-                                cmp.voting_power = num;
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -640,117 +595,159 @@ async fn get_historical_bft_block_at_height(
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
-
 pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
-        // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
-        std::panic::set_hook(Box::new(|panic_info| {
-            #[allow(clippy::print_stderr)]
-            {
-                *TEST_FAILED.lock().unwrap() = -1;
+    // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
+    std::panic::set_hook(Box::new(|panic_info| {
+        #[allow(clippy::print_stderr)]
+        {
+            *TEST_FAILED.lock().unwrap() = -1;
 
-                use std::backtrace::{self, *};
-                let bt = Backtrace::force_capture();
+            use std::backtrace::{self, *};
+            let bt = Backtrace::force_capture();
 
-                eprintln!("\n\n{panic_info}\n");
+            eprintln!("\n\n{panic_info}\n");
 
-                // hacky formatting - BacktraceFmt not working for some reason...
-                let str = format!("{bt}");
-                let splits: Vec<_> = str.split("\n").collect();
+            // hacky formatting - BacktraceFmt not working for some reason...
+            let str = format!("{bt}");
+            let splits: Vec<_> = str.split("\n").collect();
 
-                // skip over the internal backtrace unwind steps
-                let mut start_i = 0;
-                let mut i = 0;
-                while i < splits.len() {
-                    if splits[i].ends_with("rust_begin_unwind") {
-                        i += 1;
-                        if i < splits.len() && splits[i].trim().starts_with("at ") {
-                            i += 1;
-                        }
-                        start_i = i;
-                    }
-                    if splits[i].ends_with("core::panicking::panic_fmt") {
-                        i += 1;
-                        if i < splits.len() && splits[i].trim().starts_with("at ") {
-                            i += 1;
-                        }
-                        start_i = i;
-                        break;
-                    }
+            // skip over the internal backtrace unwind steps
+            let mut start_i = 0;
+            let mut i = 0;
+            while i < splits.len() {
+                if splits[i].ends_with("rust_begin_unwind") {
                     i += 1;
+                    if i < splits.len() && splits[i].trim().starts_with("at ") {
+                        i += 1;
+                    }
+                    start_i = i;
                 }
-
-                // print backtrace
-                let mut i = start_i;
-                let n = 80;
-                while i < n {
-                    let proc = if let Some(val) = splits.get(i) {
-                        val.trim()
-                    } else {
-                        break;
-                    };
+                if splits[i].ends_with("core::panicking::panic_fmt") {
                     i += 1;
-
-                    let file_loc = if let Some(val) = splits.get(i) {
-                        let val = val.trim();
-                        if val.starts_with("at ") {
-                            i += 1;
-                            val
-                        } else {
-                            ""
-                        }
-                    } else {
-                        break;
-                    };
-
-                    eprintln!(
-                        "  {}{}    {}",
-                        if i < 20 { " " } else { "" },
-                        proc,
-                        file_loc
-                    );
+                    if i < splits.len() && splits[i].trim().starts_with("at ") {
+                        i += 1;
+                    }
+                    start_i = i;
+                    break;
                 }
-                if i == n {
-                    eprintln!("...");
-                }
-
-                eprintln!("\n\nInstruction sequence:");
-                let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
-                let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
-                if failed_instr_idxs.is_empty() {
-                    eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
-                }
-
-                let done_instr_c = *TEST_INSTR_C.lock().unwrap();
-
-                let mut failed_instr_idx_i = 0;
-                let instrs_lock = TEST_INSTRS.lock().unwrap();
-                let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
-                let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
-                let bytes = bytes_lock.as_ref();
-                for instr_i in 0..instrs.len() {
-                    let col = if failed_instr_idx_i < failed_instr_idxs.len()
-                        && instr_i == failed_instr_idxs[failed_instr_idx_i]
-                    {
-                        failed_instr_idx_i += 1;
-                        "\x1b[91m F  " // red
-                    } else if instr_i < done_instr_c {
-                        "\x1b[92m P  " // green
-                    } else {
-                        "\x1b[37m    " // grey
-                    };
-                    eprintln!(
-                        "  {}{}\x1b[0;0m",
-                        col,
-                        &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
-                    );
-                }
-
-                #[cfg(not(feature = "viz_gui"))]
-                std::process::abort();
+                i += 1;
             }
-        }));
+
+            // print backtrace
+            let mut i = start_i;
+            let n = 80;
+            while i < n {
+                let proc = if let Some(val) = splits.get(i) {
+                    val.trim()
+                } else {
+                    break;
+                };
+                i += 1;
+
+                let file_loc = if let Some(val) = splits.get(i) {
+                    let val = val.trim();
+                    if val.starts_with("at ") {
+                        i += 1;
+                        val
+                    } else {
+                        ""
+                    }
+                } else {
+                    break;
+                };
+
+                eprintln!(
+                    "  {}{}    {}",
+                    if i < 20 { " " } else { "" },
+                    proc,
+                    file_loc
+                );
+            }
+            if i == n {
+                eprintln!("...");
+            }
+
+            eprintln!("\n\nInstruction sequence:");
+            let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+            let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+            if failed_instr_idxs.is_empty() {
+                eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
+            }
+
+            let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+
+            let mut failed_instr_idx_i = 0;
+            let instrs_lock = TEST_INSTRS.lock().unwrap();
+            let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
+            let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
+            let bytes = bytes_lock.as_ref();
+            for instr_i in 0..instrs.len() {
+                let col = if failed_instr_idx_i < failed_instr_idxs.len()
+                    && instr_i == failed_instr_idxs[failed_instr_idx_i]
+                {
+                    failed_instr_idx_i += 1;
+                    "\x1b[91m F  " // red
+                } else if instr_i < done_instr_c {
+                    "\x1b[92m P  " // green
+                } else {
+                    "\x1b[37m    " // grey
+                };
+                eprintln!(
+                    "  {}{}\x1b[0;0m",
+                    col,
+                    &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
+                );
+            }
+
+            #[cfg(not(feature = "viz_gui"))]
+            std::process::abort();
+        }
+    }));
 
     tokio::task::spawn(test_format::instr_reader(internal_handle));
+}
+
+fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::block::CommandBuf) {
+    let cmd_str = cmd_buf.to_str();
+    let cmd = cmd_str.as_bytes();
+    if cmd.len() >= 4 && cmd[3] == b'|' {
+        if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
+            let cmd = &cmd[4..];
+            let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+            if roster
+                .iter()
+                    .position(|cmp| cmp.public_key == public_key)
+                    .is_none()
+            {
+                roster.push(MalValidator::new(public_key, 0));
+            }
+        }
+        if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
+            let cmd = &cmd[4..];
+            let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+            roster.retain(|cmp| cmp.public_key != public_key);
+        }
+        if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
+            let cmd = &cmd[4..];
+            let mut split_at = 0;
+            while split_at < cmd.len() && cmd[split_at] != b'|' {
+                split_at += 1;
+            }
+            if split_at < cmd.len() {
+                let num_str = &cmd[0..split_at];
+                let cmd = &cmd[split_at + 1..];
+
+                if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
+                    let (_, _, public_key) = rng_private_public_key_from_address(cmd);
+                    for cmp in roster {
+                        if cmp.public_key == public_key {
+                            cmp.voting_power = num;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 
@@ -943,7 +940,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     new_final_height_hash.1
                 };
 
-                let (new_final_blocks, infos) = tfl_block_sequence(
+                let (new_final_height_hashes, new_final_blocks) = tfl_block_sequence(
                     &call,
                     start_hash,
                     Some(new_final_height_hash),
@@ -954,7 +951,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                 let mut quiet = true;
                 if let (Some(Some(first_block)), Some(Some(last_block))) =
-                    (infos.first(), infos.last())
+                    (new_final_blocks.first(), new_final_blocks.last())
                 {
                     let a = first_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
                     let b = last_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
@@ -965,21 +962,32 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     }
                 }
                 if !quiet {
-                    tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
+                    tfl_dump_blocks(&new_final_height_hashes[..], &new_final_blocks[..]);
                 }
 
                 // walk all blocks in newly-finalized sequence & broadcast them
-                for new_final_block in new_final_blocks {
+                for i in 0..new_final_height_hashes.len() {
                     // skip repeated boundary blocks
+                    let new_final_height_hash = &new_final_height_hashes[i];
                     if let Some((_, prev_hash)) = current_bc_final {
-                        if prev_hash == new_final_block.1 {
+                        if prev_hash == new_final_height_hash.1 {
                             continue;
                         }
                     }
 
+                    if let Some(new_final_block) = &new_final_blocks[i] {
+                        let cmd = &new_final_block.header.temp_command_buf;
+                        info!("mutating roster from PoW height {} with command: \"{}\"", new_final_height_hashes[i].0.0, cmd.to_str());
+                        mutate_roster_by_cmd(&mut internal.validators_at_current_height, cmd);
+                    } else {
+                        error!("failed to get known block at {:?}", new_final_height_hashes[i]);
+                        debug_assert!(false, "this shouldn't happen");
+                    }
+
+
                     // We ignore the error because there will be one in the ordinary case
                     // where there are no receivers yet.
-                    let _ = internal.final_change_tx.send(new_final_block);
+                    let _ = internal.final_change_tx.send(*new_final_height_hash);
                 }
             }
         }
@@ -1274,7 +1282,8 @@ impl SatSubAffine<i32> for BlockHeight {
     }
 }
 
-// TODO: handle headers as well?
+// TODO: can we change the signature to unwrap the block options? The blocks must exist if the
+// hashes do
 // NOTE: this is currently best-chain-only due to request/response limitations
 // TODO: add more request/response pairs directly in zebra-state's StateService
 /// always returns block hashes. If read_extra_info is set, also returns Blocks, otherwise returns an empty vector.

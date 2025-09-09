@@ -72,8 +72,6 @@ pub struct BftBlock {
     /// The PoW Headers
     // @Zooko: PoPoW?
     pub headers: Vec<BcBlockHeader>,
-    /// A command string used during development.
-    pub temp_roster_edit_command_string: Vec<u8>,
 }
 
 impl ZcashSerialize for BftBlock {
@@ -86,17 +84,6 @@ impl ZcashSerialize for BftBlock {
         writer.write_u32::<LittleEndian>(self.headers.len().try_into().unwrap())?;
         for header in &self.headers {
             header.zcash_serialize(&mut writer)?;
-        }
-        if self.version > 0 {
-            writer.write_u32::<LittleEndian>(
-                self.temp_roster_edit_command_string
-                    .len()
-                    .try_into()
-                    .unwrap(),
-            )?;
-            for byte in &self.temp_roster_edit_command_string {
-                writer.write_u8(*byte)?;
-            }
         }
         Ok(())
     }
@@ -119,19 +106,6 @@ impl ZcashDeserialize for BftBlock {
         for i in 0..header_count {
             array.push(zebra_chain::block::Header::zcash_deserialize(&mut reader)?);
         }
-        let mut array2 = Vec::new();
-        if version > 0 {
-            let command_bytes_count = reader.read_u32::<LittleEndian>()?;
-            if command_bytes_count > 2048 {
-                // Fail on unreasonably large number.
-                return Err(SerializationError::Parse(
-                    "command_bytes_count was greater than 2048.",
-                ));
-            }
-            for i in 0..command_bytes_count {
-                array2.push(reader.read_u8()?);
-            }
-        }
 
         Ok(BftBlock {
             version,
@@ -139,7 +113,6 @@ impl ZcashDeserialize for BftBlock {
             previous_block_fat_ptr,
             finalization_candidate_height,
             headers: array,
-            temp_roster_edit_command_string: array2,
         })
     }
 }
@@ -174,7 +147,6 @@ impl BftBlock {
             previous_block_fat_ptr,
             finalization_candidate_height,
             headers,
-            temp_roster_edit_command_string: Vec::new(),
         })
     }
 

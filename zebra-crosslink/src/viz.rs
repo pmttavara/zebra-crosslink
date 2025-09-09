@@ -2598,7 +2598,6 @@ pub async fn viz_main(
                                     _ => Vec::new(),
                                 };
                             },
-                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         ctx.bft_last_added = ctx.push_node(
@@ -2846,7 +2845,6 @@ pub async fn viz_main(
                             previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
-                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
@@ -3238,10 +3236,6 @@ pub async fn viz_main(
                             }
                         }
                         VizHeader::BftBlock(bft_block) => {
-                            let cmd = String::from_utf8_lossy(
-                                &bft_block.block.temp_roster_edit_command_string,
-                            );
-                            ui.label(None, &format!("CMD: '{}'", cmd));
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {
                                 let pow_hdr = &bft_block.block.headers[i];
