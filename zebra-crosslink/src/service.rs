@@ -104,11 +104,7 @@ pub fn spawn_new_tfl_service(
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
         latest_final_block: None,
-        tfl_is_activated: if is_regtest {
-            true
-        } else {
-            false
-        },
+        tfl_is_activated: if is_regtest { true } else { false },
         stakers: Vec::new(),
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,

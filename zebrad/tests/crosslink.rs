@@ -2,11 +2,7 @@
 
 #![cfg(test)]
 
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader};
 use zebra_chain::parameters::Network;

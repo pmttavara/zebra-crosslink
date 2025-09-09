@@ -716,8 +716,8 @@ fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::b
             let (_, _, public_key) = rng_private_public_key_from_address(cmd);
             if roster
                 .iter()
-                    .position(|cmp| cmp.public_key == public_key)
-                    .is_none()
+                .position(|cmp| cmp.public_key == public_key)
+                .is_none()
             {
                 roster.push(MalValidator::new(public_key, 0));
             }
@@ -749,7 +749,6 @@ fn mutate_roster_by_cmd(roster: &mut Vec<MalValidator>, cmd_buf: &zebra_chain::b
         }
     }
 }
-
 
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
@@ -977,13 +976,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
                     if let Some(new_final_block) = &new_final_blocks[i] {
                         let cmd = &new_final_block.header.temp_command_buf;
-                        info!("mutating roster from PoW height {} with command: \"{}\"", new_final_height_hashes[i].0.0, cmd.to_str());
+                        info!(
+                            "mutating roster from PoW height {} with command: \"{}\"",
+                            new_final_height_hashes[i].0 .0,
+                            cmd.to_str()
+                        );
                         mutate_roster_by_cmd(&mut internal.validators_at_current_height, cmd);
                     } else {
-                        error!("failed to get known block at {:?}", new_final_height_hashes[i]);
+                        error!(
+                            "failed to get known block at {:?}",
+                            new_final_height_hashes[i]
+                        );
                         debug_assert!(false, "this shouldn't happen");
                     }
-
 
                     // We ignore the error because there will be one in the ordinary case
                     // where there are no receivers yet.
