@@ -67,6 +67,8 @@ pub enum TFLServiceRequest {
     FatPointerToBFTChainTip,
     /// Get the command buffer
     GetCommandBuf,
+    /// Set the command buffer
+    SetCommandBuf(CommandBuf),
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -94,6 +96,8 @@ pub enum TFLServiceResponse {
     FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
     /// Get command buf
     GetCommandBuf(CommandBuf),
+    /// Set command buf
+    SetCommandBuf,
 }
 
 /// Errors that can occur when interacting with the TFLService.

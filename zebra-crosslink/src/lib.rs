@@ -1258,6 +1258,14 @@ async fn tfl_service_incoming_request(
             ))
         }
 
+        TFLServiceRequest::SetCommandBuf(cmd) => {
+            let mut internal = internal_handle.internal.lock().await;
+            let cmd_str = cmd.to_str();
+            info!("Forced BFT command string: {:?}", cmd_str);
+            internal.proposed_bft_string = Some(cmd_str.to_string());
+            Ok(TFLServiceResponse::SetCommandBuf)
+        }
+
         _ => Err(TFLServiceError::NotImplemented),
     }
 }

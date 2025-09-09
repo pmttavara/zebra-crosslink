@@ -286,6 +286,10 @@ pub trait Rpc {
     #[method(name = "get_tfl_command_buf")]
     async fn get_tfl_command_buf(&self) -> Option<zebra_chain::block::CommandBuf>;
 
+    /// Get BFT command buffer
+    #[method(name = "set_tfl_command_buf")]
+    async fn set_tfl_command_buf(&self, string: String);
+
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
     /// something already. If the new `stake` is 0, the staker is removed.
@@ -1844,6 +1848,20 @@ where
             tracing::error!(?ret, "Bad tfl service return.");
             None
         }
+    }
+
+    async fn set_tfl_command_buf(&self, string: String) {
+        if let Ok(TFLServiceResponse::SetCommandBuf) = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::SetCommandBuf(CommandBuf::from_str(
+                &string,
+            )))
+            .await
+        {}
     }
 
     async fn update_tfl_staker(&self, staker: TFLStaker) {
