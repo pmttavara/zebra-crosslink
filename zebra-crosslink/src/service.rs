@@ -97,13 +97,18 @@ impl fmt::Debug for TFLServiceCalls {
 ///
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
+    is_regtest: bool,
     state_service_call: StateServiceProcedure,
     force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
         latest_final_block: None,
-        tfl_is_activated: false,
+        tfl_is_activated: if is_regtest {
+            true
+        } else {
+            false
+        },
         stakers: Vec::new(),
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,

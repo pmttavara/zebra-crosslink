@@ -641,21 +641,7 @@ async fn get_historical_bft_block_at_height(
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
 
-async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
-    let call = internal_handle.call.clone();
-    let config = internal_handle.config.clone();
-    let params = &PROTOTYPE_PARAMETERS;
-
-    #[cfg(feature = "viz_gui")]
-    {
-        let rt = tokio::runtime::Handle::current();
-        let viz_tfl_handle = internal_handle.clone();
-        tokio::task::spawn_blocking(move || {
-            rt.block_on(viz::service_viz_requests(viz_tfl_handle, params))
-        });
-    }
-
-    if *TEST_MODE.lock().unwrap() {
+pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
         // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
         std::panic::set_hook(Box::new(|panic_info| {
             #[allow(clippy::print_stderr)]
@@ -764,7 +750,26 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             }
         }));
 
-        tokio::task::spawn(test_format::instr_reader(internal_handle.clone()));
+    tokio::task::spawn(test_format::instr_reader(internal_handle));
+}
+
+
+async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
+    let call = internal_handle.call.clone();
+    let config = internal_handle.config.clone();
+    let params = &PROTOTYPE_PARAMETERS;
+
+    #[cfg(feature = "viz_gui")]
+    {
+        let rt = tokio::runtime::Handle::current();
+        let viz_tfl_handle = internal_handle.clone();
+        tokio::task::spawn_blocking(move || {
+            rt.block_on(viz::service_viz_requests(viz_tfl_handle, params))
+        });
+    }
+
+    if *TEST_MODE.lock().unwrap() {
+        run_tfl_test(internal_handle.clone());
     }
 
     let public_ip_string = config
@@ -916,6 +921,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             internal.malachite_watchdog = Instant::now() + start_delay;
         }
 
+        // Check TFL is activated before we do anything that assumes it
+        if !internal.tfl_is_activated {
+            if let Some((height, _hash)) = new_bc_tip {
+                if height < TFL_ACTIVATION_HEIGHT {
+                    continue;
+                } else {
+                    internal.tfl_is_activated = true;
+                    info!("activating TFL!");
+                }
+            }
+        }
+
+        // Handle all newly-finalized blocksw
         if new_bc_final != current_bc_final {
             // info!("final changed to {:?}", new_bc_final);
             if let Some(new_final_height_hash) = new_bc_final {
@@ -962,17 +980,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     // We ignore the error because there will be one in the ordinary case
                     // where there are no receivers yet.
                     let _ = internal.final_change_tx.send(new_final_block);
-                }
-            }
-        }
-
-        if !internal.tfl_is_activated {
-            if let Some((height, _hash)) = new_bc_tip {
-                if height < TFL_ACTIVATION_HEIGHT {
-                    continue;
-                } else {
-                    internal.tfl_is_activated = true;
-                    info!("activating TFL!");
                 }
             }
         }
