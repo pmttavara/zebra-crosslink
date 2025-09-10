@@ -129,6 +129,7 @@ pub(crate) struct TFLServiceInternal {
 
     malachite_watchdog: Instant,
 
+    // TODO: 2 versions of this: ever-added (in sequence) & currently non-0
     validators_at_current_height: Vec<MalValidator>,
 }
 
@@ -998,7 +999,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     tfl_dump_blocks(&new_final_height_hashes[..], &new_final_blocks[..]);
                 }
 
-                // walk all blocks in newly-finalized sequence & broadcast them
+                let pos_total_reward: u64 = 6000; // arbitrary scale
+
+                // walk all blocks in newly-finalized sequence; handle rewards & broadcast them
                 for i in 0..new_final_height_hashes.len() {
                     // skip repeated boundary blocks
                     let new_final_height_hash = &new_final_height_hashes[i];
@@ -1008,6 +1011,87 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         }
                     }
 
+                    // Divide the reward between finalizers. Any rounding errors are intended to be
+                    // accounted for here by giving those zats to the finalizer with the largest
+                    // stake. As a result, this should always *exactly* apportion the entire
+                    // reward.
+                    // TODO: is there a standardised way of doing this?
+                    {
+                        // NOTE: recalculating here means the *compounding* is per PoW block, as well
+                        // as the value.
+                        // It also means that finalizers added in the same PoS will get rewards for PoW
+                        // blocks they couldn't have actually voted on.
+
+                        let finalizers = &mut internal.validators_at_current_height;
+                        let mut total_voting_power = 0;
+                        let mut max_power_finalizer_i: Option<usize> = None;
+
+                        // determine total_voting_power & max_power_finalizer_i
+                        for finalizer_i in 0..finalizers.len() {
+                            let finalizer = &finalizers[finalizer_i];
+                            if finalizer.voting_power == 0 {
+                                continue;
+                            }
+
+                            if max_power_finalizer_i.is_none()
+                                || finalizers[max_power_finalizer_i.unwrap()].voting_power
+                                    < finalizer.voting_power
+                            {
+                                max_power_finalizer_i = Some(finalizer_i);
+                            }
+
+                            total_voting_power += finalizer.voting_power;
+                        }
+
+                        // Give share of block reward to all finalizers based on their stake
+                        // (except for max staker).
+                        // We make use of the fact that integer division always rounds down such
+                        // that sum_reward <= the infinite-precision sum.
+                        let mut sum_reward = 0_u64;
+                        for finalizer_i in 0..finalizers.len() {
+                            let finalizer = &mut finalizers[finalizer_i];
+                            if finalizer.voting_power == 0
+                                || finalizer_i
+                                    == max_power_finalizer_i.expect(
+                                        "there must be a max finalizer if at least 1 is non-0",
+                                    )
+                            {
+                                continue;
+                            }
+
+                            // NOTE: total_voting_power must be non-0 if we have any non-0 roster
+                            // members
+                            // TODO: most numerically stable version of this that won't overflow
+                            let mul: u128 =
+                                (finalizer.voting_power as u128) * (pos_total_reward as u128);
+                            let reward = (mul / (total_voting_power as u128)) as u64;
+                            sum_reward += reward;
+                            finalizer.voting_power += reward;
+                        }
+
+                        // Give remaining block reward (including any accumulated rounding errors)
+                        // to max staker
+                        if let Some(finalizer_i) = max_power_finalizer_i {
+                            let finalizer = &mut finalizers[finalizer_i];
+                            let mul: u128 =
+                                (finalizer.voting_power as u128) * (pos_total_reward as u128);
+                            let reward = (mul / (total_voting_power as u128)) as u64;
+                            let rem_reward = pos_total_reward - sum_reward;
+                            assert!(reward <= rem_reward,
+                                "should be at least the expected share remaining. Any discrepancy should be in this finalizer's favor.\n\
+                                expected reward: {}, remaining reward: {}",
+                                reward, rem_reward);
+
+                            if reward != rem_reward {
+                                info!("Max finalizer given rounding error: expected {}, got {}, bonus: {}",
+                                    reward, rem_reward, rem_reward - reward);
+                            }
+
+                            finalizer.voting_power += rem_reward;
+                        }
+                    }
+
+                    // Modify the stake for members
                     if let Some(new_final_block) = &new_final_blocks[i] {
                         if update_roster_for_block(
                             &mut internal.validators_at_current_height,
