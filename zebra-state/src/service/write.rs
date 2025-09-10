@@ -342,11 +342,6 @@ impl WriteBlockWorkerTask {
                     if let Some(newly_finalized_blocks) =
                         non_finalized_state.crosslink_finalize(hash)
                     {
-                        info!("finalized {}, which implicitly finalizes:", hash);
-                        for i in 0..newly_finalized_blocks.len() {
-                            info!("  {}: {}", i, newly_finalized_blocks[i].block.hash());
-                        }
-
                         update_latest_chain_channels(
                             &non_finalized_state,
                             chain_tip_sender,
@@ -354,7 +349,7 @@ impl WriteBlockWorkerTask {
                             &mut last_zebra_mined_log_height,
                         );
 
-                        // info!("finalized {}, which implicitly finalizes:", hash);
+                        info!("finalized {}, which implicitly finalizes:", hash);
                         for i in 0..newly_finalized_blocks.len() {
                             let finalizable_block = non_finalized_state.finalize();
                             match finalized_state.commit_finalized_direct(
