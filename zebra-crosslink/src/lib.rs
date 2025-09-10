@@ -762,7 +762,7 @@ fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> boo
                     is_cmd = true;
                     if let Some(roster_i) = roster_pos {
                         if roster[roster_i].voting_power < val {
-                            warn!("Roster command invalid: can't subtract more from the finalizer than their current value \"{}\"/{}: {} -_{}\nCMD: \"{}\"",
+                            warn!("Roster command invalid: can't subtract more from the finalizer than their current value \"{}\"/{}: {} - {}\nCMD: \"{}\"",
                                 &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), roster[roster_i].voting_power, val, cmd_str);
                             // TODO: roster[roster_i].voting_power = 0;
                         } else {
@@ -770,6 +770,23 @@ fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> boo
                         }
                     } else {
                         warn!("Roster command invalid: can't subtract from non-present finalizer \"{}\"/{}\nCMD: \"{}\"", &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), cmd_str);
+                    }
+                }
+
+                // "clear" to a given amount <= current voting power, probably 0
+                // This exists alongside SUB because it's awkward to predict in advance the exact
+                // voting power after block rewards have been accounted for.
+                [b'C', b'L', b'R'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't clear the finalizer to a higher current value \"{}\"/{}: {} => {}\nCMD: \"{}\"",
+                                &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), roster[roster_i].voting_power, val, cmd_str);
+                        } else {
+                            roster[roster_i].voting_power = val;
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't clear from non-present finalizer \"{}\"/{}\nCMD: \"{}\"", &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), cmd_str);
                     }
                 }
 
