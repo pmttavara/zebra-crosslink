@@ -707,54 +707,80 @@ pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
     tokio::task::spawn(test_format::instr_reader(internal_handle));
 }
 
-fn mutate_roster_by_cmd(
-    roster: &mut Vec<MalValidator>,
-    cmd_buf: &zebra_chain::block::CommandBuf,
-) -> bool {
+fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> bool {
     let mut is_cmd = false;
-    let cmd_str = cmd_buf.to_str();
+    let cmd_str = block.header.temp_command_buf.to_str();
     let cmd = cmd_str.as_bytes();
-    if cmd.len() >= 4 && cmd[3] == b'|' {
-        if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
-            is_cmd = true;
-            let cmd = &cmd[4..];
-            let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-            if roster
-                .iter()
-                .position(|cmp| cmp.public_key == public_key)
-                .is_none()
-            {
-                roster.push(MalValidator::new(public_key, 0));
-            }
+    if !(cmd.len() >= 4 && cmd[3] == b'|') {
+        warn!(
+            "Roster command invalid: expected initial instruction\nCMD: \"{}\"",
+            cmd_str
+        );
+    } else {
+        let mut val_end = 4;
+        while val_end < cmd.len() && cmd[val_end] != b'|' {
+            val_end += 1;
         }
-        if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
-            is_cmd = true;
-            let cmd = &cmd[4..];
-            let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-            roster.retain(|cmp| cmp.public_key != public_key);
-        }
-        if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
-            is_cmd = true;
-            let cmd = &cmd[4..];
-            let mut split_at = 0;
-            while split_at < cmd.len() && cmd[split_at] != b'|' {
-                split_at += 1;
-            }
-            if split_at < cmd.len() {
-                let num_str = &cmd[0..split_at];
-                let cmd = &cmd[split_at + 1..];
 
-                if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
-                    let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                    for cmp in roster {
-                        if cmp.public_key == public_key {
-                            cmp.voting_power = num;
-                        }
+        let val_str = &cmd_str[4..val_end];
+        let maybe_val = str::parse::<u64>(val_str.trim());
+        // TODO (if this were anything close to production code): move these to before accepting them
+        if val_end + 1 >= cmd.len() {
+            warn!(
+                "Roster command invalid: expected public address\nCMD: \"{}\"",
+                cmd_str
+            );
+        } else if let Err(err) = maybe_val {
+            warn!(
+                "Roster command invalid: expected u64, received \"{}\" ({})\nCMD: \"{}\"",
+                val_str, err, cmd_str
+            );
+        } else {
+            let addr_rng_bgn = val_end + 1;
+            info!(
+                "Roster: getting public address from {}",
+                &cmd_str[addr_rng_bgn..]
+            );
+
+            let val = maybe_val.expect("already checked above");
+            let (_, _, public_key) = rng_private_public_key_from_address(&cmd[addr_rng_bgn..]);
+
+            let roster_pos = roster.iter().position(|cmp| cmp.public_key == public_key);
+
+            match cmd[..3] {
+                [b'A', b'D', b'D'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos {
+                        roster[roster_i].voting_power += val;
+                    } else {
+                        roster.push(MalValidator::new(public_key, val));
                     }
                 }
+
+                [b'S', b'U', b'B'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't subtract more from the finalizer than their current value \"{}\"/{}: {} -_{}\nCMD: \"{}\"",
+                                &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), roster[roster_i].voting_power, val, cmd_str);
+                            // TODO: roster[roster_i].voting_power = 0;
+                        } else {
+                            roster[roster_i].voting_power -= val;
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't subtract from non-present finalizer \"{}\"/{}\nCMD: \"{}\"", &cmd_str[addr_rng_bgn..], MalPublicKey2(public_key), cmd_str);
+                    }
+                }
+
+                _ => warn!(
+                    "Roster command invalid: unrecognized instruction \"{}\"\nCMD: \"{}\"",
+                    &cmd_str[..3],
+                    cmd_str
+                ),
             }
         }
     }
+
     is_cmd
 }
 
@@ -983,12 +1009,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     }
 
                     if let Some(new_final_block) = &new_final_blocks[i] {
-                        let cmd = &new_final_block.header.temp_command_buf;
-                        if mutate_roster_by_cmd(&mut internal.validators_at_current_height, cmd) {
+                        if update_roster_for_block(
+                            &mut internal.validators_at_current_height,
+                            new_final_block,
+                        ) {
                             info!(
                                 "Applied command to roster from PoW height {}: \"{}\"",
                                 new_final_height_hashes[i].0 .0,
-                                cmd.to_str()
+                                new_final_block.header.temp_command_buf.to_str()
                             );
                         }
                     } else {
