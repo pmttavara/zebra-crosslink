@@ -2067,7 +2067,7 @@ pub async fn viz_main(
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
-    let mut edit_proposed_bft_string = "/ip4/127.0.0.1/udp/45869/quic-v1".to_string();
+    let mut edit_proposed_bft_string = "ADD|12345|/ip4/127.0.0.2/udp/45869/quic-v1".to_string();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
     let mut bft_pause_button = false;
     let mut tray_make_wider = false;
