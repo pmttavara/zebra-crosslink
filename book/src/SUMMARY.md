@@ -7,6 +7,7 @@
     - [SCOPING.md](crosslink/SCOPING.md)
     - [DELIVERABLES.md](crosslink/DELIVERABLES.md)
   - [Design](crosslink/design.md)
+    - [Architectural Decision Records](crosslink/adrs.md)
   - [Implementation](crosslink/implementation.md)
 - [User Documentation](user.md)
   - [System Requirements](user/requirements.md)
