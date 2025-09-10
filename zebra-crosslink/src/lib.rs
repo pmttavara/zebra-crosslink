@@ -424,12 +424,30 @@ async fn propose_new_bft_block(
 async fn malachite_wants_to_know_what_the_current_validator_set_is(
     tfl_handle: &TFLServiceHandle,
 ) -> Vec<MalValidator> {
-    tfl_handle
+    let finalizers = tfl_handle
         .internal
         .lock()
         .await
         .validators_at_current_height
-        .clone()
+        .clone();
+
+    if true {
+        let mut total_voting_power = 0;
+        let mut non_0_members = 0;
+        for finalizer_i in 0..finalizers.len() {
+            let finalizer = &finalizers[finalizer_i];
+            if finalizer.voting_power == 0 {
+                continue;
+            }
+
+            non_0_members += 1;
+            total_voting_power += finalizer.voting_power;
+        }
+
+        info!("Giving malachite roster with {} voting power between {} non-0 members", total_voting_power, non_0_members);
+    }
+
+    finalizers
 }
 
 async fn new_decided_bft_block_from_malachite(
