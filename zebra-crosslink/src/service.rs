@@ -133,6 +133,7 @@ pub fn spawn_new_tfl_service(
 
             array
         },
+        current_bc_final: None,
     }));
 
     let handle_mtx = Arc::new(std::sync::Mutex::new(None));
