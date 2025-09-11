@@ -81,6 +81,8 @@ impl ZcashSerialize for Header {
         self.solution.zcash_serialize(&mut writer)?;
         if 5 <= self.version {
             self.fat_pointer_to_bft_block.zcash_serialize(&mut writer)?;
+        }
+        if 6 <= self.version {
             writer.write_all(&self.temp_command_buf.data)?;
         }
         Ok(())
@@ -116,7 +118,7 @@ impl ZcashDeserialize for Header {
             },
             temp_command_buf: {
                 let mut buf = crate::block::CommandBuf::empty();
-                if 5 <= version {
+                if 6 <= version {
                     reader.read_exact(&mut buf.data)?
                 }
                 buf
