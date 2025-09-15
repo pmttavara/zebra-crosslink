@@ -222,7 +222,7 @@
         storepath-to-derivation =
           src:
           let
-            inherit (builtins) head match;
+            inherit (builtins) baseNameOf head match;
             inherit (lib.strings) isStorePath;
 
             srcName = if isStorePath src then head (match "^[^-]+-(.*)$" src) else baseNameOf src;
@@ -233,7 +233,7 @@
 
             name = "ln-to-${srcName}";
 
-            builder = pkgs.writeScript "script-to-${name}" ''
+            builder = pkgs.writeShellScript "script-to-${name}" ''
               outsrc="$out/src"
               mkdir -p "$outsrc"
               ln -sv "$src" "$outsrc/${srcName}"
