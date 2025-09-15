@@ -621,6 +621,13 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
+    // make sure tests completed
+    assert_eq!(
+        *TEST_INSTR_C.lock().unwrap(),
+        tf.instrs.len(),
+        "didn't complete test {}",
+        TEST_NAME.lock().unwrap()
+    );
     // make sure the test as a whole actually fails for failed instructions
     assert!(
         TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty(),
@@ -628,8 +635,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
         TEST_NAME.lock().unwrap()
     );
     println!("Test done, shutting down");
-    #[cfg(feature = "viz_gui")]
-    tokio::time::sleep(Duration::from_secs(120)).await;
+    // #[cfg(feature = "viz_gui")]
+    // tokio::time::sleep(Duration::from_secs(120)).await;
 
     TEST_SHUTDOWN_FN.lock().unwrap()();
 }
