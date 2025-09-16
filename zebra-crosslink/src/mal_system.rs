@@ -662,6 +662,95 @@ async fn malachite_system_main_loop(
 
                     reply.send(Some(value)).unwrap();
                 }
+                BFTAppMsg::RestreamProposal { height, round, valid_round, address, value_id } => {
+                    // Here it is important that, if we have previously built a value for this height and round,
+                    // we send back the very same value.
+                    if round.as_u32().is_none() {
+                        warn!("Asked to restream proposal but the round was not a u32.");
+                        break;
+                    }
+                    let maybe_prev_seen_block = at_this_height_previously_seen_proposals
+                        .get(round.as_u32().unwrap() as usize)
+                        .map(|x| x.as_ref().map(|x| x.as_ref().clone()))
+                        .flatten();
+
+                    if maybe_prev_seen_block.is_none() {
+                        warn!("Asked to restream proposal but could not find it.");
+                        break;
+                    }
+                    let proposal = maybe_prev_seen_block.unwrap();
+
+                    if proposal.height != height {
+                        warn!("Asked to restream proposal but the height did not match.");
+                        break;
+                    }
+                    if proposal.round != round {
+                        warn!("Asked to restream proposal but the round did not match.");
+                        break;
+                    }
+                    if proposal.valid_round != valid_round {
+                        warn!("Asked to restream proposal but the valid_round did not match.");
+                        break;
+                    }
+                    if proposal.proposer != address {
+                        warn!("Asked to restream proposal but the proposer address did not match.");
+                        break;
+                    }
+                    if proposal.value.id() != value_id {
+                        warn!("Asked to restream proposal but the value_id did not match.");
+                        break;
+                    }
+
+                    // Include metadata about the proposal
+                    let data_bytes = proposal.value.value_bytes;
+
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(proposal.height.as_u64().to_le_bytes().as_slice());
+                    hasher.update(proposal.round.as_i64().to_le_bytes().as_slice());
+                    hasher.update(&data_bytes);
+                    let hash: [u8; 32] = hasher.finalize().into();
+                    let signature = my_signing_provider.sign(&hash);
+
+                    let streamed_proposal = MalStreamedProposal {
+                        height: height,
+                        round: round,
+                        pol_round: valid_round,
+                        proposer: my_public_key, // @Zooko: security orange flag: should be hash of key instead; this should only be used for lookup
+                        data_bytes,
+                        signature,
+                    };
+
+                    let stream_id = {
+                        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                        bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                        bytes.extend_from_slice(&(round.as_u32().unwrap()).to_be_bytes());
+                        malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                    };
+
+                    let mut msgs = vec![
+                        malachitebft_app_channel::app::types::streaming::StreamMessage::new(
+                            stream_id.clone(),
+                            0,
+                            malachitebft_app_channel::app::streaming::StreamContent::Data(
+                                streamed_proposal,
+                            ),
+                        ),
+                        malachitebft_app_channel::app::types::streaming::StreamMessage::new(
+                            stream_id,
+                            1,
+                            malachitebft_app_channel::app::streaming::StreamContent::Fin,
+                        ),
+                    ];
+
+                    for stream_message in msgs {
+                        //info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                        channels
+                            .network
+                            .send(NetworkMsg::PublishProposalPart(stream_message))
+                            .await
+                            .unwrap();
+                    }
+                }
                 _ => panic!("AppMsg variant not handled: {:?}", app_msg),
             }
             break;
