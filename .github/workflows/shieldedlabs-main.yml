@@ -175,18 +175,18 @@ jobs:
             Built at: ${{ steps.notes.outputs.date }}
 
             Assets:
-            - zebra-crosslink-ubuntu
-            - zebra-crosslink-ubuntu.sha256
-            - zebra-crosslink-ubuntu-viz
-            - zebra-crosslink-ubuntu-viz.sha256
-            - zebra-crosslink-arch
-            - zebra-crosslink-arch.sha256
-            - zebra-crosslink-arch-viz
-            - zebra-crosslink-arch-viz.sha256
-            - zebra-crosslink-macos-arm64
-            - zebra-crosslink-macos-arm64.sha256
-            - zebra-crosslink-macos-arm64-viz
-            - zebra-crosslink-macos-arm64-viz.sha256
+            - zebra-crosslink (Ubuntu)
+            - zebra-crosslink (Ubuntu).sha256
+            - zebra-crosslink-viz (Ubuntu)
+            - zebra-crosslink-viz (Ubuntu).sha256
+            - zebra-crosslink (Arch)
+            - zebra-crosslink (Arch).sha256
+            - zebra-crosslink-viz (Arch)
+            - zebra-crosslink-viz (Arch).sha256
+            - zebra-crosslink (MacOS)
+            - zebra-crosslink (MacOS).sha256
+            - zebra-crosslink-viz (MacOS)
+            - zebra-crosslink-viz (MacOS).sha256
           files: ${{ steps.list_assets.outputs.files }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
