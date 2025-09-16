@@ -143,7 +143,7 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    if: false
+    if: github.event_name == 'push'
     needs: [ build-ubuntu, build-arch, build-macos ]
     steps:
       - name: Download all artifacts
@@ -154,9 +154,9 @@ jobs:
       - name: List assets
         id: list_assets
         run: |
-          find dist -type f -maxdepth 2 -print | sort
+          find dist -maxdepth 2 -type f -print | sort
           # Flatten into a glob list for the release step
-          files=$(find dist -type f -maxdepth 2 -print | tr '\n' ' ')
+          files=$(find dist -maxdepth 2 -type f -print | tr '\n' ' ')
           echo "files=$files" >> "$GITHUB_OUTPUT"
 
       - name: Build release notes
@@ -190,4 +190,3 @@ jobs:
           files: ${{ steps.list_assets.outputs.files }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
