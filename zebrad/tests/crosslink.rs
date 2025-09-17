@@ -552,6 +552,56 @@ fn crosslink_gen_blocks() {
     height.0 += 1;
     tf.push_instr_load_pow(&pow_1, 0);
 
+    history_tree
+        .push(&regtest, Arc::new(pow_1), &sapling_root, &orchard_root)
+        .unwrap();
+
+    let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
+        &regtest,
+        height,
+        &miner_address,
+        coinbase_miner_fee,
+    );
+    let coinbase_tx = if true {
+        zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
+    } else {
+        zebra_chain::transaction::Transaction::new_v5_coinbase(
+            &regtest,
+            height,
+            coinbase_outputs,
+            Vec::new(),
+        )
+    };
+    let default_roots =
+        zebra_rpc::methods::types::get_block_template::calculate_default_root_hashes(
+            &coinbase_tx.clone().into(),
+            &[],
+            [0; 32].into(),
+        );
+
+    time += Duration::from_secs(70);
+    let pow_1 = Block {
+        header: Arc::new(BlockHeader {
+            version: 6,
+            previous_block_hash,
+            merkle_root: default_roots.merkle_root(),
+            commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
+                history_tree.hash().unwrap(),
+            )),
+            time,
+            difficulty_threshold,
+            nonce: zebra_chain::fmt::HexDebug([0; 32]),
+            solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
+            fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+            temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+        }),
+
+        transactions: vec![coinbase_tx.into()],
+    };
+    previous_block_hash = pow_1.hash();
+    height.0 += 1;
+    tf.push_instr_load_pow(&pow_1, 0);
+
     test_bytes(tf.write_to_bytes());
 }
 
