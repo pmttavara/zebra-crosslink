@@ -113,6 +113,7 @@ enum BFTMsgFlag {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
+    my_public_key: MalPublicKey,
     latest_final_block: Option<(BlockHeight, BlockHash)>,
     tfl_is_activated: bool,
 
@@ -408,6 +409,11 @@ async fn propose_new_bft_block(
         return None;
     }
 
+    if internal.validators_at_current_height.iter().position(|v| v.address.0 == *my_public_key).is_none() {
+        warn!("I am not in the roster so I will abstain from proposing.");
+        return None;
+    }
+
     match BftBlock::try_from(
         params,
         internal.bft_blocks.len() as u32 + 1,
@@ -426,13 +432,16 @@ async fn propose_new_bft_block(
 async fn malachite_wants_to_know_what_the_current_validator_set_is(
     tfl_handle: &TFLServiceHandle,
 ) -> Vec<MalValidator> {
-    let finalizers = tfl_handle
+    let internal = tfl_handle
         .internal
         .lock()
-        .await
-        .validators_at_current_height
-        .clone();
+        .await;
 
+    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
+        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    }
+    let finalizers = return_validator_list_because_of_malachite_bug;
     if true {
         let mut total_voting_power = 0;
         let mut non_0_members = 0;
@@ -462,20 +471,28 @@ async fn new_decided_bft_block_from_malachite(
 
     let mut internal = tfl_handle.internal.lock().await;
 
+    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
+        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    }
+
     if fat_pointer.points_at_block_hash() != new_block.blake3_hash() {
-        warn!("Fat Pointer hash does not match block hash.");
-        return (false, internal.validators_at_current_height.clone());
+        warn!("Fat Pointer hash does not match block hash. fp: {} block: {}", fat_pointer.points_at_block_hash(), new_block.blake3_hash());
+        internal.malachite_watchdog = Instant::now()
+            .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
+            .unwrap();
+        return (false, return_validator_list_because_of_malachite_bug);
     }
     // TODO: check public keys on the fat pointer against the roster
     if fat_pointer.validate_signatures() == false {
         warn!("Signatures are not valid. Rejecting block.");
-        return (false, internal.validators_at_current_height.clone());
+        return (false, return_validator_list_because_of_malachite_bug);
     }
 
     if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
         == false
     {
-        return (false, internal.validators_at_current_height.clone());
+        return (false, return_validator_list_because_of_malachite_bug);
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -687,7 +704,12 @@ async fn new_decided_bft_block_from_malachite(
         internal.current_bc_final = new_bc_final;
     }
 
-    (true, internal.validators_at_current_height.clone())
+    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
+        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    }
+
+    (true, return_validator_list_because_of_malachite_bug)
 }
 
 async fn validate_bft_block_from_malachite(
@@ -1074,6 +1096,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     info!("public IP: {}", public_ip_string);
     let (mut rng, my_private_key, my_public_key) =
         rng_private_public_key_from_address(&public_ip_string.as_bytes());
+    internal_handle.internal.lock().await.my_public_key = my_public_key;
 
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
     let ctx = MalContext {};
@@ -1136,16 +1159,20 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let mut malachite_system = None;
     if !*TEST_MODE.lock().unwrap() {
+        let internal = internal_handle
+                    .internal
+                    .lock()
+                    .await;
+        let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
+        if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
+            return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+        }
+        drop(internal);
         malachite_system = Some(
             start_malachite_with_start_delay(
                 internal_handle.clone(),
                 1,
-                internal_handle
-                    .internal
-                    .lock()
-                    .await
-                    .validators_at_current_height
-                    .clone(),
+                return_validator_list_because_of_malachite_bug,
                 my_private_key,
                 bft_config.clone(),
                 Duration::from_secs(0),
@@ -1175,6 +1202,13 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         tokio::time::sleep_until(run_instant).await;
         run_instant += MAIN_LOOP_SLEEP_INTERVAL;
 
+        // We need this to allow the malachite system to restart itself internally.
+        if let Some(ms) = &mut malachite_system {
+            if ms.lock().await.should_terminate {
+                malachite_system = None;
+            }
+        }
+
         // from this point onwards we must race to completion in order to avoid stalling incoming requests
         // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
         #[allow(unused_mut)]
@@ -1183,11 +1217,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         if malachite_system.is_some() && internal.malachite_watchdog.elapsed().as_secs() > 120 {
             error!("Malachite Watchdog triggered, restarting subsystem...");
             let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);
+            let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
+            if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
+                return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+            }
             malachite_system = Some(
                 start_malachite_with_start_delay(
                     internal_handle.clone(),
                     internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
-                    internal.validators_at_current_height.clone(),
+                    return_validator_list_because_of_malachite_bug,
                     my_private_key,
                     bft_config.clone(),
                     start_delay,

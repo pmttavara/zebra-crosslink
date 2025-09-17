@@ -1211,10 +1211,6 @@ pub fn mal_decode_commit_certificate(
         .signatures
         .into_iter()
         .map(|sig| -> Result<CommitSignature<MalContext>, ProtoError> {
-            let signature = sig.signature.ok_or_else(|| {
-                ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("signature")
-            })?;
-            let signature = mal_decode_signature(signature)?.to_bytes();
             let address = MalPublicKey2(From::<[u8; 32]>::from(
                 sig.validator_address
                     .as_ref()
@@ -1222,10 +1218,14 @@ pub fn mal_decode_commit_certificate(
                     .try_into()
                     .or_else(|_| {
                         Err(ProtoError::missing_field::<
-                            malctx_schema_proto::PolkaCertificate,
+                            malctx_schema_proto::CommitCertificate,
                         >("validator_address"))
                     })?,
             ));
+            let signature = sig.signature.ok_or_else(|| {
+                ProtoError::missing_field::<malctx_schema_proto::CommitCertificate>("signature")
+            })?;
+            let signature = mal_decode_signature(signature)?.to_bytes();
             Ok(CommitSignature::new(address, signature))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1252,10 +1252,11 @@ pub fn mal_encode_commit_certificate(
             .iter()
             .map(
                 |sig| -> Result<malctx_schema_proto::CommitSignature, ProtoError> {
-                    let signature = mal_encode_signature(&Signature::from_bytes(&sig.signature));
                     Ok(malctx_schema_proto::CommitSignature {
                         validator_address: sig.address.0.as_ref().to_vec().into(),
-                        signature: Some(signature),
+                        signature: Some(mal_encode_signature(&Signature::from_bytes(
+                            &sig.signature,
+                        ))),
                     })
                 },
             )

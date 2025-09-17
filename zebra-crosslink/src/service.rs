@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use ed25519_zebra::VerificationKeyBytes;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
@@ -22,7 +23,7 @@ use zebra_state::{crosslink::*, Request as StateRequest, Response as StateRespon
 
 use crate::chain::BftBlock;
 use crate::mal_system::FatPointerToBftBlock2;
-use crate::malctx::MalValidator;
+use crate::malctx::{MalPublicKey2, MalValidator};
 use crate::{
     rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster,
     TFLServiceInternal,
@@ -103,6 +104,7 @@ pub fn spawn_new_tfl_service(
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
+        my_public_key: VerificationKeyBytes::from([0u8;32]),
         latest_final_block: None,
         tfl_is_activated: if is_regtest { true } else { false },
         stakers: Vec::new(),

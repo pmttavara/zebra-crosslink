@@ -311,6 +311,14 @@ async fn malachite_system_main_loop(
                             propose_new_bft_block(&tfl_handle, &my_public_key, lock.height).await
                         {
                             info!("Proposing block with hash: {}", block.blake3_hash());
+
+                            #[cfg(debug_assertions)]
+                            {
+                                let bytes = block.zcash_serialize_to_vec().unwrap();
+                                let block2 = BftBlock::zcash_deserialize(bytes.as_slice()).unwrap();
+                                assert_eq!(block.blake3_hash(), block2.blake3_hash());
+                            }
+
                             let other_type: MalLocallyProposedValue<MalContext> =
                                 MalLocallyProposedValue {
                                     height: height,
@@ -505,7 +513,9 @@ async fn malachite_system_main_loop(
                         "Consensus has decided on value"
                     );
                     assert_eq!(lock.height, certificate.height.as_u64());
-                    assert_eq!(lock.round as i64, certificate.round.as_i64());
+                    // assert_eq!(lock.round as i64, certificate.round.as_i64()); // ASSUMPTION INVALIDATED BY UPDATED LIBRARY
+                    assert!(lock.round as i64 >= certificate.round.as_i64());
+                    let cert_round = certificate.round.as_u32().unwrap();
                     bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
                     let fat_pointer = FatPointerToBftBlock2::from(&certificate);
@@ -514,7 +524,7 @@ async fn malachite_system_main_loop(
                     assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
 
                     let decided_value = at_this_height_previously_seen_proposals
-                        [lock.round as usize]
+                        [cert_round as usize]
                         .take()
                         .unwrap();
                     assert_eq!(decided_value.value.id(), certificate.value_id);
@@ -715,7 +725,7 @@ async fn malachite_system_main_loop(
                         height: height,
                         round: round,
                         pol_round: valid_round,
-                        proposer: my_public_key, // @Zooko: security orange flag: should be hash of key instead; this should only be used for lookup
+                        proposer: address.0, // @Zooko: security orange flag: should be hash of key instead; this should only be used for lookup
                         data_bytes,
                         signature,
                     };
