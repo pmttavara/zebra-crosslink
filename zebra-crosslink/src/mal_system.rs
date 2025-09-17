@@ -672,7 +672,13 @@ async fn malachite_system_main_loop(
 
                     reply.send(Some(value)).unwrap();
                 }
-                BFTAppMsg::RestreamProposal { height, round, valid_round, address, value_id } => {
+                BFTAppMsg::RestreamProposal {
+                    height,
+                    round,
+                    valid_round,
+                    address,
+                    value_id,
+                } => {
                     // Here it is important that, if we have previously built a value for this height and round,
                     // we send back the very same value.
                     if round.as_u32().is_none() {

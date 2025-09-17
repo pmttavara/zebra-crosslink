@@ -530,21 +530,24 @@ fn crosslink_gen_blocks() {
         );
 
     time += Duration::from_secs(70);
-    let mut pow_1 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
-    pow_1.header = Arc::new(BlockHeader {
-        version: 6,
-        previous_block_hash,
-        fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-        merkle_root: default_roots.merkle_root(),
-        time,
-        difficulty_threshold,
-        commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
-            history_tree.hash().unwrap(),
-        )),
-        ..*pow_1.header
-    });
-    pow_1.transactions[0] = coinbase_tx.into();
+    let pow_1 = Block {
+        header: Arc::new(BlockHeader {
+            version: 6,
+            previous_block_hash,
+            merkle_root: default_roots.merkle_root(),
+            commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
+                history_tree.hash().unwrap(),
+            )),
+            time,
+            difficulty_threshold,
+            nonce: zebra_chain::fmt::HexDebug([0; 32]),
+            solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
+            fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+            temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+        }),
+
+        transactions: vec![coinbase_tx.into()],
+    };
     previous_block_hash = pow_1.hash();
     height.0 += 1;
     tf.push_instr_load_pow(&pow_1, 0);
