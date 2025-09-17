@@ -52,6 +52,43 @@ pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 pub static TEST_NAME: Mutex<&'static str> = Mutex::new("‰‰TEST_NAME_NOT_SET‰‰");
 
+pub fn dump_test_instrs() {
+    #![allow(clippy::print_stderr)]
+
+    let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+    let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+    if failed_instr_idxs.is_empty() {
+        eprintln!(
+            "no failed instructions recorded. We should have at least 1 failed instruction here"
+        );
+    }
+
+    let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+
+    let mut failed_instr_idx_i = 0;
+    let instrs_lock = TEST_INSTRS.lock().unwrap();
+    let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
+    let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
+    let bytes = bytes_lock.as_ref();
+    for instr_i in 0..instrs.len() {
+        let col = if failed_instr_idx_i < failed_instr_idxs.len()
+            && instr_i == failed_instr_idxs[failed_instr_idx_i]
+        {
+            failed_instr_idx_i += 1;
+            "\x1b[91m F  " // red
+        } else if instr_i < done_instr_c {
+            "\x1b[92m P  " // green
+        } else {
+            "\x1b[37m    " // grey
+        };
+        eprintln!(
+            "  {}{}\x1b[0;0m",
+            col,
+            &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
+        );
+    }
+}
+
 pub mod service;
 /// Configuration for the state service.
 pub mod config {
@@ -455,7 +492,10 @@ async fn malachite_wants_to_know_what_the_current_validator_set_is(
             total_voting_power += finalizer.voting_power;
         }
 
-        info!("Giving malachite roster with {} voting power between {} non-0 members", total_voting_power, non_0_members);
+        info!(
+            "Giving malachite roster with {} voting power between {} non-0 members",
+            total_voting_power, non_0_members
+        );
     }
 
     finalizers
@@ -637,9 +677,8 @@ async fn new_decided_bft_block_from_malachite(
                         let finalizer = &mut finalizers[finalizer_i];
                         if finalizer.voting_power == 0
                             || finalizer_i
-                                == max_power_finalizer_i.expect(
-                                    "there must be a max finalizer if at least 1 is non-0",
-                                )
+                                == max_power_finalizer_i
+                                    .expect("there must be a max finalizer if at least 1 is non-0")
                         {
                             continue;
                         }
@@ -867,36 +906,7 @@ pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
             }
 
             eprintln!("\n\nInstruction sequence:");
-            let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
-            let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
-            if failed_instr_idxs.is_empty() {
-                eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
-            }
-
-            let done_instr_c = *TEST_INSTR_C.lock().unwrap();
-
-            let mut failed_instr_idx_i = 0;
-            let instrs_lock = TEST_INSTRS.lock().unwrap();
-            let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
-            let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
-            let bytes = bytes_lock.as_ref();
-            for instr_i in 0..instrs.len() {
-                let col = if failed_instr_idx_i < failed_instr_idxs.len()
-                    && instr_i == failed_instr_idxs[failed_instr_idx_i]
-                {
-                    failed_instr_idx_i += 1;
-                    "\x1b[91m F  " // red
-                } else if instr_i < done_instr_c {
-                    "\x1b[92m P  " // green
-                } else {
-                    "\x1b[37m    " // grey
-                };
-                eprintln!(
-                    "  {}{}\x1b[0;0m",
-                    col,
-                    &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
-                );
-            }
+            dump_test_instrs();
 
             #[cfg(not(feature = "viz_gui"))]
             std::process::abort();

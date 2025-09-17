@@ -4,7 +4,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use zebra_chain::block::{Block, Hash as BlockHash, Header as BlockHeader};
+use zebra_chain::block::{Block, FatPointerToBftBlock, Hash as BlockHash, Header as BlockHeader};
 use zebra_chain::parameters::Network;
 use zebra_chain::serialization::*;
 use zebra_crosslink::chain::*;
@@ -49,6 +49,7 @@ pub fn test_start() {
         };
         *zebra_crosslink::TEST_MODE.lock().unwrap() = true;
         *zebra_crosslink::TEST_SHUTDOWN_FN.lock().unwrap() = || {
+            zebra_crosslink::dump_test_instrs();
             // APPLICATION.shutdown(abscissa_core::Shutdown::Graceful);
             std::process::exit(*zebra_crosslink::TEST_FAILED.lock().unwrap());
         }
@@ -465,6 +466,90 @@ fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists(
     test_path(PathBuf::from(
         "../crosslink-test-data/wrong_branch_test2_long_short_pos.zeccltf",
     ));
+}
+
+#[test]
+fn crosslink_gen_blocks() {
+    set_test_name(function_name!());
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+    use zebra_chain::{orchard, sapling};
+
+    let regtest = zebra_chain::parameters::Network::new_regtest(Default::default());
+    let mut history_tree = zebra_chain::history_tree::HistoryTree::default();
+    let miner_address =
+        zcash_keys::address::Address::decode(&regtest, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
+            .unwrap();
+    let coinbase_miner_fee = zebra_chain::amount::Amount::new(0);
+    // NOTE: these need updating if we include shielded transactions
+    let sapling_root = sapling::tree::NoteCommitmentTree::default().root();
+    let orchard_root = orchard::tree::NoteCommitmentTree::default().root();
+    let difficulty_threshold =
+        zebra_chain::work::difficulty::CompactDifficulty::from_bytes_in_display_order(&[
+            0x20, 0x0f, 0x0f, 0x0f,
+        ])
+        .unwrap();
+
+    let mut pow_0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
+    pow_0.header = Arc::new(BlockHeader {
+        version: 5,
+        fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+        ..*pow_0.header
+    });
+    let mut previous_block_hash = pow_0.hash();
+    let mut time = pow_0.header.time;
+
+    tf.push_instr_load_pow(&pow_0, 0);
+    history_tree
+        .push(&regtest, Arc::new(pow_0), &sapling_root, &orchard_root)
+        .unwrap();
+
+    let mut height = zebra_chain::block::Height(2);
+
+    let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
+        &regtest,
+        height,
+        &miner_address,
+        coinbase_miner_fee,
+    );
+    let coinbase_tx = if true {
+        zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
+    } else {
+        zebra_chain::transaction::Transaction::new_v5_coinbase(
+            &regtest,
+            height,
+            coinbase_outputs,
+            Vec::new(),
+        )
+    };
+    let default_roots =
+        zebra_rpc::methods::types::get_block_template::calculate_default_root_hashes(
+            &coinbase_tx.clone().into(),
+            &[],
+            [0; 32].into(),
+        );
+
+    time += Duration::from_secs(70);
+    let mut pow_1 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
+    pow_1.header = Arc::new(BlockHeader {
+        version: 6,
+        previous_block_hash,
+        fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+        merkle_root: default_roots.merkle_root(),
+        time,
+        difficulty_threshold,
+        commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
+            history_tree.hash().unwrap(),
+        )),
+        ..*pow_1.header
+    });
+    pow_1.transactions[0] = coinbase_tx.into();
+    previous_block_hash = pow_1.hash();
+    height.0 += 1;
+    tf.push_instr_load_pow(&pow_1, 0);
+
+    test_bytes(tf.write_to_bytes());
 }
 
 // TODO:
