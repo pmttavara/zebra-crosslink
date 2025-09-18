@@ -469,6 +469,7 @@ fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists(
 }
 
 // NOTE: this is very similar to the RPC get_block_template code
+#[derive(Clone, Debug)]
 struct BlockGen {
 
     network: zebra_chain::parameters::Network,
@@ -482,13 +483,13 @@ struct BlockGen {
 }
 
 impl BlockGen {
-    pub fn init_regtest_from_genesis(genesis: Arc<zebra_chain::block::Block>) -> Self {
+    pub fn init_regtest_at_tip(tip: Arc<zebra_chain::block::Block>) -> Self {
         BlockGen {
             network: zebra_chain::parameters::Network::new_regtest(Default::default()),
             sapling_root: zebra_chain::sapling::tree::NoteCommitmentTree::default().root(),
             orchard_root: zebra_chain::orchard::tree::NoteCommitmentTree::default().root(),
             history_tree: zebra_chain::history_tree::HistoryTree::default(),
-            tip: genesis,
+            tip,
         }
     }
 
@@ -557,27 +558,53 @@ fn crosslink_gen_blocks() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    let mut pow_0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
-    pow_0.header = Arc::new(BlockHeader {
+    let mut pow0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
+    pow0.header = Arc::new(BlockHeader {
         version: 5,
         fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
         temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-        ..*pow_0.header
+        ..*pow0.header
     });
-    tf.push_instr_load_pow(&pow_0, 0);
+    tf.push_instr_load_pow(&pow0, 0);
 
     // chrono::DateTime<Utc>::from_timestamp(1758127904, 0)
     //
-    let mut gen = BlockGen::init_regtest_from_genesis(Arc::new(pow_0));
+    let mut gen = BlockGen::init_regtest_at_tip(Arc::new(pow0));
     let miner_address =
         zcash_keys::address::Address::decode(&gen.network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
             .unwrap();
+    let miner_address2 = zcash_keys::address::Address::Tex([1;20]);
+    println!("miner_address2: {}", miner_address2.encode(&gen.network));
 
-    let pow_1 = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow_1, 0);
+    let pow1 = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow1, 0);
 
-    let pow_2 = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow_2, 0);
+    let pow2 = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow2, 0);
+    let mut genb = gen.clone();
+
+    let pow3a = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow3a, 0);
+
+    let pow4a = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow4a, 0);
+
+    let pow5a = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow5a, 0);
+
+
+    let pow3b = genb.next_block(&miner_address2);
+    tf.push_instr_load_pow(&pow3b, 0);
+
+    let pow4b = genb.next_block(&miner_address2);
+    tf.push_instr_load_pow(&pow4b, 0);
+
+    let pow5b = genb.next_block(&miner_address2);
+    tf.push_instr_load_pow(&pow5b, 0);
+
+    let pow6b = genb.next_block(&miner_address2);
+    tf.push_instr_load_pow(&pow6b, 0);
+
 
 
     // Result:
