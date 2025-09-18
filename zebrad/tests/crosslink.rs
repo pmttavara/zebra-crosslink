@@ -517,6 +517,7 @@ impl BlockGen {
         let history_tree = HistoryTree::default();
         let time = chrono::DateTime::<Utc>::from_timestamp(1758127904, 0).expect("valid time");
 
+        // NOTE: the first block after genesis appears to need this specific difficulty
         let difficulty_threshold =
             CompactDifficulty::from_bytes_in_display_order(&[
                 0x20, 0x0c, 0xa6, 0x3f,
@@ -600,54 +601,25 @@ fn crosslink_gen_blocks() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    // let mut pow0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
-    // pow0.header = Arc::new(BlockHeader {
-    //     version: 5,
-    //     fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-    //     temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-    //     ..*pow0.header
-    // });
-    // panic!("pow0: {:?}", pow0.header);
-
     let network = Network::new_regtest(Default::default());
     let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
     let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
     tf.push_instr_load_pow(&gen.tip, 0);
 
-    // let mut gen = BlockGen::init_regtest_at_tip(Arc::new(pow0));
-    let miner_address2 = zcash_keys::address::Address::Tex([1;20]);
-    // println!("miner_address2: {}", miner_address2.encode(&gen.network));
-
-    let pow2 = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow2, 0);
-
-    let pow3 = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow3, 0);
+    for _ in 2..4 {
+        tf.push_instr_load_pow(&gen.next_block(&miner_address), 0);
+    }
     let mut genb = gen.clone();
 
-    let pow4a = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow4a, 0);
-
-    let pow5a = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow5a, 0);
-
-    let pow6a = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow6a, 0);
-
+    for _ in 4..7 {
+        tf.push_instr_load_pow(&gen.next_block(&miner_address), 0);
+    }
     tf.push_instr_expect_pow_chain_length(7, 0);
 
-    let pow4b = genb.next_block(&miner_address2);
-    tf.push_instr_load_pow(&pow4b, 0);
-
-    let pow5b = genb.next_block(&miner_address2);
-    tf.push_instr_load_pow(&pow5b, 0);
-
-    let pow6b = genb.next_block(&miner_address2);
-    tf.push_instr_load_pow(&pow6b, 0);
-
-    let pow7b = genb.next_block(&miner_address2);
-    tf.push_instr_load_pow(&pow7b, 0);
-
+    let miner_address2 = zcash_keys::address::Address::Tex([1;20]);
+    for _ in 4..8 {
+        tf.push_instr_load_pow(&genb.next_block(&miner_address2), 0);
+    }
     tf.push_instr_expect_pow_chain_length(8, 0);
 
 
