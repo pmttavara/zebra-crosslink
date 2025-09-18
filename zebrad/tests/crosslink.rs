@@ -468,26 +468,94 @@ fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists(
     ));
 }
 
+// NOTE: this is very similar to the RPC get_block_template code
+struct BlockGen {
+
+    network: zebra_chain::parameters::Network,
+    // NOTE: these roots need updating if we include shielded transactions
+    sapling_root: zebra_chain::sapling::tree::Root,
+    orchard_root: zebra_chain::orchard::tree::Root,
+
+    history_tree: zebra_chain::history_tree::HistoryTree,
+
+    tip: Arc<zebra_chain::block::Block>,
+}
+
+impl BlockGen {
+    pub fn init_regtest_from_genesis(genesis: Arc<zebra_chain::block::Block>) -> Self {
+        BlockGen {
+            network: zebra_chain::parameters::Network::new_regtest(Default::default()),
+            sapling_root: zebra_chain::sapling::tree::NoteCommitmentTree::default().root(),
+            orchard_root: zebra_chain::orchard::tree::NoteCommitmentTree::default().root(),
+            history_tree: zebra_chain::history_tree::HistoryTree::default(),
+            tip: genesis,
+        }
+    }
+
+    pub fn next_block(&mut self, miner_address: &zcash_keys::address::Address) -> Arc<zebra_chain::block::Block> {
+        self.history_tree
+            .push(&self.network, self.tip.clone(), &self.sapling_root, &self.orchard_root)
+            .unwrap();
+
+        let height = zebra_chain::block::Height(self.tip.coinbase_height().unwrap().0 + 1);
+        let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
+            &self.network,
+            height,
+            miner_address,
+            zebra_chain::amount::Amount::new(0), // TODO: update if we want to sim transactions
+        );
+
+        let coinbase_tx = if true {
+            zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
+        } else {
+            zebra_chain::transaction::Transaction::new_v5_coinbase(
+                &self.network,
+                height,
+                coinbase_outputs,
+                Vec::new(),
+            )
+        };
+        let default_roots =
+            zebra_rpc::methods::types::get_block_template::calculate_default_root_hashes(
+                &coinbase_tx.clone().into(),
+                &[],
+                [0; 32].into(),
+            );
+
+        let difficulty_threshold =
+            zebra_chain::work::difficulty::CompactDifficulty::from_bytes_in_display_order(&[
+                0x20, 0x0f, 0x0f, 0x0f,
+            ])
+            .unwrap();
+
+        self.tip = Arc::new(Block {
+            header: Arc::new(BlockHeader {
+                version: 6,
+                previous_block_hash: self.tip.header.hash(),
+                merkle_root: default_roots.merkle_root(),
+                commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
+                        self.history_tree.hash().unwrap(),
+                )),
+                time: self.tip.header.time + Duration::from_secs(70),
+                difficulty_threshold,
+                nonce: zebra_chain::fmt::HexDebug([0; 32]),
+                solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
+                fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+                temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+            }),
+
+            transactions: vec![coinbase_tx.into()],
+        });
+
+        self.tip.clone()
+    }
+
+}
+
 #[test]
 fn crosslink_gen_blocks() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
-    use zebra_chain::{orchard, sapling};
-
-    let regtest = zebra_chain::parameters::Network::new_regtest(Default::default());
-    let mut history_tree = zebra_chain::history_tree::HistoryTree::default();
-    let miner_address =
-        zcash_keys::address::Address::decode(&regtest, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
-            .unwrap();
-    let coinbase_miner_fee = zebra_chain::amount::Amount::new(0);
-    // NOTE: these need updating if we include shielded transactions
-    let sapling_root = sapling::tree::NoteCommitmentTree::default().root();
-    let orchard_root = orchard::tree::NoteCommitmentTree::default().root();
-    let difficulty_threshold =
-        zebra_chain::work::difficulty::CompactDifficulty::from_bytes_in_display_order(&[
-            0x20, 0x0f, 0x0f, 0x0f,
-        ])
-        .unwrap();
 
     let mut pow_0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
     pow_0.header = Arc::new(BlockHeader {
@@ -496,112 +564,26 @@ fn crosslink_gen_blocks() {
         temp_command_buf: zebra_chain::block::CommandBuf::empty(),
         ..*pow_0.header
     });
-    let mut previous_block_hash = pow_0.hash();
-    let mut time = pow_0.header.time;
-
     tf.push_instr_load_pow(&pow_0, 0);
-    history_tree
-        .push(&regtest, Arc::new(pow_0), &sapling_root, &orchard_root)
-        .unwrap();
 
-    let mut height = zebra_chain::block::Height(2);
+    // chrono::DateTime<Utc>::from_timestamp(1758127904, 0)
+    //
+    let mut gen = BlockGen::init_regtest_from_genesis(Arc::new(pow_0));
+    let miner_address =
+        zcash_keys::address::Address::decode(&gen.network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
+            .unwrap();
 
-    let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
-        &regtest,
-        height,
-        &miner_address,
-        coinbase_miner_fee,
-    );
-    let coinbase_tx = if true {
-        zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
-    } else {
-        zebra_chain::transaction::Transaction::new_v5_coinbase(
-            &regtest,
-            height,
-            coinbase_outputs,
-            Vec::new(),
-        )
-    };
-    let default_roots =
-        zebra_rpc::methods::types::get_block_template::calculate_default_root_hashes(
-            &coinbase_tx.clone().into(),
-            &[],
-            [0; 32].into(),
-        );
-
-    time += Duration::from_secs(70);
-    let pow_1 = Block {
-        header: Arc::new(BlockHeader {
-            version: 6,
-            previous_block_hash,
-            merkle_root: default_roots.merkle_root(),
-            commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
-                history_tree.hash().unwrap(),
-            )),
-            time,
-            difficulty_threshold,
-            nonce: zebra_chain::fmt::HexDebug([0; 32]),
-            solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
-            fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-            temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-        }),
-
-        transactions: vec![coinbase_tx.into()],
-    };
-    previous_block_hash = pow_1.hash();
-    height.0 += 1;
+    let pow_1 = gen.next_block(&miner_address);
     tf.push_instr_load_pow(&pow_1, 0);
 
-    history_tree
-        .push(&regtest, Arc::new(pow_1), &sapling_root, &orchard_root)
-        .unwrap();
+    let pow_2 = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow_2, 0);
 
-    let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
-        &regtest,
-        height,
-        &miner_address,
-        coinbase_miner_fee,
-    );
-    let coinbase_tx = if true {
-        zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
-    } else {
-        zebra_chain::transaction::Transaction::new_v5_coinbase(
-            &regtest,
-            height,
-            coinbase_outputs,
-            Vec::new(),
-        )
-    };
-    let default_roots =
-        zebra_rpc::methods::types::get_block_template::calculate_default_root_hashes(
-            &coinbase_tx.clone().into(),
-            &[],
-            [0; 32].into(),
-        );
 
-    time += Duration::from_secs(70);
-    let pow_1 = Block {
-        header: Arc::new(BlockHeader {
-            version: 6,
-            previous_block_hash,
-            merkle_root: default_roots.merkle_root(),
-            commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
-                history_tree.hash().unwrap(),
-            )),
-            time,
-            difficulty_threshold,
-            nonce: zebra_chain::fmt::HexDebug([0; 32]),
-            solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
-            fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-            temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-        }),
-
-        transactions: vec![coinbase_tx.into()],
-    };
-    previous_block_hash = pow_1.hash();
-    height.0 += 1;
-    tf.push_instr_load_pow(&pow_1, 0);
-
+    // Result:
+    // P  LOAD_POW (1 - e224ce196f0e0cf00e201e0b91353531b97f7460d6a8fd54fea25ec8e8fe022a, parent: 029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327)
+    // P  LOAD_POW (2 - 633835e5ac5865d1d4239bbc91bdd098420fc3808a857b830824bc1445c8f1d1, parent: e224ce196f0e0cf00e201e0b91353531b97f7460d6a8fd54fea25ec8e8fe022a)
+    // P  LOAD_POW (3 - 37057e6a7f2654d251c33a1eb0ccc4f063d96c945dc2dd5f0113f22ea6c7b147, parent: 633835e5ac5865d1d4239bbc91bdd098420fc3808a857b830824bc1445c8f1d1)
     test_bytes(tf.write_to_bytes());
 }
 
