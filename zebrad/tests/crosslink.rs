@@ -3,12 +3,27 @@
 #![cfg(test)]
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
+use chrono::{DateTime, Utc};
 
-use zebra_chain::block::{Block, FatPointerToBftBlock, Hash as BlockHash, Header as BlockHeader};
-use zebra_chain::parameters::Network;
-use zebra_chain::serialization::*;
+use zebra_chain::{
+    block::{
+        Block,
+        FatPointerToBftBlock,
+        Hash as BlockHash,
+        Header as BlockHeader,
+        Height as BlockHeight,
+    },
+    fmt::HexDebug,
+    history_tree::HistoryTree,
+    orchard,
+    parameters::Network,
+    sapling,
+    serialization::*,
+    work::{self, difficulty::CompactDifficulty},
+};
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
+use zcash_keys::address::Address;
 use zebra_state::crosslink::*;
 use zebrad::application::CROSSLINK_TEST_CONFIG_OVERRIDE;
 use zebrad::config::ZebradConfig;
@@ -472,35 +487,55 @@ fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists(
 #[derive(Clone, Debug)]
 struct BlockGen {
 
-    network: zebra_chain::parameters::Network,
+    network: Network,
     // NOTE: these roots need updating if we include shielded transactions
-    sapling_root: zebra_chain::sapling::tree::Root,
-    orchard_root: zebra_chain::orchard::tree::Root,
+    sapling_root: sapling::tree::Root,
+    orchard_root: orchard::tree::Root,
 
-    history_tree: zebra_chain::history_tree::HistoryTree,
+    history_tree: HistoryTree,
 
-    tip: Arc<zebra_chain::block::Block>,
+    tip: Arc<Block>,
 }
 
 impl BlockGen {
-    pub fn init_regtest_at_tip(tip: Arc<zebra_chain::block::Block>) -> Self {
+    const REGTEST_GENESIS_HASH: BlockHash = BlockHash([
+        0x27, 0xe3, 0x01, 0x34, 0xd6, 0x20, 0xe9, 0xfe, 0x61, 0xf7, 0x19, 0x93, 0x83, 0x20, 0xba, 0xb6,
+        0x3e, 0x7e, 0x72, 0xc9, 0x1b, 0x5e, 0x23, 0x02, 0x56, 0x76, 0xf9, 0x0e, 0xd8, 0x11, 0x9f, 0x02,
+    ]);
+
+    pub fn init_regtest_at_tip(tip: Arc<Block>) -> Self {
         BlockGen {
-            network: zebra_chain::parameters::Network::new_regtest(Default::default()),
-            sapling_root: zebra_chain::sapling::tree::NoteCommitmentTree::default().root(),
-            orchard_root: zebra_chain::orchard::tree::NoteCommitmentTree::default().root(),
-            history_tree: zebra_chain::history_tree::HistoryTree::default(),
+            network: Network::new_regtest(Default::default()),
+            sapling_root: sapling::tree::NoteCommitmentTree::default().root(),
+            orchard_root: orchard::tree::NoteCommitmentTree::default().root(),
+            history_tree: HistoryTree::default(),
             tip,
         }
     }
 
-    pub fn next_block(&mut self, miner_address: &zcash_keys::address::Address) -> Arc<zebra_chain::block::Block> {
-        self.history_tree
-            .push(&self.network, self.tip.clone(), &self.sapling_root, &self.orchard_root)
+    pub fn init_at_genesis_plus_1(network: Network, genesis_hash: BlockHash, miner_address: &Address) -> Self {
+        let history_tree = HistoryTree::default();
+        let time = chrono::DateTime::<Utc>::from_timestamp(1758127904, 0).expect("valid time");
+
+        let difficulty_threshold =
+            CompactDifficulty::from_bytes_in_display_order(&[
+                0x20, 0x0c, 0xa6, 0x3f,
+            ])
             .unwrap();
 
-        let height = zebra_chain::block::Height(self.tip.coinbase_height().unwrap().0 + 1);
+        let tip = BlockGen::create_block(&network, miner_address, BlockHeight(1), genesis_hash, time, &history_tree, difficulty_threshold);
+        BlockGen {
+            network,
+            history_tree,
+            sapling_root: sapling::tree::NoteCommitmentTree::default().root(),
+            orchard_root: orchard::tree::NoteCommitmentTree::default().root(),
+            tip
+        }
+    }
+
+    pub fn create_block(network: &Network, miner_address: &Address, height: BlockHeight, previous_block_hash: BlockHash, time: DateTime<Utc>, history_tree: &HistoryTree, difficulty_threshold: CompactDifficulty) -> Arc<zebra_chain::block::Block> {
         let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
-            &self.network,
+            network,
             height,
             miner_address,
             zebra_chain::amount::Amount::new(0), // TODO: update if we want to sim transactions
@@ -510,7 +545,7 @@ impl BlockGen {
             zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
         } else {
             zebra_chain::transaction::Transaction::new_v5_coinbase(
-                &self.network,
+                network,
                 height,
                 coinbase_outputs,
                 Vec::new(),
@@ -523,34 +558,41 @@ impl BlockGen {
                 [0; 32].into(),
             );
 
-        let difficulty_threshold =
-            zebra_chain::work::difficulty::CompactDifficulty::from_bytes_in_display_order(&[
-                0x20, 0x0f, 0x0f, 0x0f,
-            ])
-            .unwrap();
 
-        self.tip = Arc::new(Block {
+        Arc::new(Block {
             header: Arc::new(BlockHeader {
                 version: 6,
-                previous_block_hash: self.tip.header.hash(),
+                previous_block_hash,
                 merkle_root: default_roots.merkle_root(),
-                commitment_bytes: zebra_chain::fmt::HexDebug(<[u8; 32]>::from(
-                        self.history_tree.hash().unwrap(),
-                )),
-                time: self.tip.header.time + Duration::from_secs(70),
+                commitment_bytes: HexDebug(<[u8; 32]>::from(history_tree.hash().unwrap_or([0u8; 32].into()))),
+                time,
                 difficulty_threshold,
-                nonce: zebra_chain::fmt::HexDebug([0; 32]),
-                solution: zebra_chain::work::equihash::Solution::Regtest([0; 36]),
+                nonce: HexDebug([0; 32]),
+                solution: work::equihash::Solution::Regtest([0; 36]),
                 fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
                 temp_command_buf: zebra_chain::block::CommandBuf::empty(),
             }),
 
             transactions: vec![coinbase_tx.into()],
-        });
+        })
+    }
+
+    pub fn next_block(&mut self, miner_address: &Address) -> Arc<zebra_chain::block::Block> {
+        self.history_tree
+            .push(&self.network, self.tip.clone(), &self.sapling_root, &self.orchard_root)
+            .unwrap();
+
+        let height = zebra_chain::block::Height(self.tip.coinbase_height().unwrap().0 + 1);
+        let hash = self.tip.header.hash();
+        let time = self.tip.header.time + Duration::from_secs(70);
+
+        let difficulty_threshold = CompactDifficulty::from_bytes_in_display_order(&[
+            0x20, 0x0f, 0x0f, 0x0f,
+        ]).unwrap();
+        self.tip = BlockGen::create_block(&self.network, miner_address, height, hash, time, &self.history_tree, difficulty_threshold);
 
         self.tip.clone()
     }
-
 }
 
 #[test]
@@ -558,33 +600,30 @@ fn crosslink_gen_blocks() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
-    let mut pow0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
-    pow0.header = Arc::new(BlockHeader {
-        version: 5,
-        fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
-        ..*pow0.header
-    });
-    tf.push_instr_load_pow(&pow0, 0);
+    // let mut pow0 = Block::zcash_deserialize(REGTEST_BLOCK_BYTES[0]).unwrap();
+    // pow0.header = Arc::new(BlockHeader {
+    //     version: 5,
+    //     fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
+    //     temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+    //     ..*pow0.header
+    // });
+    // panic!("pow0: {:?}", pow0.header);
 
-    // chrono::DateTime<Utc>::from_timestamp(1758127904, 0)
-    //
-    let mut gen = BlockGen::init_regtest_at_tip(Arc::new(pow0));
-    let miner_address =
-        zcash_keys::address::Address::decode(&gen.network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
-            .unwrap();
+    let network = Network::new_regtest(Default::default());
+    let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
+    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+    tf.push_instr_load_pow(&gen.tip, 0);
+
+    // let mut gen = BlockGen::init_regtest_at_tip(Arc::new(pow0));
     let miner_address2 = zcash_keys::address::Address::Tex([1;20]);
-    println!("miner_address2: {}", miner_address2.encode(&gen.network));
-
-    let pow1 = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow1, 0);
+    // println!("miner_address2: {}", miner_address2.encode(&gen.network));
 
     let pow2 = gen.next_block(&miner_address);
     tf.push_instr_load_pow(&pow2, 0);
-    let mut genb = gen.clone();
 
-    let pow3a = gen.next_block(&miner_address);
-    tf.push_instr_load_pow(&pow3a, 0);
+    let pow3 = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow3, 0);
+    let mut genb = gen.clone();
 
     let pow4a = gen.next_block(&miner_address);
     tf.push_instr_load_pow(&pow4a, 0);
@@ -592,9 +631,10 @@ fn crosslink_gen_blocks() {
     let pow5a = gen.next_block(&miner_address);
     tf.push_instr_load_pow(&pow5a, 0);
 
+    let pow6a = gen.next_block(&miner_address);
+    tf.push_instr_load_pow(&pow6a, 0);
 
-    let pow3b = genb.next_block(&miner_address2);
-    tf.push_instr_load_pow(&pow3b, 0);
+    tf.push_instr_expect_pow_chain_length(7, 0);
 
     let pow4b = genb.next_block(&miner_address2);
     tf.push_instr_load_pow(&pow4b, 0);
@@ -605,12 +645,26 @@ fn crosslink_gen_blocks() {
     let pow6b = genb.next_block(&miner_address2);
     tf.push_instr_load_pow(&pow6b, 0);
 
+    let pow7b = genb.next_block(&miner_address2);
+    tf.push_instr_load_pow(&pow7b, 0);
+
+    tf.push_instr_expect_pow_chain_length(8, 0);
 
 
     // Result:
-    // P  LOAD_POW (1 - e224ce196f0e0cf00e201e0b91353531b97f7460d6a8fd54fea25ec8e8fe022a, parent: 029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327)
-    // P  LOAD_POW (2 - 633835e5ac5865d1d4239bbc91bdd098420fc3808a857b830824bc1445c8f1d1, parent: e224ce196f0e0cf00e201e0b91353531b97f7460d6a8fd54fea25ec8e8fe022a)
-    // P  LOAD_POW (3 - 37057e6a7f2654d251c33a1eb0ccc4f063d96c945dc2dd5f0113f22ea6c7b147, parent: 633835e5ac5865d1d4239bbc91bdd098420fc3808a857b830824bc1445c8f1d1)
+    // P  LOAD_POW (1 - f2245bd187293755539ac981d156e0e09a5d5f3e985abae974c71f04d953a2f1, parent: 029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327)
+    // P  LOAD_POW (2 - e01789fab97edbdd127a0162348b1882200ba26043f392bce495362e7c20c354, parent: f2245bd187293755539ac981d156e0e09a5d5f3e985abae974c71f04d953a2f1)
+    // P  LOAD_POW (3 - c19351b6534ce047a7da8d3f60f04383206c9f9cd9f6edd51e39c15f32b767ef, parent: e01789fab97edbdd127a0162348b1882200ba26043f392bce495362e7c20c354)
+    // P  LOAD_POW (4 - f8214b23b5539cbeb93917d91dd85e7209824429f5aa3905baf273ae7a2d9586, parent: c19351b6534ce047a7da8d3f60f04383206c9f9cd9f6edd51e39c15f32b767ef)
+    // P  LOAD_POW (5 - ee3f15e63275d68320e998c148cde1f50c6cb7f61c308cbe65b2fb8bf373b088, parent: f8214b23b5539cbeb93917d91dd85e7209824429f5aa3905baf273ae7a2d9586)
+    // P  LOAD_POW (6 - 5360f9cf81a7d40cd4d305efc1a4127ba5fe0e3c7cd3fe9cea952c1186f67709, parent: ee3f15e63275d68320e998c148cde1f50c6cb7f61c308cbe65b2fb8bf373b088)
+    // P  EXPECT_POW_CHAIN_LENGTH (7)
+    // P  LOAD_POW (4 - 669391145fdbadc09b622657aec6166927efda199b20662e66e5154b5d35ee95, parent: c19351b6534ce047a7da8d3f60f04383206c9f9cd9f6edd51e39c15f32b767ef)
+    // P  LOAD_POW (5 - 8fde5bb6d9d7b21795b06da74b574167628fce2cf5f651ddc41d9d33dc76ca8e, parent: 669391145fdbadc09b622657aec6166927efda199b20662e66e5154b5d35ee95)
+    // P  LOAD_POW (6 - bbb0e46c50d3730cd217c073b3da08929d33ec8cd5800b5226027c7a48ba016c, parent: 8fde5bb6d9d7b21795b06da74b574167628fce2cf5f651ddc41d9d33dc76ca8e)
+    // P  LOAD_POW (7 - 879e7c77dd9c141689ff4f05bb0b80e153639062b5371f2ffced3acaaf563d31, parent: bbb0e46c50d3730cd217c073b3da08929d33ec8cd5800b5226027c7a48ba016c)
+    // P  EXPECT_POW_CHAIN_LENGTH (8)
+
     test_bytes(tf.write_to_bytes());
 }
 
