@@ -336,7 +336,7 @@ async fn malachite_system_main_loop(
                                 MalLocallyProposedValue {
                                     height: height,
                                     round: MalRound::new(round as u32),
-                                    value: MalValue::new_block(block),
+                                    value: MalValue::new_block(&block),
                                 };
                             {
                                 // The POL round is always nil when we propose a newly built value.
@@ -654,7 +654,7 @@ async fn malachite_system_main_loop(
                         round: parts.round,
                         valid_round: parts.pol_round,
                         proposer: MalPublicKey2(parts.proposer),
-                        value: MalValue::new_block(block),
+                        value: MalValue::new_block(&block),
                         validity,
                     };
 

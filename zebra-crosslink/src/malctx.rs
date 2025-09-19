@@ -281,7 +281,7 @@ pub struct MalValue {
 }
 
 impl MalValue {
-    pub fn new_block(value: BftBlock) -> Self {
+    pub fn new_block(value: &BftBlock) -> Self {
         Self {
             value_bytes: value.zcash_serialize_to_vec().unwrap(),
         }

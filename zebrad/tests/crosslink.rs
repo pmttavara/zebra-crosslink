@@ -23,6 +23,8 @@ use zebra_chain::{
 };
 use zebra_crosslink::chain::*;
 use zebra_crosslink::test_format::*;
+use zebra_crosslink::malctx::*;
+use zebra_crosslink::mal_system::*;
 use zcash_keys::address::Address;
 use zebra_state::crosslink::*;
 use zebrad::application::CROSSLINK_TEST_CONFIG_OVERRIDE;
@@ -579,6 +581,9 @@ impl BlockGen {
     }
 
     pub fn next_block(&mut self, miner_address: &Address) -> Arc<zebra_chain::block::Block> {
+        // NOTE: it's not completely obvious where this should be done. Having it here allows for
+        // tip modification by the user, but means that the history_tree is never visibly
+        // up-to-date.
         self.history_tree
             .push(&self.network, self.tip.clone(), &self.sapling_root, &self.orchard_root)
             .unwrap();
@@ -597,7 +602,7 @@ impl BlockGen {
 }
 
 #[test]
-fn crosslink_gen_blocks() {
+fn crosslink_gen_pow_fork() {
     set_test_name(function_name!());
     let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
 
@@ -636,6 +641,58 @@ fn crosslink_gen_blocks() {
     // P  LOAD_POW (6 - bbb0e46c50d3730cd217c073b3da08929d33ec8cd5800b5226027c7a48ba016c, parent: 8fde5bb6d9d7b21795b06da74b574167628fce2cf5f651ddc41d9d33dc76ca8e)
     // P  LOAD_POW (7 - 879e7c77dd9c141689ff4f05bb0b80e153639062b5371f2ffced3acaaf563d31, parent: bbb0e46c50d3730cd217c073b3da08929d33ec8cd5800b5226027c7a48ba016c)
     // P  EXPECT_POW_CHAIN_LENGTH (8)
+
+    test_bytes(tf.write_to_bytes());
+}
+
+#[test]
+fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
+    set_test_name(function_name!());
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    let network = Network::new_regtest(Default::default());
+    let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
+    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+
+    // let finalizers = Vec::new();
+
+    let mut pow_common = vec![gen.tip.clone()];
+    for _ in 2..4 {
+        pow_common.push(gen.next_block(&miner_address));
+    }
+    for block in &pow_common {
+        tf.push_instr_load_pow(block, 0);
+    }
+
+    let bft = {
+        let bft_height = 1;
+        let block = BftBlock::try_from(
+            &PROTOTYPE_PARAMETERS,
+            bft_height,
+            FatPointerToBftBlock2::null(),
+            pow_common[0].coinbase_height().expect("valid height").0,
+            vec![
+            pow_common[0].header.as_ref().clone(),
+            pow_common[1].header.as_ref().clone(),
+            pow_common[2].header.as_ref().clone(),
+            ]
+        ).expect("valid PoS block");
+
+        let cert = MalCommitCertificate {
+            height: MalHeight::new(bft_height.into()),
+            round: MalRound::new(1),
+            value_id: MalValue::new_block(&block).id(),
+            commit_signatures: Vec::new(), // TODO
+        };
+
+        BftBlockAndFatPointerToIt { block, fat_ptr: (&cert).into() }
+    };
+    tf.push_instr_load_pos(&bft, 0);
+
+    for _ in 4..7 {
+        tf.push_instr_load_pow(&gen.next_block(&miner_address), 0);
+    }
+    tf.push_instr_expect_pow_chain_length(7, 0);
 
     test_bytes(tf.write_to_bytes());
 }
