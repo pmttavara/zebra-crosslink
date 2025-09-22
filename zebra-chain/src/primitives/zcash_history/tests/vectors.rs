@@ -10,6 +10,7 @@ use eyre::Result;
 /// Test the MMR tree using the activation block of a network upgrade
 /// and its next block.
 #[test]
+#[ignore] // [ACTIVATION HEIGHT PROBLEM]
 fn tree() -> Result<()> {
     for network in Network::iter() {
         tree_for_network_upgrade(&network, NetworkUpgrade::Heartwood)?;

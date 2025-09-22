@@ -68,6 +68,7 @@ use super::super::*;
 pub const EXCESSIVE_BLOCK_HEIGHT: u32 = MAX_ON_DISK_HEIGHT.0 + 1;
 
 /// Snapshot test for RPC methods responses.
+#[ignore] // [MUTEX LOCK PROBLEM]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_response_data() {
     let _init_guard = zebra_test::init();

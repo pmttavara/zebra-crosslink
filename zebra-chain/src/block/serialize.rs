@@ -66,6 +66,10 @@ impl ZcashSerialize for Header {
     fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
         check_version(self.version).map_err(io::Error::other)?;
 
+        let logical_version = if self.version & 0xffff_0000 != 0 {
+            self.version.reverse_bits()
+        } else { self.version };
+
         writer.write_u32::<LittleEndian>(self.version)?;
         self.previous_block_hash.zcash_serialize(&mut writer)?;
         writer.write_all(&self.merkle_root.0[..])?;
@@ -79,10 +83,10 @@ impl ZcashSerialize for Header {
         writer.write_u32::<LittleEndian>(self.difficulty_threshold.0)?;
         writer.write_all(&self.nonce[..])?;
         self.solution.zcash_serialize(&mut writer)?;
-        if 5 <= self.version {
+        if logical_version >= 5 {
             self.fat_pointer_to_bft_block.zcash_serialize(&mut writer)?;
         }
-        if 6 <= self.version {
+        if logical_version >= 6 {
             writer.write_all(&self.temp_command_buf.data)?;
         }
         Ok(())
@@ -93,6 +97,10 @@ impl ZcashDeserialize for Header {
     fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
         let version = reader.read_u32::<LittleEndian>()?;
         check_version(version).map_err(SerializationError::Parse)?;
+
+        let logical_version = if version & 0xffff_0000 != 0 {
+            version.reverse_bits()
+        } else { version };
 
         Ok(Header {
             version,
@@ -110,15 +118,15 @@ impl ZcashDeserialize for Header {
             nonce: reader.read_32_bytes()?.into(),
             solution: equihash::Solution::zcash_deserialize(&mut reader)?,
             fat_pointer_to_bft_block: {
-                if version < 5 {
-                    super::FatPointerToBftBlock::null()
-                } else {
+                if logical_version >= 5 {
                     super::FatPointerToBftBlock::zcash_deserialize(&mut reader)?
+                } else {
+                    super::FatPointerToBftBlock::null()
                 }
             },
             temp_command_buf: {
                 let mut buf = crate::block::CommandBuf::empty();
-                if 6 <= version {
+                if logical_version >= 6 {
                     reader.read_exact(&mut buf.data)?
                 }
                 buf

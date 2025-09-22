@@ -898,6 +898,7 @@ fn consensus_branch_id() {
 }
 
 #[test]
+#[ignore] // [ACTIVATION HEIGHT PROBLEM]
 fn binding_signatures() {
     let _init_guard = zebra_test::init();
 

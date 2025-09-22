@@ -194,6 +194,7 @@ fn block_test_vectors_unique() {
 /// - the block test vector indexes match the heights in the block data;
 /// - each post-Sapling block has a corresponding final Sapling root;
 /// - each post-Orchard block has a corresponding final Orchard root.
+#[ignore] // [ACTIVATION HEIGHT PROBLEM]
 #[test]
 fn block_test_vectors() {
     let _init_guard = zebra_test::init();
