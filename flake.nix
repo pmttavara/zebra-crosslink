@@ -41,10 +41,9 @@
 
     crane.url = "github:ipetkov/crane";
 
-    fenix = {
-      url = "github:nix-community/fenix";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.rust-analyzer-src.follows = "";
     };
 
     flake-utils.url = "github:numtide/flake-utils";
@@ -60,7 +59,7 @@
       self,
       nixpkgs,
       crane,
-      fenix,
+      rust-overlay,
       flake-utils,
       advisory-db,
       ...
@@ -70,7 +69,10 @@
       let
         pname = "zebrad-crosslink-workspace";
 
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        };
 
         inherit (pkgs) lib;
 
@@ -81,14 +83,13 @@
         enableTrace = false;
         traceJson = if enableTrace then (lib.debug.traceValFn builtins.toJSON) else (x: x);
 
-        # Note: Yes, it's really this terrible. You would think nix would "just build" rust, but no...
+        # craneLib provides a rust build/deps API bound to `pkgs` with the rust toolchain version specified in `./rust-toolchain.toml`:
         craneLib =
           let
-            fenixlib = fenix.packages."${system}";
-            rustToolchain = fenixlib.stable.toolchain;
-            intermediateCraneLib = crane.mkLib pkgs;
+            # This function is named for call-site readability:
+            fromToolchainFile = p: p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           in
-          intermediateCraneLib.overrideToolchain rustToolchain;
+          (crane.mkLib pkgs).overrideToolchain fromToolchainFile;
 
         # We use the latest nixpkgs `libclang`:
         inherit (pkgs.llvmPackages) libclang;
