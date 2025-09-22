@@ -34,7 +34,7 @@ This list of [UX Goals](https://github.com/ShieldedLabs/zebra-crosslink/labels/U
 * [GH #127](https://github.com/ShieldedLabs/zebra-crosslink/issues/127): Casual users (who understand little about crypto and do not use specialized tools such as a Linux user interface) delegate ZEC and get rewards from their mobile wallet. [GH #124](https://github.com/ShieldedLabs/zebra-crosslink/issues/124) They have to learn a minimal set of new concepts in order to do this.
 * [GH #126](https://github.com/ShieldedLabs/zebra-crosslink/issues/126): Users (who have to understand a lot and can use specialized tools) run finalizers and get rewards.
 * [GH #158](https://github.com/ShieldedLabs/zebra-crosslink/issues/158): Users can get compounding returns by leaving their stake plus their rewards staked, without them or their wallet having to take action.
-
+* [GH #214](https://github.com/ShieldedLabs/zebra-crosslink/issues/214): Users who are comfortable operating the commandline node can easily record finalizer performance metrics.
 
 _Shielded Labs’s First Deployment of Crosslink is not done until substantial numbers of real users are actually gaining these five benefits._
 
