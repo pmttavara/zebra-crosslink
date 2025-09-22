@@ -130,6 +130,19 @@ async fn malachite_system_terminate_engine(
     }
 }
 
+/// Secure hash of the data we're signing/checking the signature for
+pub fn hash_of_height_round_and_data(height: MalHeight, round: MalRound, data: &[u8]) -> Blake3Hash {
+    // TODO: Blake3 key
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(height.as_u64().to_le_bytes().as_slice());
+
+    // Q: is there a reason round is signed? A: it's to provide a -1 for Nil option...
+    // Do we want that represented here? We could force converting to actual type (u32) beforehand.
+    hasher.update(round.as_i64().to_le_bytes().as_slice());
+    hasher.update(data);
+    Blake3Hash(*hasher.finalize().as_bytes())
+}
+
 async fn malachite_system_main_loop(
     tfl_handle: TFLServiceHandle,
     weak_self: Weak<TokioMutex<RunningMalachite>>,
@@ -323,7 +336,7 @@ async fn malachite_system_main_loop(
                                 MalLocallyProposedValue {
                                     height: height,
                                     round: MalRound::new(round as u32),
-                                    value: MalValue::new_block(block),
+                                    value: MalValue::new_block(&block),
                                 };
                             {
                                 // The POL round is always nil when we propose a newly built value.
@@ -361,12 +374,8 @@ async fn malachite_system_main_loop(
                     // Include metadata about the proposal
                     let data_bytes = proposal.value.value_bytes;
 
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(proposal.height.as_u64().to_le_bytes().as_slice());
-                    hasher.update(proposal.round.as_i64().to_le_bytes().as_slice());
-                    hasher.update(&data_bytes);
-                    let hash: [u8; 32] = hasher.finalize().into();
-                    let signature = my_signing_provider.sign(&hash);
+                    let hash = hash_of_height_round_and_data(proposal.height, proposal.round, &data_bytes);
+                    let signature = my_signing_provider.sign(&hash.0);
 
                     let streamed_proposal = MalStreamedProposal {
                         height: proposal.height,
@@ -617,16 +626,9 @@ async fn malachite_system_main_loop(
                         break;
                     }
 
-                    // signature verification
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(parts.height.as_u64().to_le_bytes().as_slice());
-                    hasher.update(parts.round.as_i64().to_le_bytes().as_slice());
-                    hasher.update(&parts.data_bytes);
-                    let hash: [u8; 32] = hasher.finalize().into();
-
                     // Verify the signature
-                    if my_signing_provider.verify(&hash, &parts.signature, &parts.proposer) == false
-                    {
+                    let hash = hash_of_height_round_and_data(parts.height, parts.round, &parts.data_bytes);
+                    if !my_signing_provider.verify(&hash.0, &parts.signature, &parts.proposer) {
                         warn!("Invalid signature, ignoring");
                         bft_err_flags |= msg_flag;
                         reply.send(None).unwrap();
@@ -652,7 +654,7 @@ async fn malachite_system_main_loop(
                         round: parts.round,
                         valid_round: parts.pol_round,
                         proposer: MalPublicKey2(parts.proposer),
-                        value: MalValue::new_block(block),
+                        value: MalValue::new_block(&block),
                         validity,
                     };
 
@@ -672,7 +674,13 @@ async fn malachite_system_main_loop(
 
                     reply.send(Some(value)).unwrap();
                 }
-                BFTAppMsg::RestreamProposal { height, round, valid_round, address, value_id } => {
+                BFTAppMsg::RestreamProposal {
+                    height,
+                    round,
+                    valid_round,
+                    address,
+                    value_id,
+                } => {
                     // Here it is important that, if we have previously built a value for this height and round,
                     // we send back the very same value.
                     if round.as_u32().is_none() {
