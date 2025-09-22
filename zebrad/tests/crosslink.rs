@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use zebra_chain::{
     block::{
         Block,
+        CommandBuf,
         FatPointerToBftBlock,
         Hash as BlockHash,
         Header as BlockHeader,
@@ -449,7 +450,7 @@ fn crosslink_test_pow_to_pos_link() {
     pow_5.header = Arc::new(BlockHeader {
         version: 5,
         fat_pointer_to_bft_block: pos_0_fat_ptr.clone(),
-        temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+        temp_command_buf: CommandBuf::empty(),
         ..*pow_5.header
     });
     // let pow_5_hash = pow_5.hash();
@@ -573,7 +574,7 @@ impl BlockGen {
                 nonce: HexDebug([0; 32]),
                 solution: work::equihash::Solution::Regtest([0; 36]),
                 fat_pointer_to_bft_block: FatPointerToBftBlock::null(),
-                temp_command_buf: zebra_chain::block::CommandBuf::empty(),
+                temp_command_buf: CommandBuf::empty(),
             }),
 
             transactions: vec![coinbase_tx.into()],
@@ -645,6 +646,31 @@ fn crosslink_gen_pow_fork() {
     test_bytes(tf.write_to_bytes());
 }
 
+fn create_pos_and_ptr_to_finalize_pow(bft_height: u32, pow_blocks: &[Arc<Block>]) -> BftBlockAndFatPointerToIt {
+    assert_eq!(pow_blocks.len(), PROTOTYPE_PARAMETERS.bc_confirmation_depth_sigma as usize);
+
+    let block = BftBlock::try_from(
+        &PROTOTYPE_PARAMETERS,
+        bft_height,
+        FatPointerToBftBlock2::null(),
+        pow_blocks[0].coinbase_height().expect("valid height").0,
+        vec![
+        pow_blocks[0].header.as_ref().clone(),
+        pow_blocks[1].header.as_ref().clone(),
+        pow_blocks[2].header.as_ref().clone(),
+        ]
+    ).expect("valid PoS block");
+
+    let cert = MalCommitCertificate {
+        height: MalHeight::new(bft_height.into()),
+        round: MalRound::new(1),
+        value_id: MalValue::new_block(&block).id(),
+        commit_signatures: Vec::new(), // TODO
+    };
+
+    BftBlockAndFatPointerToIt { block, fat_ptr: (&cert).into() }
+}
+
 #[test]
 fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
     set_test_name(function_name!());
@@ -662,29 +688,7 @@ fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
         tf.push_instr_load_pow(block, 0);
     }
 
-    let bft = {
-        let bft_height = 1;
-        let block = BftBlock::try_from(
-            &PROTOTYPE_PARAMETERS,
-            bft_height,
-            FatPointerToBftBlock2::null(),
-            pow_common[0].coinbase_height().expect("valid height").0,
-            vec![
-            pow_common[0].header.as_ref().clone(),
-            pow_common[1].header.as_ref().clone(),
-            pow_common[2].header.as_ref().clone(),
-            ]
-        ).expect("valid PoS block");
-
-        let cert = MalCommitCertificate {
-            height: MalHeight::new(bft_height.into()),
-            round: MalRound::new(1),
-            value_id: MalValue::new_block(&block).id(),
-            commit_signatures: Vec::new(), // TODO
-        };
-
-        BftBlockAndFatPointerToIt { block, fat_ptr: (&cert).into() }
-    };
+    let bft = create_pos_and_ptr_to_finalize_pow(1, &pow_common[0..3]);
     tf.push_instr_load_pos(&bft, 0);
 
     for _ in 4..7 {
