@@ -76,6 +76,9 @@
 
         inherit (pkgs) lib;
 
+        # Local utility library:
+        inherit (import ./flake { inherit pkgs; }) links-table select-source;
+
         # We use this style of nix formatting in checks and the dev shell:
         nixfmt = pkgs.nixfmt-rfc-style;
 
@@ -94,7 +97,18 @@
         # We use the latest nixpkgs `libclang`:
         inherit (pkgs.llvmPackages) libclang;
 
-        src-book = ./book;
+        src-book = select-source {
+          name = "${pname}-src-book";
+          paths = [
+            ./book
+            ./CONTRIBUTING.md
+            ./DELIVERABLES.md
+            ./README.md
+            ./SCOPING.md
+          ];
+        };
+
+        # FIXME: Replace this implementatino with `select-source`:
         src-rust = (
           # Only include cargo sources necessary for build or test:
           let
@@ -218,7 +232,7 @@
             mdbook-mermaid
           ];
           builder = pkgs.writeShellScript "${name}-builder.sh" ''
-            if mdbook build --dest-dir "$out/book/book" "$src/" 2>&1 | grep -E 'ERROR|WARN'
+            if mdbook build --dest-dir "$out/book/book" "$src/book" 2>&1 | grep -E 'ERROR|WARN'
             then
               echo 'Failing due to mdbook errors/warnings.'
               exit 1
@@ -226,6 +240,7 @@
           '';
         };
 
+        # FIXME: Replace this with `select-source` and `pkgs.linkFarm`:
         storepath-to-derivation =
           src:
           let
@@ -251,19 +266,22 @@
       {
         packages = (
           let
-            base-pkgs = { inherit zebrad zebra-book; };
+            base-pkgs = {
+              inherit zebrad zebra-book src-book;
 
-            src-pkgs = builtins.mapAttrs (_name: storepath-to-derivation) { inherit src-rust src-book; };
+              # TODO: Replace with `selecti-source` like `src-book`, then remove `storepath-to-derivation`:
+              src-rust = storepath-to-derivation src-rust;
+            };
 
-            all-pkgs-except-all = base-pkgs // src-pkgs;
-
-            all = pkgs.symlinkJoin {
-              name = "${pname}-all";
-              paths = builtins.attrValues all-pkgs-except-all;
+            all = links-table "${pname}-all" {
+              "./bin" = "${zebrad}/bin";
+              "./doc/${pname}/book" = zebra-book;
+              "./src/${pname}/rust" = src-rust;
+              "./src/${pname}/book" = src-book;
             };
           in
 
-          all-pkgs-except-all
+          base-pkgs
           // {
             inherit all;
             default = all;
