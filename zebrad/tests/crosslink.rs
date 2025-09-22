@@ -716,6 +716,45 @@ fn crosslink_force_roster() {
     test_bytes(tf.write_to_bytes());
 }
 
+#[test]
+fn crosslink_add_newcomer_to_roster_via_pow() {
+    set_test_name(function_name!());
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    // let (_, prv_key, pub_key) = rng_private_public_key_from_address(&[0]);
+
+    // tf.push_instr_roster_force_include(pub_key, 42000, 0);
+    // tf.push_instr_expect_roster_includes(pub_key, 42000, SHOULD_FAIL);
+
+    let network = Network::new_regtest(Default::default());
+    let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
+    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+
+    gen.tip = Arc::new(Block {
+        header: Arc::new(BlockHeader {
+            temp_command_buf: CommandBuf::from_str("ADD|1234|some_pub_key"),
+            ..gen.tip.header.as_ref().clone()
+        }),
+        ..gen.tip.as_ref().clone()
+    });
+
+    let mut pow_common = vec![gen.tip.clone()];
+    for _ in 2..4 {
+        pow_common.push(gen.next_block(&miner_address));
+    }
+    for block in &pow_common[0..3] {
+        tf.push_instr_load_pow(block, 0);
+    }
+
+    let bft = create_pos_and_ptr_to_finalize_pow(1, &pow_common[0..3]);
+    tf.push_instr_load_pos(&bft, 0);
+
+    let (_, _prv_key, pub_key) = zebra_crosslink::rng_private_public_key_from_address("some_pub_key".as_bytes());
+    tf.push_instr_expect_roster_includes(pub_key.into(), 1234, 0);
+
+    test_bytes(tf.write_to_bytes());
+}
+
 // TODO:
 // - reject signatures from outside the roster
 // - reject pos block with < 2/3rds roster stake
