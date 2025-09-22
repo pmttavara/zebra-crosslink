@@ -654,8 +654,6 @@ fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
     let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
     let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
 
-    // let finalizers = Vec::new();
-
     let mut pow_common = vec![gen.tip.clone()];
     for _ in 2..4 {
         pow_common.push(gen.next_block(&miner_address));
@@ -693,6 +691,23 @@ fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
         tf.push_instr_load_pow(&gen.next_block(&miner_address), 0);
     }
     tf.push_instr_expect_pow_chain_length(7, 0);
+
+    test_bytes(tf.write_to_bytes());
+}
+
+#[test]
+fn crosslink_force_roster() {
+    set_test_name(function_name!());
+    let mut tf = TF::new(&PROTOTYPE_PARAMETERS);
+
+    tf.push_instr_expect_roster_includes([0xab; 32], 42, SHOULD_FAIL);
+
+    tf.push_instr_roster_force_include([0xab; 32], 42, 0);
+
+    tf.push_instr_expect_roster_includes([0xab; 32], 42, 0);
+    tf.push_instr_expect_roster_includes([0xab; 32], TEST_STAKE_IGNORED, 0);
+    tf.push_instr_expect_roster_includes([0xab; 32], 43, SHOULD_FAIL);
+    tf.push_instr_expect_roster_includes([0xba; 32], 42, SHOULD_FAIL);
 
     test_bytes(tf.write_to_bytes());
 }
