@@ -34,7 +34,7 @@
 # `cargo`, `clang`, `protoc`, etc... So `cargo test` for example should
 # work.
 {
-  description = "The zebra zcash node binaries and crates";
+  description = "The zebra zcash node binaries and crates with Crosslink protocol features";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
