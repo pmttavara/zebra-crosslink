@@ -46,6 +46,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # TODO: Switch to `flake-parts` lib for cleaner organization.
     flake-utils.url = "github:numtide/flake-utils";
 
     advisory-db = {
@@ -55,50 +56,36 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      crane,
-      rust-overlay,
-      flake-utils,
-      advisory-db,
-      ...
-    }:
-    flake-utils.lib.eachDefaultSystem (
+    inputs:
+    inputs.flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pname = "zebrad-crosslink-workspace";
-
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ (import rust-overlay) ];
-        };
-
-        inherit (pkgs) lib;
+        project-name = "zebra-crosslink";
 
         # Local utility library:
-        inherit (import ./flake { inherit pkgs; }) links-table select-source;
+        flakelib = import ./flake inputs {
+          pname = "${project-name}-workspace";
+          src-root = ./.;
+          rust-toolchain-toml = ./rust-toolchain.toml;
+          inherit system;
+        };
+
+        inherit (flakelib)
+          build-rust-workspace
+          links-table
+          nixpkgs
+          run-command
+          select-source
+          ;
 
         # We use this style of nix formatting in checks and the dev shell:
-        nixfmt = pkgs.nixfmt-rfc-style;
-
-        # Print out a JSON serialization of the argument as a stderr diagnostic:
-        enableTrace = false;
-        traceJson = if enableTrace then (lib.debug.traceValFn builtins.toJSON) else (x: x);
-
-        # craneLib provides a rust build/deps API bound to `pkgs` with the rust toolchain version specified in `./rust-toolchain.toml`:
-        craneLib =
-          let
-            # This function is named for call-site readability:
-            fromToolchainFile = p: p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-          in
-          (crane.mkLib pkgs).overrideToolchain fromToolchainFile;
+        nixfmt = nixpkgs.nixfmt-rfc-style;
 
         # We use the latest nixpkgs `libclang`:
-        inherit (pkgs.llvmPackages) libclang;
+        inherit (nixpkgs.llvmPackages) libclang;
 
         src-book = select-source {
-          name = "${pname}-src-book";
+          name-suffix = "book";
           paths = [
             ./book
             ./CONTRIBUTING.md
@@ -108,75 +95,47 @@
           ];
         };
 
-        # FIXME: Replace this implementatino with `select-source`:
-        src-rust = (
-          # Only include cargo sources necessary for build or test:
-          let
-            # Exclude these and everything below them:
-            prune = [
-              "book"
-              "docker"
-              "docs"
-              "flake"
-              "grafana"
-              "supply-chain"
-            ];
+        # FIXME: Replace this implementation with `select-source`:
+        src-rust = flakelib.legacy-select-source {
+          prune = [
+            "book"
+            "docker"
+            "docs"
+            "flake"
+            "grafana"
+            "supply-chain"
+          ];
 
-            # Include all files in these directories, even if not "typical rust":
-            include = [
-              # These have things besides `*.toml` or `*.rs` we need:
-              "crosslink-test-data"
-              "zebra-chain"
-              "zebra-consensus"
-              "zebra-crosslink"
-              "zebra-rpc"
-              "zebra-test"
-              "zebrad"
-            ];
-          in
-          builtins.path {
-            name = "${pname}-src-rust";
-            path = ./.;
-            filter =
-              path: type:
-              (
-                let
-                  inherit (builtins) baseNameOf dirOf elem;
-                  inherit (craneLib) filterCargoSources;
+          # Include all files in these directories, even if not "typical rust":
+          include = [
+            # These have things besides `*.toml` or `*.rs` we need:
+            "crosslink-test-data"
+            "zebra-chain"
+            "zebra-consensus"
+            "zebra-crosslink"
+            "zebra-rpc"
+            "zebra-test"
+            "zebrad"
+          ];
+        };
 
-                  path-has-ancestor-in =
-                    path: names:
-                    if path == "/" then
-                      false
-                    else if elem (baseNameOf path) names then
-                      true
-                    else
-                      path-has-ancestor-in (dirOf path) names;
-
-                  has-ancestor-in = path-has-ancestor-in path;
-                in
-                !(has-ancestor-in prune) && (has-ancestor-in include || filterCargoSources path type)
-              );
-          }
-        );
-
-        # Common arguments can be set here to avoid repeating them later
-        commonBuildCrateArgs = {
+        zebrad-outputs = build-rust-workspace ./zebrad {
           src = src-rust;
 
           strictDeps = true;
-          # NB: we disable tests since we'll run them all via cargo-nextest
+
+          # Note: we disable tests since we'll run them all via cargo-nextest
           doCheck = false;
 
           # Use the clang stdenv, overriding any downstream attempt to alter it:
-          stdenv = _: pkgs.llvmPackages.stdenv;
+          stdenv = _: nixpkgs.llvmPackages.stdenv;
 
-          nativeBuildInputs = with pkgs; [
+          nativeBuildInputs = with nixpkgs; [
             pkg-config
             protobuf
           ];
 
-          buildInputs = with pkgs; [
+          buildInputs = with nixpkgs; [
             libclang
             rocksdb
           ];
@@ -185,54 +144,16 @@
           LIBCLANG_PATH = "${libclang.lib}/lib";
         };
 
-        # Build *just* the cargo dependencies (of the entire workspace),
-        # so we can reuse all of that work (e.g. via cachix) when running in CI
-        cargoArtifacts = craneLib.buildDepsOnly (
-          commonBuildCrateArgs
-          // {
-            pname = "${pname}-dependency-artifacts";
-            version = "0.0.0";
-          }
-        );
+        zebrad = zebrad-outputs.pkg;
 
-        individualCrateArgs = (
-          crate:
-          let
-            result = commonBuildCrateArgs // {
-              inherit cargoArtifacts;
-              inherit
-                (traceJson (craneLib.crateNameFromCargoToml { cargoToml = traceJson (crate + "/Cargo.toml"); }))
-                pname
-                version
-                ;
-
-              # BUG 1: We should not need this on the assumption that crane already knows the package from pname?
-              # BUG 2: crate is a path, not a string.
-              # cargoExtraArgs = "-p ${crate}";
-            };
-          in
-          assert builtins.isPath crate;
-          traceJson result
-        );
-
-        # Build the top-level crates of the workspace as individual derivations.
-        # This allows consumers to only depend on (and build) only what they need.
-        # Though it is possible to build the entire workspace as a single derivation,
-        # so this is left up to you on how to organize things
-        #
-        # Note that the cargo workspace must define `workspace.members` using wildcards,
-        # otherwise, omitting a crate (like we do below) will result in errors since
-        # cargo won't be able to find the sources for all members.
-        zebrad = craneLib.buildPackage (individualCrateArgs ./zebrad);
-
-        zebra-book = pkgs.stdenv.mkDerivation rec {
+        zebra-book = nixpkgs.stdenv.mkDerivation rec {
           name = "zebra-book";
           src = src-book;
-          buildInputs = with pkgs; [
+          buildInputs = with nixpkgs; [
             mdbook
             mdbook-mermaid
           ];
-          builder = pkgs.writeShellScript "${name}-builder.sh" ''
+          builder = nixpkgs.writeShellScript "${name}-builder.sh" ''
             if mdbook build --dest-dir "$out/book/book" "$src/book" 2>&1 | grep -E 'ERROR|WARN'
             then
               echo 'Failing due to mdbook errors/warnings.'
@@ -241,22 +162,22 @@
           '';
         };
 
-        # FIXME: Replace this with `select-source` and `pkgs.linkFarm`:
+        # FIXME: Replace this with `select-source` and `nixpkgs.linkFarm`:
         storepath-to-derivation =
           src:
           let
             inherit (builtins) baseNameOf head match;
-            inherit (lib.strings) isStorePath;
+            inherit (nixpkgs.lib.strings) isStorePath;
 
             srcName = if isStorePath src then head (match "^[^-]+-(.*)$" src) else baseNameOf src;
           in
 
-          pkgs.stdenv.mkDerivation rec {
+          nixpkgs.stdenv.mkDerivation rec {
             inherit src;
 
             name = "ln-to-${srcName}";
 
-            builder = pkgs.writeShellScript "script-to-${name}" ''
+            builder = nixpkgs.writeShellScript "script-to-${name}" ''
               outsrc="$out/src"
               mkdir -p "$outsrc"
               ln -sv "$src" "$outsrc/${srcName}"
@@ -274,11 +195,11 @@
               src-rust = storepath-to-derivation src-rust;
             };
 
-            all = links-table "${pname}-all" {
+            all = links-table "all" {
               "./bin" = "${zebrad}/bin";
               "./book" = "${zebra-book}/book";
-              "./src/book" = "${src-book}/book";
-              "./src/${pname}-src-rust" = src-rust;
+              "./src/${project-name}/book" = "${src-book}/book";
+              "./src/${project-name}/rust" = src-rust;
             };
           in
 
@@ -289,101 +210,38 @@
           }
         );
 
-        checks = {
-          # Build the crates as part of `nix flake check` for convenience
-          inherit zebrad;
+        checks = (
+          zebrad-outputs.checks
+          // {
+            # Build the crates as part of `nix flake check` for convenience
+            inherit zebrad;
 
-          # Run clippy (and deny all warnings) on the workspace source,
-          # again, reusing the dependency artifacts from above.
-          #
-          # Note that this is done as a separate derivation so that
-          # we can block the CI if there are issues here, but not
-          # prevent downstream consumers from building our crate by itself.
-
-          # my-workspace-clippy = craneLib.cargoClippy (commonBuildCrateArgs // {
-          #   inherit (zebrad) pname version;
-          #   inherit cargoArtifacts;
-
-          #   cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-          # });
-
-          my-workspace-doc = craneLib.cargoDoc (
-            commonBuildCrateArgs
-            // {
-              inherit (zebrad) pname version;
-              inherit cargoArtifacts;
-            }
-          );
-
-          # Check formatting
-          nixfmt-check = pkgs.runCommand "${pname}-nixfmt" { buildInputs = [ nixfmt ]; } ''
-            set -efuo pipefail
-            exitcode=0
-            for f in $(find '${./.}' -type f -name '*.nix')
-            do
-              cmd="nixfmt --check --strict \"$f\""
-              echo "+ $cmd"
-              eval "$cmd" || exitcode=1
-            done
-            [ "$exitcode" -eq 0 ] && touch "$out" # signal success to nix
-            exit "$exitcode"
-          '';
-
-          # TODO: Re-enable rust formatting after a flag-day commit that fixes all formatting, to remove excessive errors.
-          #
-          # my-workspace-fmt = craneLib.cargoFmt {
-          #   inherit (zebrad) pname version;
-          #   inherit src;
-          # };
-
-          # my-workspace-toml-fmt = craneLib.taploFmt {
-          #   src = pkgs.lib.sources.sourceFilesBySuffices src [ ".toml" ];
-          #   # taplo arguments can be further customized below as needed
-          #   # taploExtraArgs = "--config ./taplo.toml";
-          # };
-
-          # Audit dependencies
-          #
-          # TODO: Most projects that don't use this frequently have errors due to known vulnerabilities in transitive dependencies! We should probably re-enable them on a cron-job (since new disclosures may appear at any time and aren't a property of a revision alone).
-          #
-          # my-workspace-audit = craneLib.cargoAudit {
-          #   inherit (zebrad) pname version;
-          #   inherit src advisory-db;
-          # };
-
-          # Audit licenses
-          #
-          # TODO: Zebra fails these license checks.
-          #
-          # my-workspace-deny = craneLib.cargoDeny {
-          #   inherit (zebrad) pname version;
-          #   inherit src;
-          # };
-
-          # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on other crate derivations
-          # if you do not want the tests to run twice
-          my-workspace-nextest = craneLib.cargoNextest (
-            commonBuildCrateArgs
-            // {
-              inherit (zebrad) pname version;
-              inherit cargoArtifacts;
-
-              partitions = 1;
-              partitionType = "count";
-            }
-          );
-        };
+            # Check formatting
+            nixfmt-check = run-command "nixfmt" [ nixfmt ] ''
+              set -efuo pipefail
+              exitcode=0
+              for f in $(find '${./.}' -type f -name '*.nix')
+              do
+                cmd="nixfmt --check --strict \"$f\""
+                echo "+ $cmd"
+                eval "$cmd" || exitcode=1
+              done
+              [ "$exitcode" -eq 0 ] && touch "$out" # signal success to nix
+              exit "$exitcode"
+            '';
+          }
+        );
 
         apps = {
-          zebrad = flake-utils.lib.mkApp { drv = zebrad; };
+          zebrad = inputs.flake-utils.lib.mkApp { drv = zebrad; };
         };
 
+        # TODO: BEWARE: This dev shell may have buggy deviations from the build.
         devShells.default = (
           let
-            mkClangShell = pkgs.mkShell.override { inherit (pkgs.llvmPackages) stdenv; };
+            mkClangShell = nixpkgs.mkShell.override { inherit (nixpkgs.llvmPackages) stdenv; };
 
-            devShellInputs = with pkgs; [
+            devShellInputs = with nixpkgs; [
               rustup
               mdbook
               mdbook-mermaid
@@ -391,7 +249,7 @@
               yamllint
             ];
 
-            dynlibs = with pkgs; [
+            dynlibs = with nixpkgs; [
               libGL
               libxkbcommon
               xorg.libX11
@@ -399,14 +257,15 @@
               xorg.libXi
             ];
 
+            crate-args = zebrad-outputs.args.crate;
           in
           mkClangShell (
-            commonBuildCrateArgs
+            crate-args
             // {
               # Include devShell inputs:
-              nativeBuildInputs = commonBuildCrateArgs.nativeBuildInputs ++ devShellInputs;
+              nativeBuildInputs = crate-args.nativeBuildInputs ++ devShellInputs;
 
-              LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath dynlibs;
+              LD_LIBRARY_PATH = nixpkgs.lib.makeLibraryPath dynlibs;
             }
           )
         );
