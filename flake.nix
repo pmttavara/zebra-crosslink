@@ -117,6 +117,7 @@
               "book"
               "docker"
               "docs"
+              "flake"
               "grafana"
               "supply-chain"
             ];
@@ -275,9 +276,9 @@
 
             all = links-table "${pname}-all" {
               "./bin" = "${zebrad}/bin";
-              "./doc/${pname}/book" = zebra-book;
-              "./src/${pname}/rust" = src-rust;
-              "./src/${pname}/book" = src-book;
+              "./book" = "${zebra-book}/book";
+              "./src/book" = "${src-book}/book";
+              "./src/${pname}-src-rust" = src-rust;
             };
           in
 
