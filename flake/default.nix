@@ -160,7 +160,7 @@ in
         # TODO: make this a standard build package:
         cargo-doc = crane-lib.cargoDoc args.crate;
 
-        rustfmt = crane-lib.cargoFmt args.common;
+        rustfmt = crane-lib.cargoFmt args.crate;
 
         # toml-format = crane-lib.taploFmt {
         #   src = pkgs.lib.sources.sourceFilesBySuffices src-root [ ".toml" ];
