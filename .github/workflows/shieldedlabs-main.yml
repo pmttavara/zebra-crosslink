@@ -154,10 +154,14 @@ jobs:
       - name: List assets
         id: list_assets
         run: |
-          find dist -maxdepth 2 -type f -print | sort
-          # Flatten into a glob list for the release step
-          files=$(find dist -maxdepth 2 -type f -print | tr '\n' ' ')
-          echo "files=$files" >> "$GITHUB_OUTPUT"
+          # Produce a newline-delimited list so globbing handles spaces in artifact names
+          files=$(find dist -maxdepth 2 -type f -print | sort)
+          printf '%s\n' "$files"
+          {
+            echo "files<<EOF"
+            printf '%s\n' "$files"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build release notes
         id: notes
