@@ -113,6 +113,7 @@ jobs:
               export RUSTFLAGS="-C link-arg=-Wl,-s"
               cargo build --bin zebrad '"${{ matrix.cargo_flags }}"'
             '
+          sudo chown -R $(id -u):$(id -g) .cargo-cache archlinux-cache target
           mkdir -p dist
           cp "target/debug/zebrad" "$OUTPUT_FILE"
           sha256sum "$OUTPUT_FILE" | tee "$OUTPUT_SHA"
