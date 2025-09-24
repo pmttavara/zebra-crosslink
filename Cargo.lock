@@ -990,7 +990,7 @@ dependencies = [
  "iana-time-zone",
  "num-traits 0.2.19",
  "serde",
- "windows-link 0.1.3",
+ "windows-link 0.2.0",
 ]
 
 [[package]]
@@ -8249,6 +8249,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "which"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
+dependencies = [
+ "env_home",
+ "rustix",
+ "winsafe",
+]
+
+[[package]]
 name = "widestring"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8682,6 +8693,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
+
+[[package]]
 name = "wit-bindgen"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9082,7 +9099,6 @@ dependencies = [
  "static_assertions",
  "tempfile",
  "thiserror 2.0.16",
- "tinyvec",
  "tokio",
  "tracing",
  "uint 0.10.0",
@@ -9127,7 +9143,6 @@ dependencies = [
  "serde",
  "spandoc",
  "thiserror 2.0.16",
- "tinyvec",
  "tokio",
  "tower 0.4.13",
  "tower-batch-control",
@@ -9363,7 +9378,6 @@ dependencies = [
  "spandoc",
  "tempfile",
  "thiserror 2.0.16",
- "tinyvec",
  "tokio",
  "tower 0.4.13",
  "tracing",
@@ -9391,7 +9405,6 @@ dependencies = [
  "spandoc",
  "tempfile",
  "thiserror 2.0.16",
- "tinyvec",
  "tokio",
  "tower 0.4.13",
  "tracing",
@@ -9417,7 +9430,6 @@ dependencies = [
  "structopt",
  "syn 2.0.106",
  "thiserror 2.0.16",
- "tinyvec",
  "tokio",
  "tracing-error",
  "tracing-subscriber",
