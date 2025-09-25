@@ -506,6 +506,7 @@ impl BlockGen {
         0x3e, 0x7e, 0x72, 0xc9, 0x1b, 0x5e, 0x23, 0x02, 0x56, 0x76, 0xf9, 0x0e, 0xd8, 0x11, 0x9f, 0x02,
     ]);
 
+    #[allow(dead_code)]
     pub fn init_regtest_at_tip(tip: Arc<Block>) -> Self {
         BlockGen {
             network: Network::new_regtest(Default::default()),

@@ -1,6 +1,3 @@
-#![cfg(not(test))] // [DISABLE ZEBRAD TESTS]
-
-
 //! Acceptance test: runs zebrad as a subprocess and asserts its
 //! output for given argument combinations matches what is expected.
 //!
@@ -134,6 +131,7 @@
 //! ```sh
 //! export TMPDIR=/path/to/disk/directory
 //! ```
+#![cfg(not(test))] // [DISABLE ZEBRAD TESTS]
 
 mod common;
 

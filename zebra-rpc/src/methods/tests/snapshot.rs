@@ -589,7 +589,7 @@ async fn test_mocked_rpc_response_data_for_network(network: &Network) {
     settings.set_snapshot_suffix(network_string(network));
 
     let (latest_chain_tip, _) = MockChainTip::new();
-    let mut state = MockService::build().for_unit_tests();
+    let state = MockService::build().for_unit_tests();
     let mempool = MockService::build().for_unit_tests();
     let tfl_service = MockService::build().for_unit_tests();
     let mut read_state = MockService::build().for_unit_tests();
