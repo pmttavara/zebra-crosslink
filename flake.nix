@@ -76,7 +76,6 @@
           nixpkgs
           run-command
           select-source
-          legacy-select-source
           ;
 
         # We use this style of nix formatting in checks and the dev shell:
@@ -103,25 +102,12 @@
             ./.config
             ./Cargo.lock
             ./Cargo.toml
-            ./checked_in_sl_test_net_genesis.hex
             ./clippy.toml
-            ./codecov.yml
-            ./command_to_submit_test_net_genesis.txt
             ./crosslink-test-data
-            ./deny.toml
-            ./firebase.json
-            ./grafana
-            ./katex-header.html
-            ./LICENSE-APACHE
-            ./LICENSE-MIT
-            ./openapi.yaml
-            ./prometheus.yaml
             ./release.toml
             ./rust-toolchain.toml
-            ./supply-chain
             ./tower-batch-control
             ./tower-fallback
-            ./vibe_coded_script_to_create_a_test_net_genesis.sh
             ./zebra-chain
             ./zebra-consensus
             ./zebra-crosslink
@@ -135,29 +121,6 @@
             ./zebra-test
             ./zebra-utils
             ./zebrad
-          ];
-        };
-
-        src-rust-legacy = legacy-select-source {
-          prune = [
-            "book"
-            "docker"
-            "docs"
-            "flake"
-            "grafana"
-            "supply-chain"
-          ];
-
-          # Include all files in these directories, even if not "typical rust":
-          include = [
-            # These have things besides `*.toml` or `*.rs` we need:
-            "crosslink-test-data"
-            "zebra-chain"
-            "zebra-consensus"
-            "zebra-crosslink"
-            "zebra-rpc"
-            "zebra-test"
-            "zebrad"
           ];
         };
 
@@ -203,38 +166,6 @@
             fi
           '';
         };
-
-        # FIXME: Replace this with `select-source` and `nixpkgs.linkFarm`:
-        storepath-to-derivation =
-          src:
-          let
-            inherit (builtins) baseNameOf head match;
-            inherit (nixpkgs.lib.strings) isStorePath;
-
-            srcName = if isStorePath src then head (match "^[^-]+-(.*)$" src) else baseNameOf src;
-          in
-
-          nixpkgs.stdenv.mkDerivation rec {
-            inherit src;
-
-            name = "ln-to-${srcName}";
-
-            builder = nixpkgs.writeShellScript "script-to-${name}" ''
-              outsrc="$out/src"
-              mkdir -p "$outsrc"
-              ln -sv "$src" "$outsrc/${srcName}"
-            '';
-
-          };
-
-        src-delta = run-command "src-diff" [ ] ''
-          echo 'diffing old/new src-rust...'
-          if ! diff -r '${src-rust-legacy}' '${src-rust}' > "$out"
-          then
-            echo "REGRESSION: The new rust source selection differs from 'main'-branch, see: $out"
-            exit 1
-          fi
-        '';
       in
       {
         packages = (
@@ -245,10 +176,7 @@
                 zebra-book
                 src-book
                 src-rust
-                src-delta
                 ;
-
-              src-rust-legacy = storepath-to-derivation src-rust-legacy;
             };
 
             all = links-table "all" {
@@ -256,7 +184,6 @@
               "./book" = "${zebra-book}/book";
               "./src/${project-name}/book" = "${src-book}/book";
               "./src/${project-name}/rust" = src-rust;
-              "./src/${project-name}/delta" = src-delta;
             };
           in
 

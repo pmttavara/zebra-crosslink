@@ -71,33 +71,6 @@ let
         ];
       });
 
-    legacy-select-source =
-      { prune, include }:
-      builtins.path {
-        name = "LEGACY_src-rust";
-        path = src-root;
-        filter =
-          path: type:
-          (
-            let
-              inherit (builtins) baseNameOf dirOf elem;
-              inherit (crane-lib) filterCargoSources;
-
-              path-has-ancestor-in =
-                path: names:
-                if path == "/" then
-                  false
-                else if elem (baseNameOf path) names then
-                  true
-                else
-                  path-has-ancestor-in (dirOf path) names;
-
-              has-ancestor-in = path-has-ancestor-in path;
-            in
-            !(has-ancestor-in prune) && (has-ancestor-in include || filterCargoSources path type)
-          );
-      };
-
     # links-table :: (Name :: String) -> { relpath -> [Deriv or Path] } -> Derivation
     #
     # Create a derivation which maps relpath's to target paths or
