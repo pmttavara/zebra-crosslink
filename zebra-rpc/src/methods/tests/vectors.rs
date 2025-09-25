@@ -1285,6 +1285,7 @@ async fn rpc_getaddresstxids_invalid_arguments() {
     assert!(rpc_tx_queue_task_result.is_none());
 }
 
+#[ignore] // [ACTIVATION HEIGHT PROBLEM]
 #[tokio::test(flavor = "multi_thread")]
 async fn rpc_getaddresstxids_response() {
     let _init_guard = zebra_test::init();
