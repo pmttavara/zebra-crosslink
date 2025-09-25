@@ -103,6 +103,8 @@ pub mod config {
         /// Public address for this node, e.g. "/ip4/127.0.0.1/udp/24834/quic-v1" if testing
         /// internally, or the public IP address if using externally.
         pub public_address: Option<String>,
+        /// temp seed for private/public key pair
+        pub insecure_user_name: Option<String>,
         /// List of public IP addresses for peers, in the same format as `public_address`.
         pub malachite_peers: Vec<String>,
     }
@@ -111,6 +113,7 @@ pub mod config {
             Self {
                 listen_address: None,
                 public_address: None,
+                insecure_user_name: None,
                 malachite_peers: Vec::new(),
             }
         }
@@ -168,6 +171,7 @@ pub(crate) struct TFLServiceInternal {
     malachite_watchdog: Instant,
 
     // TODO: 2 versions of this: ever-added (in sequence) & currently non-0
+    validators_keys_to_names: HashMap<MalPublicKey, String>,
     validators_at_current_height: Vec<MalValidator>,
 
     current_bc_final: Option<(BlockHeight, BlockHash)>,
@@ -718,7 +722,7 @@ async fn new_decided_bft_block_from_malachite(
                 // Modify the stake for members
                 if let Some(new_final_block) = &new_final_blocks[i] {
                     if update_roster_for_block(
-                        &mut internal.validators_at_current_height,
+                        &mut internal,
                         new_final_block,
                     ) {
                         info!(
@@ -916,10 +920,13 @@ pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
     tokio::task::spawn(test_format::instr_reader(internal_handle));
 }
 
-fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> bool {
+fn update_roster_for_block(internal: &mut TFLServiceInternal, block: &Block) -> bool {
     let mut is_cmd = false;
     let cmd_str = block.header.temp_command_buf.to_str();
     let cmd = cmd_str.as_bytes();
+    let roster = &mut internal.validators_at_current_height;
+    let validators_keys_to_names = &mut internal.validators_keys_to_names;
+
     if cmd.len() == 0 {
         // valid no-op
     } else if !(cmd.len() >= 4 && cmd[3] == b'|') {
@@ -985,6 +992,7 @@ fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> boo
                         roster[roster_i].voting_power += val;
                     } else {
                         roster.push(MalValidator::new(public_key0, val));
+                        validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                     }
                 }
 
@@ -1036,6 +1044,7 @@ fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> boo
                                 roster[roster_i].voting_power += val;
                             } else {
                                 roster.push(MalValidator::new(public_key0, val));
+                                validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                             }
                         }
                     } else {
@@ -1062,6 +1071,7 @@ fn update_roster_for_block(roster: &mut Vec<MalValidator>, block: &Block) -> boo
                                 roster[roster_i].voting_power += d;
                             } else {
                                 roster.push(MalValidator::new(public_key0, d));
+                                validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                             }
                         }
                     } else {
@@ -1102,10 +1112,15 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let public_ip_string = config
         .public_address
         .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
-
     info!("public IP: {}", public_ip_string);
+
+    let user_name = config
+        .insecure_user_name
+        .unwrap_or(public_ip_string.clone());
+        // .unwrap_or(String::from_str("tester").unwrap());
+
     let (mut rng, my_private_key, my_public_key) =
-        rng_private_public_key_from_address(&public_ip_string.as_bytes());
+        rng_private_public_key_from_address(&user_name.as_bytes());
     internal_handle.internal.lock().await.my_public_key = my_public_key;
 
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
