@@ -76,6 +76,7 @@
           nixpkgs
           run-command
           select-source
+          legacy-select-source
           ;
 
         # We use this style of nix formatting in checks and the dev shell:
@@ -95,8 +96,49 @@
           ];
         };
 
-        # FIXME: Replace this implementation with `select-source`:
-        src-rust = flakelib.legacy-select-source {
+        src-rust = select-source {
+          name-suffix = "rust";
+          paths = [
+            ./.cargo
+            ./.config
+            ./Cargo.lock
+            ./Cargo.toml
+            ./checked_in_sl_test_net_genesis.hex
+            ./clippy.toml
+            ./codecov.yml
+            ./command_to_submit_test_net_genesis.txt
+            ./crosslink-test-data
+            ./deny.toml
+            ./firebase.json
+            ./grafana
+            ./katex-header.html
+            ./LICENSE-APACHE
+            ./LICENSE-MIT
+            ./openapi.yaml
+            ./prometheus.yaml
+            ./release.toml
+            ./rust-toolchain.toml
+            ./supply-chain
+            ./tower-batch-control
+            ./tower-fallback
+            ./vibe_coded_script_to_create_a_test_net_genesis.sh
+            ./zebra-chain
+            ./zebra-consensus
+            ./zebra-crosslink
+            ./zebra-grpc
+            ./zebra-network
+            ./zebra-node-services
+            ./zebra-rpc
+            ./zebra-scan
+            ./zebra-script
+            ./zebra-state
+            ./zebra-test
+            ./zebra-utils
+            ./zebrad
+          ];
+        };
+
+        src-rust-legacy = legacy-select-source {
           prune = [
             "book"
             "docker"
@@ -184,15 +226,29 @@
             '';
 
           };
+
+        src-delta = run-command "src-diff" [ ] ''
+          echo 'diffing old/new src-rust...'
+          if ! diff -r '${src-rust-legacy}' '${src-rust}' > "$out"
+          then
+            echo "REGRESSION: The new rust source selection differs from 'main'-branch, see: $out"
+            exit 1
+          fi
+        '';
       in
       {
         packages = (
           let
             base-pkgs = {
-              inherit zebrad zebra-book src-book;
+              inherit
+                zebrad
+                zebra-book
+                src-book
+                src-rust
+                src-delta
+                ;
 
-              # TODO: Replace with `selecti-source` like `src-book`, then remove `storepath-to-derivation`:
-              src-rust = storepath-to-derivation src-rust;
+              src-rust-legacy = storepath-to-derivation src-rust-legacy;
             };
 
             all = links-table "all" {
@@ -200,6 +256,7 @@
               "./book" = "${zebra-book}/book";
               "./src/${project-name}/book" = "${src-book}/book";
               "./src/${project-name}/rust" = src-rust;
+              "./src/${project-name}/delta" = src-delta;
             };
           in
 
