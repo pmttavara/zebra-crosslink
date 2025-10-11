@@ -105,6 +105,8 @@ pub mod config {
         pub public_address: Option<String>,
         /// List of public IP addresses for peers, in the same format as `public_address`.
         pub malachite_peers: Vec<String>,
+        /// Do not manipulate config
+        pub do_not_manipulate_config: bool,
     }
     impl Default for Config {
         fn default() -> Self {
@@ -112,6 +114,7 @@ pub mod config {
                 listen_address: None,
                 public_address: None,
                 malachite_peers: Vec::new(),
+                do_not_manipulate_config: false,
             }
         }
     }

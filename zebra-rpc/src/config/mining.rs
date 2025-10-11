@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-use zcash_address::ZcashAddress;
+pub use zcash_address::ZcashAddress;
 
 /// Mining configuration section.
 #[serde_as]
