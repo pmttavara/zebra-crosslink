@@ -131,7 +131,11 @@ async fn malachite_system_terminate_engine(
 }
 
 /// Secure hash of the data we're signing/checking the signature for
-pub fn hash_of_height_round_and_data(height: MalHeight, round: MalRound, data: &[u8]) -> Blake3Hash {
+pub fn hash_of_height_round_and_data(
+    height: MalHeight,
+    round: MalRound,
+    data: &[u8],
+) -> Blake3Hash {
     // TODO: Blake3 key
     let mut hasher = blake3::Hasher::new();
     hasher.update(height.as_u64().to_le_bytes().as_slice());
@@ -374,7 +378,8 @@ async fn malachite_system_main_loop(
                     // Include metadata about the proposal
                     let data_bytes = proposal.value.value_bytes;
 
-                    let hash = hash_of_height_round_and_data(proposal.height, proposal.round, &data_bytes);
+                    let hash =
+                        hash_of_height_round_and_data(proposal.height, proposal.round, &data_bytes);
                     let signature = my_signing_provider.sign(&hash.0);
 
                     let streamed_proposal = MalStreamedProposal {
@@ -627,7 +632,8 @@ async fn malachite_system_main_loop(
                     }
 
                     // Verify the signature
-                    let hash = hash_of_height_round_and_data(parts.height, parts.round, &parts.data_bytes);
+                    let hash =
+                        hash_of_height_round_and_data(parts.height, parts.round, &parts.data_bytes);
                     if !my_signing_provider.verify(&hash.0, &parts.signature, &parts.proposer) {
                         warn!("Invalid signature, ignoring");
                         bft_err_flags |= msg_flag;

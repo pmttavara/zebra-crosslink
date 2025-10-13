@@ -311,21 +311,11 @@ impl TF {
     }
 
     pub fn push_instr_roster_force_include(&mut self, pub_key: [u8; 32], stake: u64, flags: u32) {
-        self.push_instr_ex(
-            TFInstr::ROSTER_FORCE_INCLUDE,
-            flags,
-            &pub_key,
-            [stake, 0],
-        )
+        self.push_instr_ex(TFInstr::ROSTER_FORCE_INCLUDE, flags, &pub_key, [stake, 0])
     }
 
     pub fn push_instr_expect_roster_includes(&mut self, pub_key: [u8; 32], stake: u64, flags: u32) {
-        self.push_instr_ex(
-            TFInstr::EXPECT_ROSTER_INCLUDES,
-            flags,
-            &pub_key,
-            [stake, 0],
-        )
+        self.push_instr_ex(TFInstr::EXPECT_ROSTER_INCLUDES, flags, &pub_key, [stake, 0])
     }
 
     fn is_a_power_of_2(v: usize) -> bool {
@@ -487,12 +477,12 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
         )),
 
         TFInstr::ROSTER_FORCE_INCLUDE => Some(TestInstr::RosterForceInclude(
-                instr.data_slice(bytes).try_into().expect("32-byte array"),
-                instr.val[0],
+            instr.data_slice(bytes).try_into().expect("32-byte array"),
+            instr.val[0],
         )),
         TFInstr::EXPECT_ROSTER_INCLUDES => Some(TestInstr::ExpectRosterIncludes(
-                instr.data_slice(bytes).try_into().expect("32-byte array"),
-                instr.val[0],
+            instr.data_slice(bytes).try_into().expect("32-byte array"),
+            instr.val[0],
         )),
 
         _ => {
@@ -510,7 +500,7 @@ pub(crate) enum TestInstr {
     ExpectPoWChainLength(u32),
     ExpectPoSChainLength(u64),
     ExpectPoWBlockFinality(BlockHash, Option<TFLBlockFinality>),
-    RosterForceInclude([u8; 32], u64), // public address
+    RosterForceInclude([u8; 32], u64),   // public address
     ExpectRosterIncludes([u8; 32], u64), // public address
 }
 
@@ -529,7 +519,7 @@ pub(crate) async fn handle_instr(
             // file.write_all(instr.data_slice(bytes));
 
             let force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
-            test_check(flags, force_feed_ok, "PoW force feed ok",);
+            test_check(flags, force_feed_ok, "PoW force feed ok");
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -538,8 +528,9 @@ pub(crate) async fn handle_instr(
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
-            let force_feed_ok = (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            test_check(flags, force_feed_ok, "PoS force feed ok",);
+            let force_feed_ok =
+                (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
+            test_check(flags, force_feed_ok, "PoS force feed ok");
         }
 
         TestInstr::SetParams(_) => {
@@ -595,19 +586,34 @@ pub(crate) async fn handle_instr(
         TestInstr::ExpectRosterIncludes(pub_key, stake) => {
             let key: MalPublicKey = pub_key.into();
             let internal = internal_handle.internal.lock().await;
-            let finalizer = internal.validators_at_current_height.iter().find(|x| x.public_key == key);
+            let finalizer = internal
+                .validators_at_current_height
+                .iter()
+                .find(|x| x.public_key == key);
 
             if let Some(finalizer) = finalizer {
-                test_check(flags, stake == TEST_STAKE_IGNORED || stake == finalizer.voting_power,
-                    &format!("Finalizer stake: expected {}, actually {}", stake, finalizer.voting_power));
+                test_check(
+                    flags,
+                    stake == TEST_STAKE_IGNORED || stake == finalizer.voting_power,
+                    &format!(
+                        "Finalizer stake: expected {}, actually {}",
+                        stake, finalizer.voting_power
+                    ),
+                );
             } else {
-                test_check(flags, false, &format!("Finalizer found: {:?}", MalPublicKey2(pub_key.into())));
+                test_check(
+                    flags,
+                    false,
+                    &format!("Finalizer found: {:?}", MalPublicKey2(pub_key.into())),
+                );
             }
         }
 
         TestInstr::RosterForceInclude(pub_key, stake) => {
             let mut internal = internal_handle.internal.lock().await;
-            internal.validators_at_current_height.push(crate::MalValidator::new(pub_key.into(), stake));
+            internal
+                .validators_at_current_height
+                .push(crate::MalValidator::new(pub_key.into(), stake));
         }
     }
 }

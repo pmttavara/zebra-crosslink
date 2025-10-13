@@ -122,10 +122,9 @@ pub fn spawn_new_tfl_service(
                 .insecure_user_name
                 .clone()
                 .unwrap_or(public_ip_string);
-                // .unwrap_or(String::from_str("tester").unwrap());
+            // .unwrap_or(String::from_str("tester").unwrap());
             info!("user_name: {}", user_name);
-            let (_, _, public_key) =
-                rng_private_public_key_from_address(&user_name.as_bytes());
+            let (_, _, public_key) = rng_private_public_key_from_address(&user_name.as_bytes());
             array.push(MalValidator::new(public_key, 1));
             map.insert(public_key, user_name);
         }
@@ -134,7 +133,7 @@ pub fn spawn_new_tfl_service(
     };
 
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
-        my_public_key: VerificationKeyBytes::from([0u8;32]),
+        my_public_key: VerificationKeyBytes::from([0u8; 32]),
         latest_final_block: None,
         tfl_is_activated: if is_regtest { true } else { false },
         stakers: Vec::new(),

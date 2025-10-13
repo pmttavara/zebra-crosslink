@@ -15,7 +15,10 @@ use abscissa_core::{
 use semver::{BuildMetadata, Version};
 
 use tokio::sync::watch;
-use zebra_chain::{block::Height, parameters::{testnet, Magic}};
+use zebra_chain::{
+    block::Height,
+    parameters::{testnet, Magic},
+};
 use zebra_network::constants::PORT_IN_USE_ERROR;
 use zebra_rpc::config::mining::ZcashAddress;
 use zebra_state::{
@@ -211,11 +214,14 @@ impl Application for ZebradApp {
             .unwrap()
             .as_ref()
             .cloned()
-            .unwrap_or_else(||{
+            .unwrap_or_else(|| {
                 // NORMAL OPERATION CROSSLINK CONFIG OVERRIDES
                 let mut c = self.config.read().deref().clone();
                 if c.crosslink.do_not_manipulate_config == false {
-                    c.mining.miner_address = Some(ZcashAddress::try_from_encoded("t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap());
+                    c.mining.miner_address = Some(
+                        ZcashAddress::try_from_encoded("t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
+                            .unwrap(),
+                    );
                     c.mining.internal_miner = true;
                     c.network.network = testnet::Parameters::build()
                         // .with_network_name("Testnet")
@@ -223,12 +229,16 @@ impl Application for ZebradApp {
                         .with_slow_start_interval(Height(0))
                         .to_network();
                     c.network.initial_testnet_peers.clear();
-                    c.network.initial_testnet_peers.insert("80.78.31.51:8233".to_owned());
-                    c.network.initial_testnet_peers.insert("80.78.31.32:8233".to_owned());
+                    c.network
+                        .initial_testnet_peers
+                        .insert("80.78.31.51:8233".to_owned());
+                    c.network
+                        .initial_testnet_peers
+                        .insert("80.78.31.32:8233".to_owned());
                     c.mempool.debug_enable_at_height = Some(0);
                 }
                 Arc::new(c)
-        })
+            })
     }
 
     /// Borrow the application state immutably.

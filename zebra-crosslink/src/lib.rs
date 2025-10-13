@@ -453,7 +453,12 @@ async fn propose_new_bft_block(
         return None;
     }
 
-    if internal.validators_at_current_height.iter().position(|v| v.address.0 == *my_public_key).is_none() {
+    if internal
+        .validators_at_current_height
+        .iter()
+        .position(|v| v.address.0 == *my_public_key)
+        .is_none()
+    {
         warn!("I am not in the roster so I will abstain from proposing.");
         return None;
     }
@@ -476,14 +481,20 @@ async fn propose_new_bft_block(
 async fn malachite_wants_to_know_what_the_current_validator_set_is(
     tfl_handle: &TFLServiceHandle,
 ) -> Vec<MalValidator> {
-    let internal = tfl_handle
-        .internal
-        .lock()
-        .await;
+    let internal = tfl_handle.internal.lock().await;
 
-    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
-    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
-        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
     }
     let finalizers = return_validator_list_because_of_malachite_bug;
     if true {
@@ -518,13 +529,26 @@ async fn new_decided_bft_block_from_malachite(
 
     let mut internal = tfl_handle.internal.lock().await;
 
-    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
-    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
-        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
     }
 
     if fat_pointer.points_at_block_hash() != new_block.blake3_hash() {
-        warn!("Fat Pointer hash does not match block hash. fp: {} block: {}", fat_pointer.points_at_block_hash(), new_block.blake3_hash());
+        warn!(
+            "Fat Pointer hash does not match block hash. fp: {} block: {}",
+            fat_pointer.points_at_block_hash(),
+            new_block.blake3_hash()
+        );
         internal.malachite_watchdog = Instant::now()
             .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
             .unwrap();
@@ -724,10 +748,7 @@ async fn new_decided_bft_block_from_malachite(
 
                 // Modify the stake for members
                 if let Some(new_final_block) = &new_final_blocks[i] {
-                    if update_roster_for_block(
-                        &mut internal,
-                        new_final_block,
-                    ) {
+                    if update_roster_for_block(&mut internal, new_final_block) {
                         info!(
                             "Applied command to roster from PoW height {}: \"{}\"",
                             new_final_height_hashes[i].0 .0,
@@ -750,9 +771,18 @@ async fn new_decided_bft_block_from_malachite(
         internal.current_bc_final = new_bc_final;
     }
 
-    let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
-    if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
-        return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
     }
 
     (true, return_validator_list_because_of_malachite_bug)
@@ -995,7 +1025,8 @@ fn update_roster_for_block(internal: &mut TFLServiceInternal, block: &Block) -> 
                         roster[roster_i].voting_power += val;
                     } else {
                         roster.push(MalValidator::new(public_key0, val));
-                        validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                        validators_keys_to_names
+                            .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                     }
                 }
 
@@ -1047,7 +1078,8 @@ fn update_roster_for_block(internal: &mut TFLServiceInternal, block: &Block) -> 
                                 roster[roster_i].voting_power += val;
                             } else {
                                 roster.push(MalValidator::new(public_key0, val));
-                                validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                                validators_keys_to_names
+                                    .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                             }
                         }
                     } else {
@@ -1074,7 +1106,8 @@ fn update_roster_for_block(internal: &mut TFLServiceInternal, block: &Block) -> 
                                 roster[roster_i].voting_power += d;
                             } else {
                                 roster.push(MalValidator::new(public_key0, d));
-                                validators_keys_to_names.insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                                validators_keys_to_names
+                                    .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
                             }
                         }
                     } else {
@@ -1120,7 +1153,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     let user_name = config
         .insecure_user_name
         .unwrap_or(public_ip_string.clone());
-        // .unwrap_or(String::from_str("tester").unwrap());
+    // .unwrap_or(String::from_str("tester").unwrap());
     info!("user_name: {}", user_name);
 
     let (mut rng, my_private_key, my_public_key) =
@@ -1188,13 +1221,19 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let mut malachite_system = None;
     if !*TEST_MODE.lock().unwrap() {
-        let internal = internal_handle
-                    .internal
-                    .lock()
-                    .await;
-        let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
-        if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
-            return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+        let internal = internal_handle.internal.lock().await;
+        let mut return_validator_list_because_of_malachite_bug =
+            internal.validators_at_current_height.clone();
+        if return_validator_list_because_of_malachite_bug
+            .iter()
+            .position(|v| v.address.0 == internal.my_public_key)
+            .is_none()
+        {
+            return_validator_list_because_of_malachite_bug.push(MalValidator {
+                address: MalPublicKey2(internal.my_public_key),
+                public_key: internal.my_public_key,
+                voting_power: 0,
+            });
         }
         drop(internal);
         malachite_system = Some(
@@ -1246,9 +1285,18 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         if malachite_system.is_some() && internal.malachite_watchdog.elapsed().as_secs() > 120 {
             error!("Malachite Watchdog triggered, restarting subsystem...");
             let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);
-            let mut return_validator_list_because_of_malachite_bug = internal.validators_at_current_height.clone();
-            if return_validator_list_because_of_malachite_bug.iter().position(|v| v.address.0 == internal.my_public_key).is_none() {
-                return_validator_list_because_of_malachite_bug.push(MalValidator { address: MalPublicKey2(internal.my_public_key), public_key: internal.my_public_key, voting_power: 0 });
+            let mut return_validator_list_because_of_malachite_bug =
+                internal.validators_at_current_height.clone();
+            if return_validator_list_because_of_malachite_bug
+                .iter()
+                .position(|v| v.address.0 == internal.my_public_key)
+                .is_none()
+            {
+                return_validator_list_because_of_malachite_bug.push(MalValidator {
+                    address: MalPublicKey2(internal.my_public_key),
+                    public_key: internal.my_public_key,
+                    voting_power: 0,
+                });
             }
             malachite_system = Some(
                 start_malachite_with_start_delay(

@@ -625,12 +625,8 @@ pub async fn service_viz_requests(
 
         {
             let internal = tfl_handle.internal.lock().await;
-            new_g.validators_at_current_height = internal
-                .validators_at_current_height
-                .clone();
-            new_g.validators_keys_to_names = internal
-                .validators_keys_to_names
-                .clone();
+            new_g.validators_at_current_height = internal.validators_at_current_height.clone();
+            new_g.validators_keys_to_names = internal.validators_keys_to_names.clone();
         }
 
         // ALT: do 1 or the other of force/read, not both
@@ -3735,13 +3731,14 @@ pub async fn viz_main(
             pt.y += font_size * 0.5;
 
             for val in &g.validators_at_current_height {
-                let string = if let Some(user_name) = g.validators_keys_to_names.get(&val.public_key) {
-                    user_name.clone()
-                } else {
-                    let mut string = format!("{:?}", MalPublicKey2(val.public_key));
-                    string.truncate(16);
-                    string
-                };
+                let string =
+                    if let Some(user_name) = g.validators_keys_to_names.get(&val.public_key) {
+                        user_name.clone()
+                    } else {
+                        let mut string = format!("{:?}", MalPublicKey2(val.public_key));
+                        string.truncate(16);
+                        string
+                    };
                 draw_text_right_align(
                     &format!("{} - {}", val.voting_power, &string,),
                     pt,
@@ -3768,7 +3765,10 @@ pub async fn viz_main(
             pt.y += font_size * 0.5;
 
             for sig in bft_sigs {
-                let string = if let Some(user_name) = g.validators_keys_to_names.get(&MalPublicKey::from(sig.public_key)) {
+                let string = if let Some(user_name) = g
+                    .validators_keys_to_names
+                    .get(&MalPublicKey::from(sig.public_key))
+                {
                     user_name.clone()
                 } else {
                     let mut string = format!("{:?}", MalPublicKey2(sig.public_key.into()));

@@ -68,7 +68,9 @@ impl ZcashSerialize for Header {
 
         let logical_version = if self.version & 0xffff_0000 != 0 {
             self.version.reverse_bits()
-        } else { self.version };
+        } else {
+            self.version
+        };
 
         writer.write_u32::<LittleEndian>(self.version)?;
         self.previous_block_hash.zcash_serialize(&mut writer)?;
@@ -100,7 +102,9 @@ impl ZcashDeserialize for Header {
 
         let logical_version = if version & 0xffff_0000 != 0 {
             version.reverse_bits()
-        } else { version };
+        } else {
+            version
+        };
 
         Ok(Header {
             version,

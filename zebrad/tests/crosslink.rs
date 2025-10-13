@@ -2,16 +2,13 @@
 
 #![cfg(test)]
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
 use chrono::{DateTime, Utc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use zcash_keys::address::Address;
 use zebra_chain::{
     block::{
-        Block,
-        CommandBuf,
-        FatPointerToBftBlock,
-        Hash as BlockHash,
-        Header as BlockHeader,
+        Block, CommandBuf, FatPointerToBftBlock, Hash as BlockHash, Header as BlockHeader,
         Height as BlockHeight,
     },
     fmt::HexDebug,
@@ -23,10 +20,9 @@ use zebra_chain::{
     work::{self, difficulty::CompactDifficulty},
 };
 use zebra_crosslink::chain::*;
-use zebra_crosslink::test_format::*;
-use zebra_crosslink::malctx::*;
 use zebra_crosslink::mal_system::*;
-use zcash_keys::address::Address;
+use zebra_crosslink::malctx::*;
+use zebra_crosslink::test_format::*;
 use zebra_state::crosslink::*;
 use zebrad::application::CROSSLINK_TEST_CONFIG_OVERRIDE;
 use zebrad::config::ZebradConfig;
@@ -489,7 +485,6 @@ fn crosslink_pow_switch_to_finalized_chain_fork_even_though_longer_chain_exists(
 // NOTE: this is very similar to the RPC get_block_template code
 #[derive(Clone, Debug)]
 struct BlockGen {
-
     network: Network,
     // NOTE: these roots need updating if we include shielded transactions
     sapling_root: sapling::tree::Root,
@@ -502,8 +497,9 @@ struct BlockGen {
 
 impl BlockGen {
     const REGTEST_GENESIS_HASH: BlockHash = BlockHash([
-        0x27, 0xe3, 0x01, 0x34, 0xd6, 0x20, 0xe9, 0xfe, 0x61, 0xf7, 0x19, 0x93, 0x83, 0x20, 0xba, 0xb6,
-        0x3e, 0x7e, 0x72, 0xc9, 0x1b, 0x5e, 0x23, 0x02, 0x56, 0x76, 0xf9, 0x0e, 0xd8, 0x11, 0x9f, 0x02,
+        0x27, 0xe3, 0x01, 0x34, 0xd6, 0x20, 0xe9, 0xfe, 0x61, 0xf7, 0x19, 0x93, 0x83, 0x20, 0xba,
+        0xb6, 0x3e, 0x7e, 0x72, 0xc9, 0x1b, 0x5e, 0x23, 0x02, 0x56, 0x76, 0xf9, 0x0e, 0xd8, 0x11,
+        0x9f, 0x02,
     ]);
 
     #[allow(dead_code)]
@@ -517,37 +513,59 @@ impl BlockGen {
         }
     }
 
-    pub fn init_at_genesis_plus_1(network: Network, genesis_hash: BlockHash, miner_address: &Address) -> Self {
+    pub fn init_at_genesis_plus_1(
+        network: Network,
+        genesis_hash: BlockHash,
+        miner_address: &Address,
+    ) -> Self {
         let history_tree = HistoryTree::default();
         let time = chrono::DateTime::<Utc>::from_timestamp(1758127904, 0).expect("valid time");
 
         // NOTE: the first block after genesis appears to need this specific difficulty
         let difficulty_threshold =
-            CompactDifficulty::from_bytes_in_display_order(&[
-                0x20, 0x0c, 0xa6, 0x3f,
-            ])
-            .unwrap();
+            CompactDifficulty::from_bytes_in_display_order(&[0x20, 0x0c, 0xa6, 0x3f]).unwrap();
 
-        let tip = BlockGen::create_block(&network, miner_address, BlockHeight(1), genesis_hash, time, &history_tree, difficulty_threshold);
+        let tip = BlockGen::create_block(
+            &network,
+            miner_address,
+            BlockHeight(1),
+            genesis_hash,
+            time,
+            &history_tree,
+            difficulty_threshold,
+        );
         BlockGen {
             network,
             history_tree,
             sapling_root: sapling::tree::NoteCommitmentTree::default().root(),
             orchard_root: orchard::tree::NoteCommitmentTree::default().root(),
-            tip
+            tip,
         }
     }
 
-    pub fn create_block(network: &Network, miner_address: &Address, height: BlockHeight, previous_block_hash: BlockHash, time: DateTime<Utc>, history_tree: &HistoryTree, difficulty_threshold: CompactDifficulty) -> Arc<zebra_chain::block::Block> {
-        let coinbase_outputs = zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
-            network,
-            height,
-            miner_address,
-            zebra_chain::amount::Amount::new(0), // TODO: update if we want to sim transactions
-        );
+    pub fn create_block(
+        network: &Network,
+        miner_address: &Address,
+        height: BlockHeight,
+        previous_block_hash: BlockHash,
+        time: DateTime<Utc>,
+        history_tree: &HistoryTree,
+        difficulty_threshold: CompactDifficulty,
+    ) -> Arc<zebra_chain::block::Block> {
+        let coinbase_outputs =
+            zebra_rpc::methods::types::get_block_template::standard_coinbase_outputs(
+                network,
+                height,
+                miner_address,
+                zebra_chain::amount::Amount::new(0), // TODO: update if we want to sim transactions
+            );
 
         let coinbase_tx = if true {
-            zebra_chain::transaction::Transaction::new_v4_coinbase(height, coinbase_outputs, Vec::new())
+            zebra_chain::transaction::Transaction::new_v4_coinbase(
+                height,
+                coinbase_outputs,
+                Vec::new(),
+            )
         } else {
             zebra_chain::transaction::Transaction::new_v5_coinbase(
                 network,
@@ -563,13 +581,14 @@ impl BlockGen {
                 [0; 32].into(),
             );
 
-
         Arc::new(Block {
             header: Arc::new(BlockHeader {
                 version: 6,
                 previous_block_hash,
                 merkle_root: default_roots.merkle_root(),
-                commitment_bytes: HexDebug(<[u8; 32]>::from(history_tree.hash().unwrap_or([0u8; 32].into()))),
+                commitment_bytes: HexDebug(<[u8; 32]>::from(
+                    history_tree.hash().unwrap_or([0u8; 32].into()),
+                )),
                 time,
                 difficulty_threshold,
                 nonce: HexDebug([0; 32]),
@@ -587,17 +606,29 @@ impl BlockGen {
         // tip modification by the user, but means that the history_tree is never visibly
         // up-to-date.
         self.history_tree
-            .push(&self.network, self.tip.clone(), &self.sapling_root, &self.orchard_root)
+            .push(
+                &self.network,
+                self.tip.clone(),
+                &self.sapling_root,
+                &self.orchard_root,
+            )
             .unwrap();
 
         let height = zebra_chain::block::Height(self.tip.coinbase_height().unwrap().0 + 1);
         let hash = self.tip.header.hash();
         let time = self.tip.header.time + Duration::from_secs(70);
 
-        let difficulty_threshold = CompactDifficulty::from_bytes_in_display_order(&[
-            0x20, 0x0f, 0x0f, 0x0f,
-        ]).unwrap();
-        self.tip = BlockGen::create_block(&self.network, miner_address, height, hash, time, &self.history_tree, difficulty_threshold);
+        let difficulty_threshold =
+            CompactDifficulty::from_bytes_in_display_order(&[0x20, 0x0f, 0x0f, 0x0f]).unwrap();
+        self.tip = BlockGen::create_block(
+            &self.network,
+            miner_address,
+            height,
+            hash,
+            time,
+            &self.history_tree,
+            difficulty_threshold,
+        );
 
         self.tip.clone()
     }
@@ -610,7 +641,8 @@ fn crosslink_gen_pow_fork() {
 
     let network = Network::new_regtest(Default::default());
     let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
-    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+    let mut gen =
+        BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
     tf.push_instr_load_pow(&gen.tip, 0);
 
     for _ in 2..4 {
@@ -623,12 +655,11 @@ fn crosslink_gen_pow_fork() {
     }
     tf.push_instr_expect_pow_chain_length(7, 0);
 
-    let miner_address2 = zcash_keys::address::Address::Tex([1;20]);
+    let miner_address2 = zcash_keys::address::Address::Tex([1; 20]);
     for _ in 4..8 {
         tf.push_instr_load_pow(&genb.next_block(&miner_address2), 0);
     }
     tf.push_instr_expect_pow_chain_length(8, 0);
-
 
     // Result:
     // P  LOAD_POW (1 - f2245bd187293755539ac981d156e0e09a5d5f3e985abae974c71f04d953a2f1, parent: 029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327)
@@ -647,8 +678,14 @@ fn crosslink_gen_pow_fork() {
     test_bytes(tf.write_to_bytes());
 }
 
-fn create_pos_and_ptr_to_finalize_pow(bft_height: u32, pow_blocks: &[Arc<Block>]) -> BftBlockAndFatPointerToIt {
-    assert_eq!(pow_blocks.len(), PROTOTYPE_PARAMETERS.bc_confirmation_depth_sigma as usize);
+fn create_pos_and_ptr_to_finalize_pow(
+    bft_height: u32,
+    pow_blocks: &[Arc<Block>],
+) -> BftBlockAndFatPointerToIt {
+    assert_eq!(
+        pow_blocks.len(),
+        PROTOTYPE_PARAMETERS.bc_confirmation_depth_sigma as usize
+    );
 
     let block = BftBlock::try_from(
         &PROTOTYPE_PARAMETERS,
@@ -656,11 +693,12 @@ fn create_pos_and_ptr_to_finalize_pow(bft_height: u32, pow_blocks: &[Arc<Block>]
         FatPointerToBftBlock2::null(),
         pow_blocks[0].coinbase_height().expect("valid height").0,
         vec![
-        pow_blocks[0].header.as_ref().clone(),
-        pow_blocks[1].header.as_ref().clone(),
-        pow_blocks[2].header.as_ref().clone(),
-        ]
-    ).expect("valid PoS block");
+            pow_blocks[0].header.as_ref().clone(),
+            pow_blocks[1].header.as_ref().clone(),
+            pow_blocks[2].header.as_ref().clone(),
+        ],
+    )
+    .expect("valid PoS block");
 
     let cert = MalCommitCertificate {
         height: MalHeight::new(bft_height.into()),
@@ -669,7 +707,10 @@ fn create_pos_and_ptr_to_finalize_pow(bft_height: u32, pow_blocks: &[Arc<Block>]
         commit_signatures: Vec::new(), // TODO
     };
 
-    BftBlockAndFatPointerToIt { block, fat_ptr: (&cert).into() }
+    BftBlockAndFatPointerToIt {
+        block,
+        fat_ptr: (&cert).into(),
+    }
 }
 
 #[test]
@@ -679,7 +720,8 @@ fn crosslink_gen_pow_and_no_signature_no_roster_pos() {
 
     let network = Network::new_regtest(Default::default());
     let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
-    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+    let mut gen =
+        BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
 
     let mut pow_common = vec![gen.tip.clone()];
     for _ in 2..4 {
@@ -729,7 +771,8 @@ fn crosslink_add_newcomer_to_roster_via_pow() {
 
     let network = Network::new_regtest(Default::default());
     let miner_address = Address::decode(&network, "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v").unwrap();
-    let mut gen = BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
+    let mut gen =
+        BlockGen::init_at_genesis_plus_1(network, BlockGen::REGTEST_GENESIS_HASH, &miner_address);
 
     gen.tip = Arc::new(Block {
         header: Arc::new(BlockHeader {
@@ -750,7 +793,8 @@ fn crosslink_add_newcomer_to_roster_via_pow() {
     let bft = create_pos_and_ptr_to_finalize_pow(1, &pow_common[0..3]);
     tf.push_instr_load_pos(&bft, 0);
 
-    let (_, _prv_key, pub_key) = zebra_crosslink::rng_private_public_key_from_address("some_pub_key".as_bytes());
+    let (_, _prv_key, pub_key) =
+        zebra_crosslink::rng_private_public_key_from_address("some_pub_key".as_bytes());
     tf.push_instr_expect_roster_includes(pub_key.into(), 1234, 0);
 
     test_bytes(tf.write_to_bytes());
