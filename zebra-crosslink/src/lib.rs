@@ -1118,6 +1118,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         .insecure_user_name
         .unwrap_or(public_ip_string.clone());
         // .unwrap_or(String::from_str("tester").unwrap());
+    info!("user_name: {}", user_name);
 
     let (mut rng, my_private_key, my_public_key) =
         rng_private_public_key_from_address(&user_name.as_bytes());

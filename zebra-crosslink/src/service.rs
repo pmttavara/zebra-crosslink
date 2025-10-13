@@ -123,6 +123,7 @@ pub fn spawn_new_tfl_service(
                 .clone()
                 .unwrap_or(public_ip_string);
                 // .unwrap_or(String::from_str("tester").unwrap());
+            info!("user_name: {}", user_name);
             let (_, _, public_key) =
                 rng_private_public_key_from_address(&user_name.as_bytes());
             array.push(MalValidator::new(public_key, 1));
