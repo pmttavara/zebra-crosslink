@@ -224,7 +224,7 @@ impl Application for ZebradApp {
                     );
                     c.mining.internal_miner = true;
                     c.network.network = testnet::Parameters::build()
-                        // .with_network_name("Testnet")
+                        //.with_network_name("CrosslinkTestnet")
                         .with_network_magic(Magic([67, 108, 84, 110]))
                         .with_slow_start_interval(Height(0))
                         .to_network();
@@ -236,6 +236,8 @@ impl Application for ZebradApp {
                         .initial_testnet_peers
                         .insert("80.78.31.32:8233".to_owned());
                     c.mempool.debug_enable_at_height = Some(0);
+
+                    c.crosslink.malachite_peers = vec!["/ip4/80.78.31.51/tcp/8234".to_owned(), "/ip4/80.78.31.32/tcp/8234".to_owned()];
                 }
                 Arc::new(c)
             })
