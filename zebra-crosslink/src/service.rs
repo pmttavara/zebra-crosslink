@@ -103,6 +103,36 @@ pub fn spawn_new_tfl_service(
     force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
+    let (validators_at_current_height, validators_keys_to_names) = {
+        let mut array = Vec::with_capacity(config.malachite_peers.len());
+        let mut map = std::collections::HashMap::with_capacity(config.malachite_peers.len());
+
+        for peer in config.malachite_peers.iter() {
+            let (_, _, public_key) = rng_private_public_key_from_address(peer.as_bytes());
+            array.push(MalValidator::new(public_key, 1));
+            map.insert(public_key, peer.to_string());
+        }
+
+        if array.is_empty() {
+            let public_ip_string = config
+                .public_address
+                .clone()
+                .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+            let user_name = config
+                .insecure_user_name
+                .clone()
+                .unwrap_or(public_ip_string);
+                // .unwrap_or(String::from_str("tester").unwrap());
+            info!("user_name: {}", user_name);
+            let (_, _, public_key) =
+                rng_private_public_key_from_address(&user_name.as_bytes());
+            array.push(MalValidator::new(public_key, 1));
+            map.insert(public_key, user_name);
+        }
+
+        (array, map)
+    };
+
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
         my_public_key: VerificationKeyBytes::from([0u8;32]),
         latest_final_block: None,
@@ -115,26 +145,8 @@ pub fn spawn_new_tfl_service(
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
         proposed_bft_string: None,
         malachite_watchdog: tokio::time::Instant::now(),
-        validators_at_current_height: {
-            let mut array = Vec::with_capacity(config.malachite_peers.len());
-
-            for peer in config.malachite_peers.iter() {
-                let (_, _, public_key) = rng_private_public_key_from_address(peer.as_bytes());
-                array.push(MalValidator::new(public_key, 1));
-            }
-
-            if array.is_empty() {
-                let public_ip_string = config
-                    .public_address
-                    .clone()
-                    .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
-                let (_, _, public_key) =
-                    rng_private_public_key_from_address(&public_ip_string.as_bytes());
-                array.push(MalValidator::new(public_key, 1));
-            }
-
-            array
-        },
+        validators_at_current_height,
+        validators_keys_to_names,
         current_bc_final: None,
     }));
 
