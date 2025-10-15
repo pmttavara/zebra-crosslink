@@ -15,25 +15,34 @@
 <!-- Mark to add banner and badges -->
 
 `zebra-crosslink` is [Shielded Labs](https://shieldedlabs.net)'s implementation of *Zcash
-Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/).
+Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/). Refer to the [Rationale, Scope, and Goals](./design/scoping.md) to understand our effort.
 
-***Status:*** This codebase is an early prototype, and suitable only for contributors who want to
-get involved.
+## Prototype Codebase
+
+***Status:*** This codebase is an early prototype, and suitable for the adventurous or curious who
+want to explore rough experimental releases.
 
 This [`zebra-crosslink`](https://github.com/ShieldedLabs/zebra-crosslink) codebase is a fork of
-[`zebra`](https://github.com/ZcashFoundation/zebra). This book is entirely focused on this
-implementation of *Zcash Crosslink*. For general Zebra usage or development documentation, please
-refer to the official [Zebra Book](https://zebra.zfnd.org/), keeping in mind changes in this
-prototype (which we attempt to thoroughly document here).
+[`zebra`](https://github.com/ZcashFoundation/zebra).
+ If you simply want a modern Zcash production-ready mainnet node, please use that upstream node.
 
-The overarching design of *Zcash Crosslink* in this prototype is based off of the [Crosslink 2
-hybrid construction for the Trailing Finality
+This book is entirely focused on this implementation of *Zcash Crosslink*. For general Zebra usage
+or development documentation, please refer to the official [Zebra Book](https://zebra.zfnd.org/),
+keeping in mind changes in this prototype (which we attempt to thoroughly document here). The
+
+<!--
+overarching design of *Zcash Crosslink* in this prototype is based off of the [Crosslink 2 hybrid
+construction for the Trailing Finality
 Layer](https://electric-coin-company.github.io/tfl-book/design/crosslink.html).
+-->
 
-To see the rational, scope, and goals of this prototype, see
-[`./SCOPING.md`](./crosslink/SCOPING.md).
+### Build and Usage
 
 To try out the software and join the testnet, see [Build and Usage](./user/build-and-usage.md).
+
+### Design and Implementation
+
+See the [Design](./design.md) and [Implementation](./implementation.md) for an understanding of this software that we update throughout development.
 
 ## Maintainers
 
