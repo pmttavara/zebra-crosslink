@@ -88,9 +88,7 @@
           name-suffix = "book";
           paths = [
             ./book
-            ./DELIVERABLES.md
             ./README.md
-            ./SCOPING.md
           ];
         };
 
