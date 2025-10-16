@@ -1,60 +1,52 @@
-# zebra-crosslink
+# `zebra-crosslink`
+
+<!--
+  Note: This is the top-level source repo `README.md` as well as
+  the front of the `zebra-crosslink` book.
+
+  All of the relative path links of the form [anchor text](./relative/path)
+  are relative to the book source directory which is at `./book/src`
+  under the repo dir.
+
+  For example, the [Build and Usage](./user/build-and-usage.md) page's source is at
+  `./book/src/user/build-and-usage.md`.
+-->
 
 <!-- Mark to add banner and badges -->
 
-## Table of Contents
+`zebra-crosslink` is [Shielded Labs](https://shieldedlabs.net)'s implementation of *Zcash
+Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/). Refer to the [Rationale, Scope, and Goals](./design/scoping.md) to understand our effort.
 
-- [Background](#background)
-- [Install](#install)
-- [Usage](#usage)
-- [Maintainers](#maintainers)
-- [Contributing](#contributing)
-- [License](#license)
+## Prototype Codebase
 
-## Background
+***Status:*** This codebase is an early prototype, and suitable for the adventurous or curious who
+want to explore rough experimental releases.
 
-`zebra-crosslink` is Shielded Labs's implementation of *Crosslink*, a hybrid PoW/PoS consensus
-protocol for [Zcash](https://z.cash/).
+This [`zebra-crosslink`](https://github.com/ShieldedLabs/zebra-crosslink) codebase is a fork of
+[`zebra`](https://github.com/ZcashFoundation/zebra).
+ If you simply want a modern Zcash production-ready mainnet node, please use that upstream node.
 
-**Status:** This codebase is an early prototype, and suitable only for contributors who want to get
-involved.
+This book is entirely focused on this implementation of *Zcash Crosslink*. For general Zebra usage
+or development documentation, please refer to the official [Zebra Book](https://zebra.zfnd.org/),
+keeping in mind changes in this prototype (which we attempt to thoroughly document here). The
 
-See `./book/src/crosslink.md` for in-progress documentation on this implementation.
+<!--
+overarching design of *Zcash Crosslink* in this prototype is based off of the [Crosslink 2 hybrid
+construction for the Trailing Finality
+Layer](https://electric-coin-company.github.io/tfl-book/design/crosslink.html).
+-->
 
-See `./SCOPING.md` for major goals and non-goals for this implementation.
+### Build and Usage
 
-## Install
+To try out the software and join the testnet, see [Build and Usage](./user/build-and-usage.md).
 
-Building zebra-crosslink requires [Rust](https://www.rust-lang.org/tools/install),
-[libclang](https://clang.llvm.org/doxygen/group__CINDEX.html), and a C++ compiler.
+### Design and Implementation
 
-### Dependencies
-
-1. Install [`cargo` and `rustc`](https://www.rust-lang.org/tools/install).
-
-2. Install zebra-crosslink's build dependencies:
-
-   - **libclang** is a library that might have different names depending on your
-     package manager. Typical names are `libclang`, `libclang-dev`, `llvm`, or
-     `llvm-dev`.
-   - **clang** or another C++ compiler: `g++` (all platforms) or `Xcode` (macOS).
-   - **[`protoc`](https://grpc.io/docs/protoc-installation/)**
-
-```sh
-cargo build --locked zebrad
-```
-
-## Usage
-
-```sh
-cargo run
-```
-
-To connect to the current prototype testnet, see [crosslink-testnet.md](crosslink-testnet.md).
+See the [Design](./design.md) and [Implementation](./implementation.md) for an understanding of this software that we update throughout development.
 
 ## Maintainers
 
-zebra-crosslink is maintained by Shielded Labs, makers of fine Zcash software.
+`zebra-crosslink` is maintained by [Shielded Labs](https://shieldedlabs.net), makers of fine Zcash software.
 
 ## Contributing
 
