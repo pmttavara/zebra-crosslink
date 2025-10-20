@@ -1271,34 +1271,51 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     #[cfg(not(feature = "malachite"))]
     {
         let roster : Vec<tenderloin::SortedRosterMember> = vec![tenderloin::SortedRosterMember { pub_key: tenderloin::PubKeyID(my_public_key.into()), stake: 1, cumulative_stake: 1, }];
-        
-        let decisions = Arc::new(Mutex::new(Vec::<(tenderloin::BlockValue, tenderloin::FatPointerToBftBlock3)>::new()));
-        let decisions2 = Arc::clone(&decisions);
+
+        let tfl_handle1 = internal_handle.clone();
+        let tfl_handle2 = internal_handle.clone();
+        let tfl_handle3 = internal_handle.clone();
 
         tokio::spawn(tenderloin::entry_point(my_private_key, None, None, roster, vec![], None,
             tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
+                let tfl_handle1 = tfl_handle1.clone();
                 Box::pin(async move {
-                    let mut buf = vec![0_u8; tenderloin::PROPOSAL_BUF_SIZE];
-                    rand::thread_rng().fill_bytes(&mut buf);
-                    Some(tenderloin::BlockValue(buf))
+                    propose_new_bft_block(&tfl_handle1).await.map(|block| tenderloin::BlockValue(block.zcash_serialize_to_vec().unwrap()))
                 })
             })),
             tenderloin::ClosureToValidateProposedBlock(Arc::new(move |block| {
+                let tfl_handle2 = tfl_handle2.clone();
                 Box::pin(async move {
-                    tenderloin::TMStatus::Pass
+                    use bytes::Buf;
+                    use zebra_chain::serialization::ZcashDeserialize;
+
+                    if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
+                        if validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await {
+                            tenderloin::TMStatus::Pass
+                        } else { tenderloin::TMStatus::Fail }
+                    } else {
+                        error!("Failed to deserialize Tenderloin payload.");
+                        tenderloin::TMStatus::Fail 
+                    }
                 })
             })),
             tenderloin::ClosureToPushDecidedBlock(Arc::new(move |block, fat_pointer| {
-                let decisions = Arc::clone(&decisions);
+                let tfl_handle3 = tfl_handle3.clone();
                 Box::pin(async move {
-                    decisions.lock().unwrap().push((block, fat_pointer));
-                    true
+                    use bytes::Buf;
+                    use zebra_chain::serialization::ZcashDeserialize;
+
+                    if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
+                        new_decided_bft_block_from_malachite(&tfl_handle3, &bft_block, &fat_pointer.into()).await.0
+                    } else {
+                        error!("Failed to deserialize Tenderloin payload. On push.");
+                        false
+                    }
                 })
             })),
             tenderloin::ClosureToGetHistoricalBlock(Arc::new(move |height| {
-                let decisions = Arc::clone(&decisions2);
                 Box::pin(async move {
-                    decisions.lock().unwrap()[height as usize].clone()
+                    panic!();
                 })
             }))
         ));

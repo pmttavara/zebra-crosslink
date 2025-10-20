@@ -124,6 +124,15 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
     }
 }
 
+impl From<tenderloin::FatPointerToBftBlock3> for FatPointerToBftBlock2 {
+    fn from(fat_pointer: tenderloin::FatPointerToBftBlock3) -> FatPointerToBftBlock2 {
+        FatPointerToBftBlock2 {
+            vote_for_block_without_finalizer_public_key: fat_pointer.vote_for_block_without_finalizer_public_key,
+            signatures: fat_pointer.signatures.into_iter().map(|s| FatPointerSignature2 {public_key: s.public_key, vote_signature: s.vote_signature }).collect(),
+        }
+    }
+}
+
 impl FatPointerToBftBlock2 {
     pub fn to_non_two(self) -> zebra_chain::block::FatPointerToBftBlock {
         zebra_chain::block::FatPointerToBftBlock {
