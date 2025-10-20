@@ -51,6 +51,8 @@ ed25519-zebra = { workspace = true }
 
 static_assertions = { workspace = true }
 
+snow = { version = "0.10.0", default-features = false, features = ["use-curve25519", "use-chacha20poly1305", "use-blake2", "use-getrandom"] }
+
 macroquad = { version = "0.4.14", optional = true }
 macroquad-profiler = { version = "0.2.0", optional = true }
 # macroquad transitive dependencies:
@@ -121,7 +123,7 @@ package = "informalsystems-malachitebft-sync"
 [dependencies.tenderloin]
 version = "0.1.0"
 git = "https://git.sr.ht/~azmr/stuff"
-rev = "6ec16630314734a0f4e0feb43f3976606de90eb4"
+rev = "021d9098d0ddcf5df9fdde53d4a28c87179be5cd"
 #path = "/home/sam/dev/stuff"
 package = "tenderloin"
 

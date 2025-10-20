@@ -2888,7 +2888,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -5677,7 +5677,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.16",
  "tokio",
  "tracing",
@@ -5714,7 +5714,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -6865,12 +6865,12 @@ dependencies = [
 
 [[package]]
 name = "socket2"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "233504af464074f9d066d7b5416c5f9b894a5862a6506e306f7b816cdd6f1807"
+checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7115,7 +7115,7 @@ dependencies = [
 [[package]]
 name = "tenderloin"
 version = "0.1.0"
-source = "git+https://git.sr.ht/~azmr/stuff?rev=6ec16630314734a0f4e0feb43f3976606de90eb4#6ec16630314734a0f4e0feb43f3976606de90eb4"
+source = "git+https://git.sr.ht/~azmr/stuff?rev=021d9098d0ddcf5df9fdde53d4a28c87179be5cd#021d9098d0ddcf5df9fdde53d4a28c87179be5cd"
 dependencies = [
  "blake3",
  "byteorder",
@@ -7124,6 +7124,7 @@ dependencies = [
  "rand_chacha 0.9.0",
  "rand_pcg",
  "snow 0.10.0",
+ "socket2 0.6.1",
  "static_assertions",
  "tokio",
 ]
@@ -7301,7 +7302,7 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
- "socket2 0.6.0",
+ "socket2 0.6.1",
  "tokio-macros",
  "tracing",
  "windows-sys 0.59.0",
@@ -7505,7 +7506,7 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
- "socket2 0.6.0",
+ "socket2 0.6.1",
  "sync_wrapper",
  "tokio",
  "tokio-stream",
@@ -9248,6 +9249,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "snow 0.10.0",
  "static_assertions",
  "strum",
  "strum_macros",

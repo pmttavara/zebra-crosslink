@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
+use tenderloin::SortedRosterMember;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 use zebra_state::crosslink::*;
 
@@ -525,12 +526,17 @@ async fn malachite_wants_to_know_what_the_current_validator_set_is(
 
     finalizers
 }
+#[cfg(feature = "malachite")]
+type RustIsBadAndHasNoIfDefReturnType1 = (bool, Vec<MalValidator>);
+#[cfg(not(feature = "malachite"))]
+type RustIsBadAndHasNoIfDefReturnType1 = Vec<tenderloin::SortedRosterMember>;
 
 async fn new_decided_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
     fat_pointer: &FatPointerToBftBlock2,
-) -> (bool, Vec<MalValidator>) {
+) -> RustIsBadAndHasNoIfDefReturnType1
+{
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -571,13 +577,19 @@ async fn new_decided_bft_block_from_malachite(
     // TODO: check public keys on the fat pointer against the roster
     if fat_pointer.validate_signatures() == false {
         warn!("Signatures are not valid. Rejecting block.");
+        #[cfg(feature = "malachite")]
         return (false, return_validator_list_because_of_malachite_bug);
+        #[cfg(not(feature = "malachite"))]
+        panic!();
     }
 
     if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
         == false
     {
+        #[cfg(feature = "malachite")]
         return (false, return_validator_list_because_of_malachite_bug);
+        #[cfg(not(feature = "malachite"))]
+        panic!();
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -788,8 +800,10 @@ async fn new_decided_bft_block_from_malachite(
         internal.current_bc_final = new_bc_final;
     }
 
+    #[cfg(feature = "malachite")]
     let mut return_validator_list_because_of_malachite_bug =
         internal.validators_at_current_height.clone();
+    #[cfg(feature = "malachite")]
     if return_validator_list_because_of_malachite_bug
         .iter()
         .position(|v| v.address.0 == internal.my_public_key)
@@ -802,7 +816,24 @@ async fn new_decided_bft_block_from_malachite(
         });
     }
 
-    (true, return_validator_list_because_of_malachite_bug)
+    #[cfg(feature = "malachite")]
+    return (true, return_validator_list_because_of_malachite_bug);
+
+    tenderloin_roster_from_internal(&internal.validators_at_current_height)
+}
+
+fn tenderloin_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMember> {
+    let mut ret: Vec<SortedRosterMember> = vals.iter().map(|v| SortedRosterMember {pub_key: tenderloin::PubKeyID(v.public_key.into()), stake: v.voting_power, cumulative_stake: 0}).collect();
+    ret.sort_by_key(|m: &SortedRosterMember| (m.stake, m.pub_key));
+    ret.reverse();
+
+    let mut cumulative_stake = 0;
+    for m in &mut ret {
+        cumulative_stake += m.stake;
+        m.cumulative_stake = cumulative_stake;
+    }
+    debug_assert!(ret.is_sorted_by(|a,b| a.stake >= b.stake)); // descending
+    ret
 }
 
 async fn validate_bft_block_from_malachite(
@@ -1164,7 +1195,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     let public_ip_string = config
         .public_address
-        .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+        .unwrap_or(String::from_str("/ip4/127.0.0.1/tcp/45869").unwrap());
     info!("public IP: {}", public_ip_string);
 
     let user_name = config
@@ -1190,6 +1221,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     bft_config.logging.log_level = crate::mconfig::LogLevel::Error;
 
+    #[cfg(feature = "malachite")]
     for peer in config.malachite_peers.iter() {
         bft_config
             .consensus
@@ -1197,6 +1229,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&peer).unwrap());
     }
+    #[cfg(feature = "malachite")]
     if bft_config.consensus.p2p.persistent_peers.is_empty() {
         bft_config
             .consensus
@@ -1204,6 +1237,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
+    #[cfg(feature = "malachite")]
     if let Some(position) = bft_config
         .consensus
         .p2p
@@ -1215,15 +1249,21 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     }
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
-    if let Some(listen_addr) = config.listen_address {
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
+    #[cfg(feature = "malachite")]
+    if let Some(listen_addr) = &config.listen_address {
+        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(listen_addr).unwrap();
     } else {
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
-            "/ip4/127.0.0.1/tcp/{}",
-            45869 + rand::random::<u32>() % 1000
-        ))
-        .unwrap();
+        {
+            bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
+                "/ip4/127.0.0.1/tcp/{}",
+                45869 + rand::random::<u32>() % 1000
+            ))
+            .unwrap();
+        }
     }
+
+
+
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Random,
         bootstrap_protocol: mconfig::BootstrapProtocol::Full,
@@ -1268,15 +1308,64 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         );
     }
 
+    
     #[cfg(not(feature = "malachite"))]
     {
-        let roster : Vec<tenderloin::SortedRosterMember> = vec![tenderloin::SortedRosterMember { pub_key: tenderloin::PubKeyID(my_public_key.into()), stake: 1, cumulative_stake: 1, }];
+        use tenderloin::{SecureUdpEndpoint, StaticDHKeyPair};
 
+        use std::net::{SocketAddr, Ipv6Addr};
+
+        /// Parses "IP[:port]" (IPv4 or bracketed IPv6 with port) into (16-byte IPv6, port)
+        fn parse_to_ipv6_bytes(s: &str) -> Result<([u8; 16], u16), std::net::AddrParseError> {
+            let sa: SocketAddr = s.parse()?;
+
+            let (ip6, port) = match sa {
+                SocketAddr::V4(v4) => {
+                    // Map IPv4 to IPv6-mapped ::ffff:a.b.c.d
+                    (v4.ip().to_ipv6_mapped(), v4.port())
+                    // (Alternatively on newer Rust: (v4.ip().to_ipv6_mapped(), v4.port()))
+                }
+                SocketAddr::V6(v6) => (*v6.ip(), v6.port()),
+            };
+
+            Ok((ip6.octets(), port))
+        }
+
+        fn addr_string_to_stuff(addr: &str) -> (StaticDHKeyPair, SecureUdpEndpoint) {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(addr.as_bytes());
+            let seed = hasher.finish();
+
+            let kp = snow::Builder::with_resolver("Noise_IK_25519_ChaChaPoly_BLAKE2s".parse().unwrap(), Box::new(tenderloin::SnowRngResolver::seed_from_u64(seed))).generate_keypair().unwrap();
+            let static_keypair = tenderloin::StaticDHKeyPair { private: kp.private.try_into().unwrap(), public: kp.public.try_into().unwrap(), };
+            let (ip, port) = parse_to_ipv6_bytes(addr).unwrap();
+            (static_keypair, SecureUdpEndpoint { public_key: static_keypair.public, ip_address: ip, port })
+        }
+
+        let mut static_keypair_maybe = None;
+        let mut endpoint_maybe = None;
+        if let Some(listen_addr) = &config.listen_address {
+            let (a, b) = addr_string_to_stuff(&listen_addr);
+            static_keypair_maybe = Some(a);
+            endpoint_maybe = Some(b);
+        };
+
+        let unsorted_roster = internal_handle.internal.lock().await.validators_at_current_height.clone();
+        let roster = tenderloin_roster_from_internal(&unsorted_roster);
+
+        // Note(Sam): We do not support human names in the start config for now.
+        let evidence = unsorted_roster.iter().enumerate().map(|(i, m)| {
+            use tenderloin::EndpointEvidence;
+
+            let (a, b) = addr_string_to_stuff(&config.malachite_peers[i]);
+            EndpointEvidence { endpoint: b, root_public_key: m.public_key.into(), }
+        }).collect();
+        
         let tfl_handle1 = internal_handle.clone();
         let tfl_handle2 = internal_handle.clone();
         let tfl_handle3 = internal_handle.clone();
 
-        tokio::spawn(tenderloin::entry_point(my_private_key, None, None, roster, vec![], None,
+        tokio::spawn(tenderloin::entry_point(my_private_key, static_keypair_maybe, endpoint_maybe, roster, evidence, None,
             tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
                 let tfl_handle1 = tfl_handle1.clone();
                 Box::pin(async move {
@@ -1305,12 +1394,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     use bytes::Buf;
                     use zebra_chain::serialization::ZcashDeserialize;
 
-                    if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
-                        new_decided_bft_block_from_malachite(&tfl_handle3, &bft_block, &fat_pointer.into()).await.0
-                    } else {
-                        error!("Failed to deserialize Tenderloin payload. On push.");
-                        false
-                    }
+                    new_decided_bft_block_from_malachite(&tfl_handle3, &BftBlock::zcash_deserialize(block.0.reader()).unwrap(), &fat_pointer.into()).await
                 })
             })),
             tenderloin::ClosureToGetHistoricalBlock(Arc::new(move |height| {

@@ -156,9 +156,14 @@ pub fn spawn_new_tfl_service(
     let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
         let handle = handle_mtx2.lock().unwrap().clone().unwrap();
         Box::pin(async move {
+            #[cfg(feature = "malachite")]
             let (accepted, _) =
                 crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
                     .await;
+            #[cfg(not(feature = "malachite"))]
+            crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await;
+            #[cfg(not(feature = "malachite"))]
+            let accepted = true;
             if accepted {
                 info!("Successfully force-fed BFT block");
                 true
