@@ -288,7 +288,7 @@ pub trait Rpc {
 
     /// Get BFT command buffer
     #[method(name = "set_tfl_command_buf")]
-    async fn set_tfl_command_buf(&self, string: String);
+    async fn set_tfl_command_buf(&self, string: String) -> Option<String>;
 
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
@@ -1850,7 +1850,7 @@ where
         }
     }
 
-    async fn set_tfl_command_buf(&self, string: String) {
+    async fn set_tfl_command_buf(&self, string: String) -> Option<String> {
         if let Ok(TFLServiceResponse::SetCommandBuf) = self
             .tfl_service
             .clone()
@@ -1861,7 +1861,11 @@ where
                 &string,
             )))
             .await
-        {}
+        {
+            Some(string)
+        } else {
+            None
+        }
     }
 
     async fn update_tfl_staker(&self, staker: TFLStaker) {
