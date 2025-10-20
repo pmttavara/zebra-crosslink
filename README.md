@@ -4,22 +4,22 @@
   Note: This is the top-level source repo `README.md` as well as
   the front of the `zebra-crosslink` book.
 
-  All of the relative path links of the form [anchor text]relative/path)
+  All of the relative path links of the form [anchor text](relative/path)
   are relative to the book source directory which is at `./book/src`
   under the repo dir.
 
-  For example, the [Build and Usage]user/build-and-usage.md) page's source is at
+  For example, the [Build and Usage](user/build-and-usage.md) page's source is at
   `./book/src/user/build-and-usage.md`.
 -->
 
 <!-- Mark to add banner and badges -->
 
 `zebra-crosslink` is [Shielded Labs](https://shieldedlabs.net)'s implementation of *Zcash
-Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/). Refer to the [Rationale, Scope, and Goals]design/scoping.md) to understand our effort.
+Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/). Refer to the [Rationale, Scope, and Goals](design/scoping.md) to understand our effort.
 
 ## Milestone 4a Workshop
 
-If you're here to participate in the Milestone 4a Workshop (either during or after the event), please see the [Milestone 4a Workshop](milestone-4a-workshop.md) guide.
+If you're here to participate in the Milestone 4a Workshop (either during or after the event), please see the [Milestone 4a Workshop](milestone-4a-workshop.md)
 
 ## Prototype Codebase
 
@@ -42,11 +42,11 @@ Layer](https://electric-coin-company.github.io/tfl-book/design/crosslink.html).
 
 ### Build and Usage
 
-To try out the software and join the testnet, see [Build and Usage]user/build-and-usage.md).
+To try out the software and join the testnet, see [Build and Usage](user/build-and-usage.md).
 
 ### Design and Implementation
 
-See the [Design]design.md) and [Implementation]implementation.md) for an understanding of this software that we update throughout development.
+See the [Design](design.md) and [Implementation](implementation.md) for an understanding of this software that we update throughout development.
 
 ## Maintainers
 
