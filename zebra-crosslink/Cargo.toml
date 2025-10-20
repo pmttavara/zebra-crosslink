@@ -58,7 +58,7 @@ macroquad-profiler = { version = "0.2.0", optional = true }
 # macroquad transitive dependencies:
 image = { version = "0.24", default-features = false, features = ["png", "tga"], optional = true }
 miniquad = { version = "0.4.8", optional = true }
-hex                = { version = "0.4.3", features = ["serde"] }
+hex = { version = "0.4.3", features = ["serde"] }
 lazy_static = "1.5"
 
 [dev-dependencies]
@@ -67,7 +67,7 @@ zebra-test = { path = "../zebra-test", version = "1.0.0-beta.45" }
 [features]
 default = []
 viz_gui = ["macroquad", "macroquad-profiler", "image", "miniquad"]
-audio   = ["macroquad/audio"]
+audio = ["macroquad/audio"]
 malachite = []
 
 [dependencies.malachitebft-app-channel]
