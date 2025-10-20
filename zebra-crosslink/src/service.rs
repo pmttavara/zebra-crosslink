@@ -22,7 +22,7 @@ use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{crosslink::*, Request as StateRequest, Response as StateResponse};
 
 use crate::chain::BftBlock;
-use crate::mal_system::FatPointerToBftBlock2;
+use crate::FatPointerToBftBlock2;
 use crate::malctx::{MalPublicKey2, MalValidator};
 use crate::{
     rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster,
@@ -143,6 +143,7 @@ pub fn spawn_new_tfl_service(
         bft_blocks: Vec::new(),
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
         proposed_bft_string: None,
+        #[cfg(feature = "malachite")]
         malachite_watchdog: tokio::time::Instant::now(),
         validators_at_current_height,
         validators_keys_to_names,

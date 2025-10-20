@@ -66,6 +66,7 @@ zebra-test = { path = "../zebra-test", version = "1.0.0-beta.45" }
 default = []
 viz_gui = ["macroquad", "macroquad-profiler", "image", "miniquad"]
 audio   = ["macroquad/audio"]
+malachite = []
 
 [dependencies.malachitebft-app-channel]
 version = "0.5.0"
@@ -116,6 +117,13 @@ version = "0.5.0"
 git = "https://github.com/circlefin/malachite.git"
 rev = "8a64f82061690b70e0522b71f32152295ccb0df5"
 package = "informalsystems-malachitebft-sync"
+
+[dependencies.tenderloin]
+version = "0.1.0"
+git = "https://git.sr.ht/~azmr/stuff"
+rev = "282007aafb459bb9a3f3343cce19df3d13e0634a"
+#path = "/home/sam/dev/stuff"
+package = "tenderloin"
 
 [build-dependencies]
 prost-build = "0.13"

@@ -20,6 +20,7 @@ use zebra_chain::{
     work::{self, difficulty::CompactDifficulty},
 };
 use zebra_crosslink::chain::*;
+#[cfg(feature = "malachite")]
 use zebra_crosslink::mal_system::*;
 use zebra_crosslink::malctx::*;
 use zebra_crosslink::test_format::*;

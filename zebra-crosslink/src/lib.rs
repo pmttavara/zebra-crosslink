@@ -34,7 +34,9 @@ pub mod malctx;
 use malctx::*;
 pub mod chain;
 use chain::*;
+#[cfg(feature = "malachite")]
 pub mod mal_system;
+#[cfg(feature = "malachite")]
 use mal_system::*;
 
 use std::sync::Mutex;
@@ -171,6 +173,7 @@ pub(crate) struct TFLServiceInternal {
     fat_pointer_to_tip: FatPointerToBftBlock2,
     proposed_bft_string: Option<String>,
 
+    #[cfg(feature = "malachite")]
     malachite_watchdog: Instant,
 
     // TODO: 2 versions of this: ever-added (in sequence) & currently non-0
@@ -354,7 +357,9 @@ async fn push_new_bft_msg_flags(
 
 async fn propose_new_bft_block(
     tfl_handle: &TFLServiceHandle,
+    #[cfg(feature = "malachite")]
     my_public_key: &MalPublicKey,
+    #[cfg(feature = "malachite")]
     at_height: u64,
 ) -> Option<BftBlock> {
     #[cfg(feature = "viz_gui")]
@@ -443,6 +448,7 @@ async fn propose_new_bft_block(
 
     let mut internal = tfl_handle.internal.lock().await;
 
+    #[cfg(feature = "malachite")]
     if internal.bft_blocks.len() as u64 + 1 != at_height {
         warn!(
             "Malachite is out of sync with us due to out of band syncing. Let us force reboot it."
@@ -453,6 +459,7 @@ async fn propose_new_bft_block(
         return None;
     }
 
+    #[cfg(feature = "malachite")]
     if internal
         .validators_at_current_height
         .iter()
@@ -549,10 +556,17 @@ async fn new_decided_bft_block_from_malachite(
             fat_pointer.points_at_block_hash(),
             new_block.blake3_hash()
         );
-        internal.malachite_watchdog = Instant::now()
-            .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
-            .unwrap();
-        return (false, return_validator_list_because_of_malachite_bug);
+        #[cfg(feature = "malachite")]
+        {
+            internal.malachite_watchdog = Instant::now()
+                .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
+                .unwrap();
+            return (false, return_validator_list_because_of_malachite_bug);
+        }
+        #[cfg(not(feature = "malachite"))]
+        {
+            panic!();
+        }
     }
     // TODO: check public keys on the fat pointer against the roster
     if fat_pointer.validate_signatures() == false {
@@ -603,7 +617,10 @@ async fn new_decided_bft_block_from_malachite(
     internal.bft_blocks[insert_i] = new_block.clone();
     internal.fat_pointer_to_tip = fat_pointer.clone();
     internal.latest_final_block = Some((new_final_height, new_final_hash));
-    internal.malachite_watchdog = Instant::now();
+    #[cfg(feature = "malachite")]
+    {
+        internal.malachite_watchdog = Instant::now();
+    }
 
     match (call.state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
         Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
@@ -1219,7 +1236,9 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     info!(?bft_config);
 
+    #[cfg(feature = "malachite")]
     let mut malachite_system = None;
+    #[cfg(feature = "malachite")]
     if !*TEST_MODE.lock().unwrap() {
         let internal = internal_handle.internal.lock().await;
         let mut return_validator_list_because_of_malachite_bug =
@@ -1249,10 +1268,47 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         );
     }
 
+    #[cfg(not(feature = "malachite"))]
+    {
+        let roster : Vec<tenderloin::SortedRosterMember> = vec![tenderloin::SortedRosterMember { pub_key: tenderloin::PubKeyID(my_public_key.into()), stake: 1, cumulative_stake: 1, }];
+        
+        let decisions = Arc::new(Mutex::new(Vec::<(tenderloin::BlockValue, tenderloin::FatPointerToBftBlock3)>::new()));
+        let decisions2 = Arc::clone(&decisions);
+
+        tokio::spawn(tenderloin::entry_point(my_private_key, None, None, roster, vec![], None,
+            tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
+                Box::pin(async move {
+                    let mut buf = vec![0_u8; tenderloin::PROPOSAL_BUF_SIZE];
+                    rand::thread_rng().fill_bytes(&mut buf);
+                    Some(tenderloin::BlockValue(buf))
+                })
+            })),
+            tenderloin::ClosureToValidateProposedBlock(Arc::new(move |block| {
+                Box::pin(async move {
+                    tenderloin::TMStatus::Pass
+                })
+            })),
+            tenderloin::ClosureToPushDecidedBlock(Arc::new(move |block, fat_pointer| {
+                let decisions = Arc::clone(&decisions);
+                Box::pin(async move {
+                    decisions.lock().unwrap().push((block, fat_pointer));
+                    true
+                })
+            })),
+            tenderloin::ClosureToGetHistoricalBlock(Arc::new(move |height| {
+                let decisions = Arc::clone(&decisions2);
+                Box::pin(async move {
+                    decisions.lock().unwrap()[height as usize].clone()
+                })
+            }))
+        ));
+    }
+
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();
     let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
 
+    #[cfg(feature = "malachite")]
     {
         let mut internal = internal_handle.internal.lock().await;
         internal.malachite_watchdog = Instant::now();
@@ -1271,6 +1327,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         run_instant += MAIN_LOOP_SLEEP_INTERVAL;
 
         // We need this to allow the malachite system to restart itself internally.
+        #[cfg(feature = "malachite")]
         if let Some(ms) = &mut malachite_system {
             if ms.lock().await.should_terminate {
                 malachite_system = None;
@@ -1282,6 +1339,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         #[allow(unused_mut)]
         let mut internal = internal_handle.internal.lock().await;
 
+        #[cfg(feature = "malachite")]
         if malachite_system.is_some() && internal.malachite_watchdog.elapsed().as_secs() > 120 {
             error!("Malachite Watchdog triggered, restarting subsystem...");
             let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);

@@ -16,7 +16,7 @@ use zebra_chain::serialization::{
     ReadZcashExt, SerializationError, ZcashDeserialize, ZcashSerialize,
 };
 
-use crate::mal_system::FatPointerToBftBlock2;
+use crate::FatPointerToBftBlock2;
 
 /// The BFT block content for Crosslink
 ///
