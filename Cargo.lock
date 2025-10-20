@@ -7115,6 +7115,7 @@ dependencies = [
 [[package]]
 name = "tenderloin"
 version = "0.1.0"
+source = "git+https://git.sr.ht/~azmr/stuff?rev=6ec16630314734a0f4e0feb43f3976606de90eb4#6ec16630314734a0f4e0feb43f3976606de90eb4"
 dependencies = [
  "blake3",
  "byteorder",
