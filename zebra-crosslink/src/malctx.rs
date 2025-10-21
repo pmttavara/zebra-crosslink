@@ -12,7 +12,9 @@ use malachitebft_core_types::{
 use serde::{Deserialize, Serialize};
 
 use malachitebft_proto::{Error as ProtoError, Protobuf};
-use zebra_chain::serialization::{SerializationError, ZcashDeserialize, ZcashDeserializeInto, ZcashSerialize};
+use zebra_chain::serialization::{
+    SerializationError, ZcashDeserialize, ZcashDeserializeInto, ZcashSerialize,
+};
 
 use core::fmt;
 
@@ -127,8 +129,16 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
 impl From<tenderloin::FatPointerToBftBlock3> for FatPointerToBftBlock2 {
     fn from(fat_pointer: tenderloin::FatPointerToBftBlock3) -> FatPointerToBftBlock2 {
         FatPointerToBftBlock2 {
-            vote_for_block_without_finalizer_public_key: fat_pointer.vote_for_block_without_finalizer_public_key,
-            signatures: fat_pointer.signatures.into_iter().map(|s| FatPointerSignature2 {public_key: s.public_key, vote_signature: s.vote_signature }).collect(),
+            vote_for_block_without_finalizer_public_key: fat_pointer
+                .vote_for_block_without_finalizer_public_key,
+            signatures: fat_pointer
+                .signatures
+                .into_iter()
+                .map(|s| FatPointerSignature2 {
+                    public_key: s.public_key,
+                    vote_signature: s.vote_signature,
+                })
+                .collect(),
         }
     }
 }
@@ -279,8 +289,6 @@ impl FatPointerSignature2 {
         }
     }
 }
-
-
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Round")]

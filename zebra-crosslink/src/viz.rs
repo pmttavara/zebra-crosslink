@@ -614,7 +614,7 @@ pub async fn service_viz_requests(
         if old_g.proposed_bft_string.is_some() {
             let mut internal = tfl_handle.internal.lock().await;
             internal.our_set_bft_string = old_g.proposed_bft_string.clone();
-            internal.active_bft_string  = old_g.proposed_bft_string.clone();
+            internal.active_bft_string = old_g.proposed_bft_string.clone();
         }
 
         if !old_g.consumed {

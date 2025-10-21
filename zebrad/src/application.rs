@@ -240,11 +240,15 @@ impl Application for ZebradApp {
 
                     #[cfg(feature = "malachite")]
                     {
-                        c.crosslink.malachite_peers = vec!["/ip4/80.78.31.51/tcp/8234".to_owned(), "/ip4/80.78.31.32/tcp/8234".to_owned()];
+                        c.crosslink.malachite_peers = vec![
+                            "/ip4/80.78.31.51/tcp/8234".to_owned(),
+                            "/ip4/80.78.31.32/tcp/8234".to_owned(),
+                        ];
                     }
                     #[cfg(not(feature = "malachite"))]
                     {
-                        c.crosslink.malachite_peers = vec!["80.78.31.51:8234".to_owned(), "80.78.31.32:8234".to_owned()];
+                        c.crosslink.malachite_peers =
+                            vec!["80.78.31.51:8234".to_owned(), "80.78.31.32:8234".to_owned()];
                     }
                 }
                 Arc::new(c)

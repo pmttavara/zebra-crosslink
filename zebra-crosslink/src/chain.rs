@@ -168,7 +168,8 @@ impl<'a> From<&'a BftBlock> for Blake3Hash {
         #[cfg(feature = "malachite")]
         let mut hash_writer = blake3::Hasher::new();
         #[cfg(not(feature = "malachite"))]
-        let mut hash_writer = blake3::Hasher::new_keyed(&tenderloin::HashKeys::default().value_id.0);
+        let mut hash_writer =
+            blake3::Hasher::new_keyed(&tenderloin::HashKeys::default().value_id.0);
         block
             .zcash_serialize(&mut hash_writer)
             .expect("Sha256dWriter is infallible");

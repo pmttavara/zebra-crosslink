@@ -22,8 +22,8 @@ use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{crosslink::*, Request as StateRequest, Response as StateResponse};
 
 use crate::chain::BftBlock;
-use crate::FatPointerToBftBlock2;
 use crate::malctx::{MalPublicKey2, MalValidator};
+use crate::FatPointerToBftBlock2;
 use crate::{
     rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster,
     TFLServiceInternal,
@@ -162,7 +162,8 @@ pub fn spawn_new_tfl_service(
                 crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
                     .await;
             #[cfg(not(feature = "malachite"))]
-            crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await;
+            crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
+                .await;
             #[cfg(not(feature = "malachite"))]
             let accepted = true;
             if accepted {
