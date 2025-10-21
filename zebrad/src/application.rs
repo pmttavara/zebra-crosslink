@@ -236,6 +236,7 @@ impl Application for ZebradApp {
                         .initial_testnet_peers
                         .insert("80.78.31.32:8233".to_owned());
                     c.mempool.debug_enable_at_height = Some(0);
+                    c.rpc.enable_cookie_auth = false;
 
                     #[cfg(feature = "malachite")]
                     {
