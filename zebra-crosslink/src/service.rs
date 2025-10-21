@@ -162,12 +162,15 @@ pub fn spawn_new_tfl_service(
                 crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
                     .await;
             #[cfg(not(feature = "malachite"))]
-            crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
-                .await;
-            #[cfg(not(feature = "malachite"))]
-            let accepted = true;
+            let accepted = if fat_pointer.points_at_block_hash() == block.blake3_hash() {
+                crate::validate_bft_block_from_malachite(&handle, block.as_ref()).await == tenderloin::TMStatus::Pass
+            } else {
+                false
+            };
             if accepted {
                 info!("Successfully force-fed BFT block");
+                #[cfg(not(feature = "malachite"))]
+                crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer).await;
                 true
             } else {
                 error!("Failed to force-feed BFT block");
