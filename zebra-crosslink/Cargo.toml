@@ -123,7 +123,7 @@ package = "informalsystems-malachitebft-sync"
 [dependencies.tenderloin]
 version = "0.1.0"
 git = "https://git.sr.ht/~azmr/stuff"
-rev = "021d9098d0ddcf5df9fdde53d4a28c87179be5cd"
+rev = "0aaea0c1cc085ec4d37abc394bd9d9381123035d"
 #path = "/home/sam/dev/stuff"
 package = "tenderloin"
 
