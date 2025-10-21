@@ -252,7 +252,7 @@ pub struct VizState {
     pub fat_pointer_to_bft_tip: FatPointerToBftBlock2,
 }
 
-/// Functions & structures for serializing visualizer state to/from disk.
+// /// Functions & structures for serializing visualizer state to/from disk.
 // pub mod serialization {
 //     use super::*;
 //     use chrono::Utc;
