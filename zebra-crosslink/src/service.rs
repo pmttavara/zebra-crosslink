@@ -142,7 +142,8 @@ pub fn spawn_new_tfl_service(
         bft_err_flags: 0,
         bft_blocks: Vec::new(),
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
-        proposed_bft_string: None,
+        our_set_bft_string: None,
+        active_bft_string: None,
         #[cfg(feature = "malachite")]
         malachite_watchdog: tokio::time::Instant::now(),
         validators_at_current_height,

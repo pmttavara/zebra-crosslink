@@ -172,7 +172,8 @@ pub(crate) struct TFLServiceInternal {
     bft_err_flags: u64,
     bft_blocks: Vec<BftBlock>,
     fat_pointer_to_tip: FatPointerToBftBlock2,
-    proposed_bft_string: Option<String>,
+    our_set_bft_string: Option<String>,
+    active_bft_string: Option<String>,
 
     #[cfg(feature = "malachite")]
     malachite_watchdog: Instant,
@@ -1374,10 +1375,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             let (a, b) = addr_string_to_stuff(&config.malachite_peers[i]);
             EndpointEvidence { endpoint: b, root_public_key: m.public_key.into(), }
         }).collect();
-        
+
         let tfl_handle1 = internal_handle.clone();
         let tfl_handle2 = internal_handle.clone();
         let tfl_handle3 = internal_handle.clone();
+        let tfl_handle4 = internal_handle.clone();
 
         tokio::spawn(tenderloin::entry_point(my_private_key, static_keypair_maybe, endpoint_maybe, roster, evidence, None,
             tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
@@ -1396,7 +1398,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                         validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await
                     } else {
                         error!("Failed to deserialize Tenderloin payload.");
-                        tenderloin::TMStatus::Fail 
+                        tenderloin::TMStatus::Fail
                     }
                 })
             })),
@@ -1413,7 +1415,22 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 Box::pin(async move {
                     panic!();
                 })
-            }))
+            })),
+            tenderloin::ClosureToUpdateRosterCmd(Arc::new(move |str| {
+                let tfl_handle = tfl_handle4.clone();
+                Box::pin(async move {
+                    let mut internal = tfl_handle.internal.lock().await;
+                    // ours overrides
+                    if internal.our_set_bft_string.is_some() {
+                        internal.our_set_bft_string.take()
+                    } else {
+                        if let Some(str) = str {
+                            internal.active_bft_string = Some(str)
+                        }
+                        None
+                    }
+                })
+            })),
         ));
     }
 
@@ -1738,8 +1755,9 @@ async fn tfl_service_incoming_request(
 
         TFLServiceRequest::GetCommandBuf => {
             let mut internal = internal_handle.internal.lock().await;
-            info!("BFT command string: {:?}", internal.proposed_bft_string);
-            let str = internal.proposed_bft_string.take().unwrap_or(String::new());
+            // info!("BFT command string: {:?}", internal.proposed_bft_string);
+            let str = internal.active_bft_string.take().unwrap_or(String::new());
+            internal.our_set_bft_string = None;
             // let str = internal.proposed_bft_string.clone().unwrap_or(String::new());
             Ok(TFLServiceResponse::GetCommandBuf(
                 zebra_chain::block::CommandBuf::from_str(&str),
@@ -1750,7 +1768,8 @@ async fn tfl_service_incoming_request(
             let mut internal = internal_handle.internal.lock().await;
             let cmd_str = cmd.to_str();
             info!("Forced BFT command string: {:?}", cmd_str);
-            internal.proposed_bft_string = Some(cmd_str.to_string());
+            internal.our_set_bft_string = Some(cmd_str.to_string());
+            internal.active_bft_string = internal.our_set_bft_string.clone();
             Ok(TFLServiceResponse::SetCommandBuf)
         }
 

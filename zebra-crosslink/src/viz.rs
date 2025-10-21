@@ -612,8 +612,9 @@ pub async fn service_viz_requests(
         let old_g = VIZ_G.lock().unwrap().as_ref().unwrap().clone();
 
         if old_g.proposed_bft_string.is_some() {
-            tfl_handle.internal.lock().await.proposed_bft_string =
-                old_g.proposed_bft_string.clone();
+            let mut internal = tfl_handle.internal.lock().await;
+            internal.our_set_bft_string = old_g.proposed_bft_string.clone();
+            internal.active_bft_string  = old_g.proposed_bft_string.clone();
         }
 
         if !old_g.consumed {
@@ -824,7 +825,7 @@ pub async fn service_viz_requests(
                 bft_err_flags,
                 internal.bft_blocks.clone(),
                 internal.fat_pointer_to_tip.clone(),
-                internal.proposed_bft_string.clone(),
+                internal.active_bft_string.clone(),
             )
         };
 
