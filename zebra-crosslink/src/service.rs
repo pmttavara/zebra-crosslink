@@ -163,7 +163,7 @@ pub fn spawn_new_tfl_service(
                     .await;
             #[cfg(not(feature = "malachite"))]
             let accepted = if fat_pointer.points_at_block_hash() == block.blake3_hash() {
-                crate::validate_bft_block_from_malachite(&handle, block.as_ref()).await == tenderloin::TMStatus::Pass
+                crate::validate_bft_block_from_malachite(&handle, block.as_ref()).await == tenderlink::TMStatus::Pass
             } else {
                 false
             };

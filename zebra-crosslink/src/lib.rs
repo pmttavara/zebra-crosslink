@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
-use tenderloin::SortedRosterMember;
+use tenderlink::SortedRosterMember;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 use zebra_state::crosslink::*;
 
@@ -528,7 +528,7 @@ async fn malachite_wants_to_know_what_the_current_validator_set_is(
 #[cfg(feature = "malachite")]
 type RustIsBadAndHasNoIfDefReturnType1 = (bool, Vec<MalValidator>);
 #[cfg(not(feature = "malachite"))]
-type RustIsBadAndHasNoIfDefReturnType1 = Vec<tenderloin::SortedRosterMember>;
+type RustIsBadAndHasNoIfDefReturnType1 = Vec<tenderlink::SortedRosterMember>;
 
 async fn new_decided_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
@@ -591,7 +591,7 @@ async fn new_decided_bft_block_from_malachite(
     assert_eq!(
         validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block)
             .await,
-        tenderloin::TMStatus::Pass
+        tenderlink::TMStatus::Pass
     );
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -821,14 +821,14 @@ async fn new_decided_bft_block_from_malachite(
     #[cfg(feature = "malachite")]
     return (true, return_validator_list_because_of_malachite_bug);
 
-    tenderloin_roster_from_internal(&internal.validators_at_current_height)
+    tenderlink_roster_from_internal(&internal.validators_at_current_height)
 }
 
-fn tenderloin_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMember> {
+fn tenderlink_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMember> {
     let mut ret: Vec<SortedRosterMember> = vals
         .iter()
         .map(|v| SortedRosterMember {
-            pub_key: tenderloin::PubKeyID(v.public_key.into()),
+            pub_key: tenderlink::PubKeyID(v.public_key.into()),
             stake: v.voting_power,
             cumulative_stake: 0,
         })
@@ -848,7 +848,7 @@ fn tenderloin_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMem
 #[cfg(feature = "malachite")]
 type RustIsBadAndHasNoIfDefReturnType2 = bool;
 #[cfg(not(feature = "malachite"))]
-type RustIsBadAndHasNoIfDefReturnType2 = tenderloin::TMStatus;
+type RustIsBadAndHasNoIfDefReturnType2 = tenderlink::TMStatus;
 
 async fn validate_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
@@ -876,7 +876,7 @@ async fn validate_bft_block_from_malachite_already_locked(
         #[cfg(feature = "malachite")]
         return false;
         #[cfg(not(feature = "malachite"))]
-        return tenderloin::TMStatus::Fail;
+        return tenderlink::TMStatus::Fail;
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -891,12 +891,12 @@ async fn validate_bft_block_from_malachite_already_locked(
             #[cfg(feature = "malachite")]
             return false;
             #[cfg(not(feature = "malachite"))]
-            return tenderloin::TMStatus::Indeterminate;
+            return tenderlink::TMStatus::Indeterminate;
         };
     #[cfg(feature = "malachite")]
     return true;
     #[cfg(not(feature = "malachite"))]
-    return tenderloin::TMStatus::Pass;
+    return tenderlink::TMStatus::Pass;
 }
 
 fn fat_pointer_to_block_at_height(
@@ -1331,7 +1331,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     #[cfg(not(feature = "malachite"))]
     {
-        use tenderloin::{SecureUdpEndpoint, StaticDHKeyPair};
+        use tenderlink::{SecureUdpEndpoint, StaticDHKeyPair};
 
         use std::net::{Ipv6Addr, SocketAddr};
 
@@ -1358,11 +1358,11 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
             let kp = snow::Builder::with_resolver(
                 "Noise_IK_25519_ChaChaPoly_BLAKE2s".parse().unwrap(),
-                Box::new(tenderloin::SnowRngResolver::seed_from_u64(seed)),
+                Box::new(tenderlink::SnowRngResolver::seed_from_u64(seed)),
             )
             .generate_keypair()
             .unwrap();
-            let static_keypair = tenderloin::StaticDHKeyPair {
+            let static_keypair = tenderlink::StaticDHKeyPair {
                 private: kp.private.try_into().unwrap(),
                 public: kp.public.try_into().unwrap(),
             };
@@ -1391,14 +1391,14 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .await
             .validators_at_current_height
             .clone();
-        let roster = tenderloin_roster_from_internal(&unsorted_roster);
+        let roster = tenderlink_roster_from_internal(&unsorted_roster);
 
         // Note(Sam): We do not support human names in the start config for now.
         let evidence = unsorted_roster
             .iter()
             .enumerate()
             .map(|(i, m)| {
-                use tenderloin::EndpointEvidence;
+                use tenderlink::EndpointEvidence;
 
                 let string = format!("{:?}", m);
                 let mut hasher = DefaultHasher::new();
@@ -1418,22 +1418,22 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         let tfl_handle3 = internal_handle.clone();
         let tfl_handle4 = internal_handle.clone();
 
-        tokio::spawn(tenderloin::entry_point(
+        tokio::spawn(tenderlink::entry_point(
             my_private_key,
             static_keypair_maybe,
             endpoint_maybe,
             roster,
             evidence,
             None,
-            tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
+            tenderlink::ClosureToProposeNewBlock(Arc::new(move || {
                 let tfl_handle1 = tfl_handle1.clone();
                 Box::pin(async move {
                     propose_new_bft_block(&tfl_handle1).await.map(|block| {
-                        tenderloin::BlockValue(block.zcash_serialize_to_vec().unwrap())
+                        tenderlink::BlockValue(block.zcash_serialize_to_vec().unwrap())
                     })
                 })
             })),
-            tenderloin::ClosureToValidateProposedBlock(Arc::new(move |block| {
+            tenderlink::ClosureToValidateProposedBlock(Arc::new(move |block| {
                 let tfl_handle2 = tfl_handle2.clone();
                 Box::pin(async move {
                     use bytes::Buf;
@@ -1442,12 +1442,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
                         validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await
                     } else {
-                        error!("Failed to deserialize Tenderloin payload.");
-                        tenderloin::TMStatus::Fail
+                        error!("Failed to deserialize Tenderlink payload.");
+                        tenderlink::TMStatus::Fail
                     }
                 })
             })),
-            tenderloin::ClosureToPushDecidedBlock(Arc::new(move |block, fat_pointer| {
+            tenderlink::ClosureToPushDecidedBlock(Arc::new(move |block, fat_pointer| {
                 let tfl_handle3 = tfl_handle3.clone();
                 Box::pin(async move {
                     use bytes::Buf;
@@ -1461,12 +1461,12 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     .await
                 })
             })),
-            tenderloin::ClosureToGetHistoricalBlock(Arc::new(move |height| {
+            tenderlink::ClosureToGetHistoricalBlock(Arc::new(move |height| {
                 Box::pin(async move {
                     panic!();
                 })
             })),
-            tenderloin::ClosureToUpdateRosterCmd(Arc::new(move |str| {
+            tenderlink::ClosureToUpdateRosterCmd(Arc::new(move |str| {
                 let tfl_handle = tfl_handle4.clone();
                 Box::pin(async move {
                     let mut internal = tfl_handle.internal.lock().await;
