@@ -1,11 +1,10 @@
+//! Types & commands for crosslink
+
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
 
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 
-use zebra_chain::block::{Hash as BlockHash, Height as BlockHeight};
+use zebra_chain::block::{CommandBuf, Hash as BlockHash, Height as BlockHeight};
 
 /// The finality status of a block
 #[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +65,10 @@ pub enum TFLServiceRequest {
     UpdateStaker(TFLStaker),
     /// Get the fat pointer to the BFT chain tip
     FatPointerToBFTChainTip,
+    /// Get the command buffer
+    GetCommandBuf,
+    /// Set the command buffer
+    SetCommandBuf(CommandBuf),
 }
 
 /// Types of responses that can be returned by the TFLService.
@@ -91,6 +94,10 @@ pub enum TFLServiceResponse {
     UpdateStaker, // TODO: batch?
     /// Fat pointer to the BFT chain tip
     FatPointerToBFTChainTip(zebra_chain::block::FatPointerToBftBlock),
+    /// Get command buf
+    GetCommandBuf(CommandBuf),
+    /// Set command buf
+    SetCommandBuf,
 }
 
 /// Errors that can occur when interacting with the TFLService.
@@ -110,29 +117,3 @@ impl fmt::Display for TFLServiceError {
 
 use std::error::Error;
 impl Error for TFLServiceError {}
-
-/// A pinned-in-memory, heap-allocated, reference-counted, thread-safe, asynchronous function
-/// pointer that takes a `ReadStateRequest` as input and returns a `ReadStateResponse` as output.
-///
-/// The error is boxed to allow for dynamic error types.
-///
-/// Set at start by zebra-crosslink
-pub type ReadCrosslinkServiceProcedure = Arc<
-    dyn Fn(
-            TFLServiceRequest,
-        )
-            -> Pin<Box<dyn Future<Output = Result<TFLServiceResponse, TFLServiceError>> + Send>>
-        + Send
-        + Sync,
->;
-
-// pub static read_crosslink_procedure_callback: Mutex<Option<ReadCrosslinkServiceProcedure>> = Arc::new(Mutex::new(Arc::new(
-//     move |req| {
-//         Box::pin(async move {
-//             Err(Box::new(TFLServiceError::Misc("This callback needs to be replaced".to_string())) as Box<dyn Error + Send + Sync>)
-//         })
-//     }
-// )));
-pub static read_crosslink_procedure_callback: std::sync::Mutex<
-    Option<ReadCrosslinkServiceProcedure>,
-> = std::sync::Mutex::new(None);

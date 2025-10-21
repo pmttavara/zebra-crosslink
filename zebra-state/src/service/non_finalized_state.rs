@@ -239,6 +239,7 @@ impl NonFinalizedState {
         FinalizableBlock::new(best_chain_root, root_treestate)
     }
 
+    /// Remove chains that are no longer valid, i.e. they don't contain the newly-finalized hash
     pub fn remove_chains_invalidated_by_crosslink_finalized(&mut self, hash: block::Hash) {
         let mut new_chain_set = self.chain_set.clone();
         for chain in self.chain_iter() {
@@ -258,6 +259,8 @@ impl NonFinalizedState {
     }
 
     // ALT: return height
+    /// Determine which blocks are now finalized, given a new finalized tip hash from the
+    /// crosslink service
     pub fn crosslink_finalize(
         &mut self,
         hash: block::Hash,

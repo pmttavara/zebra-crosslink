@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use strum::{EnumCount, IntoEnumIterator};
 use strum_macros::EnumIter;
 
+use tenderloin::SortedRosterMember;
 use zebra_chain::serialization::{ZcashDeserializeInto, ZcashSerialize};
 use zebra_state::crosslink::*;
 
@@ -34,7 +35,9 @@ pub mod malctx;
 use malctx::*;
 pub mod chain;
 use chain::*;
+#[cfg(feature = "malachite")]
 pub mod mal_system;
+#[cfg(feature = "malachite")]
 use mal_system::*;
 
 use std::sync::Mutex;
@@ -52,6 +55,43 @@ pub static TEST_SHUTDOWN_FN: Mutex<fn()> = Mutex::new(|| ());
 pub static TEST_PARAMS: Mutex<Option<ZcashCrosslinkParameters>> = Mutex::new(None);
 pub static TEST_NAME: Mutex<&'static str> = Mutex::new("‰‰TEST_NAME_NOT_SET‰‰");
 
+pub fn dump_test_instrs() {
+    #![allow(clippy::print_stderr)]
+
+    let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
+    let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
+    if failed_instr_idxs.is_empty() {
+        eprintln!(
+            "no failed instructions recorded. We should have at least 1 failed instruction here"
+        );
+    }
+
+    let done_instr_c = *TEST_INSTR_C.lock().unwrap();
+
+    let mut failed_instr_idx_i = 0;
+    let instrs_lock = TEST_INSTRS.lock().unwrap();
+    let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
+    let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
+    let bytes = bytes_lock.as_ref();
+    for instr_i in 0..instrs.len() {
+        let col = if failed_instr_idx_i < failed_instr_idxs.len()
+            && instr_i == failed_instr_idxs[failed_instr_idx_i]
+        {
+            failed_instr_idx_i += 1;
+            "\x1b[91m F  " // red
+        } else if instr_i < done_instr_c {
+            "\x1b[92m P  " // green
+        } else {
+            "\x1b[37m    " // grey
+        };
+        eprintln!(
+            "  {}{}\x1b[0;0m",
+            col,
+            &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
+        );
+    }
+}
+
 pub mod service;
 /// Configuration for the state service.
 pub mod config {
@@ -66,15 +106,21 @@ pub mod config {
         /// Public address for this node, e.g. "/ip4/127.0.0.1/udp/24834/quic-v1" if testing
         /// internally, or the public IP address if using externally.
         pub public_address: Option<String>,
+        /// temp seed for private/public key pair
+        pub insecure_user_name: Option<String>,
         /// List of public IP addresses for peers, in the same format as `public_address`.
         pub malachite_peers: Vec<String>,
+        /// Do not manipulate config
+        pub do_not_manipulate_config: bool,
     }
     impl Default for Config {
         fn default() -> Self {
             Self {
                 listen_address: None,
                 public_address: None,
+                insecure_user_name: None,
                 malachite_peers: Vec::new(),
+                do_not_manipulate_config: false,
             }
         }
     }
@@ -113,6 +159,7 @@ enum BFTMsgFlag {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct TFLServiceInternal {
+    my_public_key: MalPublicKey,
     latest_final_block: Option<(BlockHeight, BlockHash)>,
     tfl_is_activated: bool,
 
@@ -125,11 +172,17 @@ pub(crate) struct TFLServiceInternal {
     bft_err_flags: u64,
     bft_blocks: Vec<BftBlock>,
     fat_pointer_to_tip: FatPointerToBftBlock2,
-    proposed_bft_string: Option<String>,
+    our_set_bft_string: Option<String>,
+    active_bft_string: Option<String>,
 
+    #[cfg(feature = "malachite")]
     malachite_watchdog: Instant,
 
+    // TODO: 2 versions of this: ever-added (in sequence) & currently non-0
+    validators_keys_to_names: HashMap<MalPublicKey, String>,
     validators_at_current_height: Vec<MalValidator>,
+
+    current_bc_final: Option<(BlockHeight, BlockHash)>,
 }
 
 // TODO: Result?
@@ -306,8 +359,8 @@ async fn push_new_bft_msg_flags(
 
 async fn propose_new_bft_block(
     tfl_handle: &TFLServiceHandle,
-    my_public_key: &MalPublicKey,
-    at_height: u64,
+    #[cfg(feature = "malachite")] my_public_key: &MalPublicKey,
+    #[cfg(feature = "malachite")] at_height: u64,
 ) -> Option<BftBlock> {
     #[cfg(feature = "viz_gui")]
     if let Some(state) = viz::VIZ_G.lock().unwrap().as_ref() {
@@ -395,6 +448,7 @@ async fn propose_new_bft_block(
 
     let mut internal = tfl_handle.internal.lock().await;
 
+    #[cfg(feature = "malachite")]
     if internal.bft_blocks.len() as u64 + 1 != at_height {
         warn!(
             "Malachite is out of sync with us due to out of band syncing. Let us force reboot it."
@@ -405,6 +459,17 @@ async fn propose_new_bft_block(
         return None;
     }
 
+    #[cfg(feature = "malachite")]
+    if internal
+        .validators_at_current_height
+        .iter()
+        .position(|v| v.address.0 == *my_public_key)
+        .is_none()
+    {
+        warn!("I am not in the roster so I will abstain from proposing.");
+        return None;
+    }
+
     match BftBlock::try_from(
         params,
         internal.bft_blocks.len() as u32 + 1,
@@ -412,58 +477,122 @@ async fn propose_new_bft_block(
         0,
         headers,
     ) {
-        Ok(mut v) => {
-            v.temp_roster_edit_command_string = internal
-                .proposed_bft_string
-                .take()
-                .unwrap_or("".to_string())
-                .as_bytes()
-                .into();
-            return Some(v);
-        }
+        Ok(v) => Some(v),
         Err(e) => {
             warn!("Unable to create BftBlock to propose, Error={:?}", e,);
-            return None;
+            None
         }
-    };
+    }
 }
 
 async fn malachite_wants_to_know_what_the_current_validator_set_is(
     tfl_handle: &TFLServiceHandle,
 ) -> Vec<MalValidator> {
-    tfl_handle
-        .internal
-        .lock()
-        .await
-        .validators_at_current_height
-        .clone()
+    let internal = tfl_handle.internal.lock().await;
+
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
+    }
+    let finalizers = return_validator_list_because_of_malachite_bug;
+    if true {
+        let mut total_voting_power = 0;
+        let mut non_0_members = 0;
+        for finalizer_i in 0..finalizers.len() {
+            let finalizer = &finalizers[finalizer_i];
+            if finalizer.voting_power == 0 {
+                continue;
+            }
+
+            non_0_members += 1;
+            total_voting_power += finalizer.voting_power;
+        }
+
+        info!(
+            "Giving malachite roster with {} voting power between {} non-0 members",
+            total_voting_power, non_0_members
+        );
+    }
+
+    finalizers
 }
+#[cfg(feature = "malachite")]
+type RustIsBadAndHasNoIfDefReturnType1 = (bool, Vec<MalValidator>);
+#[cfg(not(feature = "malachite"))]
+type RustIsBadAndHasNoIfDefReturnType1 = Vec<tenderloin::SortedRosterMember>;
 
 async fn new_decided_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
     fat_pointer: &FatPointerToBftBlock2,
-) -> (bool, Vec<MalValidator>) {
+) -> RustIsBadAndHasNoIfDefReturnType1 {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
     let mut internal = tfl_handle.internal.lock().await;
 
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
+    }
+
     if fat_pointer.points_at_block_hash() != new_block.blake3_hash() {
-        warn!("Fat Pointer hash does not match block hash.");
-        return (false, internal.validators_at_current_height.clone());
+        warn!(
+            "Fat Pointer hash does not match block hash. fp: {} block: {}",
+            fat_pointer.points_at_block_hash(),
+            new_block.blake3_hash()
+        );
+        #[cfg(feature = "malachite")]
+        {
+            internal.malachite_watchdog = Instant::now()
+                .checked_sub(Duration::from_secs(60 * 60 * 24 * 365))
+                .unwrap();
+            return (false, return_validator_list_because_of_malachite_bug);
+        }
+        #[cfg(not(feature = "malachite"))]
+        {
+            panic!();
+        }
     }
     // TODO: check public keys on the fat pointer against the roster
     if fat_pointer.validate_signatures() == false {
         warn!("Signatures are not valid. Rejecting block.");
-        return (false, internal.validators_at_current_height.clone());
+        #[cfg(feature = "malachite")]
+        return (false, return_validator_list_because_of_malachite_bug);
+        #[cfg(not(feature = "malachite"))]
+        panic!();
     }
 
+    #[cfg(feature = "malachite")]
     if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
         == false
     {
-        return (false, internal.validators_at_current_height.clone());
+        return (false, return_validator_list_because_of_malachite_bug);
     }
+    #[cfg(not(feature = "malachite"))]
+    assert_eq!(
+        validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block)
+            .await,
+        tenderloin::TMStatus::Pass
+    );
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
     let new_final_height = block_height_from_hash(&call, new_final_hash).await.unwrap();
@@ -482,7 +611,6 @@ async fn new_decided_bft_block_from_malachite(
             },
             finalization_candidate_height: 0,
             headers: Vec::new(),
-            temp_roster_edit_command_string: Vec::new(),
         });
     }
 
@@ -503,7 +631,10 @@ async fn new_decided_bft_block_from_malachite(
     internal.bft_blocks[insert_i] = new_block.clone();
     internal.fat_pointer_to_tip = fat_pointer.clone();
     internal.latest_final_block = Some((new_final_height, new_final_hash));
-    internal.malachite_watchdog = Instant::now();
+    #[cfg(feature = "malachite")]
+    {
+        internal.malachite_watchdog = Instant::now();
+    }
 
     match (call.state)(zebra_state::Request::CrosslinkFinalizeBlock(new_final_hash)).await {
         Ok(zebra_state::Response::CrosslinkFinalized(hash)) => {
@@ -519,57 +650,210 @@ async fn new_decided_bft_block_from_malachite(
         }
     }
 
-    // MUTATE ROSTER BY COMMAND
     {
-        let roster = &mut internal.validators_at_current_height;
-        let cmd = new_block.temp_roster_edit_command_string.as_slice();
-        if cmd.len() >= 4 && cmd[3] == b'|' {
-            if cmd[0] == b'A' && cmd[1] == b'D' && cmd[2] == b'D' {
-                let cmd = &cmd[4..];
-                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                if roster
-                    .iter()
-                    .position(|cmp| cmp.public_key == public_key)
-                    .is_none()
-                {
-                    roster.push(MalValidator::new(public_key, 0));
-                }
-            }
-            if cmd[0] == b'D' && cmd[1] == b'E' && cmd[2] == b'L' {
-                let cmd = &cmd[4..];
-                let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                roster.retain(|cmp| cmp.public_key != public_key);
-            }
-            if cmd[0] == b'S' && cmd[1] == b'E' && cmd[2] == b'T' {
-                let cmd = &cmd[4..];
-                let mut split_at = 0;
-                while split_at < cmd.len() && cmd[split_at] != b'|' {
-                    split_at += 1;
-                }
-                if split_at < cmd.len() {
-                    let num_str = &cmd[0..split_at];
-                    let cmd = &cmd[split_at + 1..];
+        let new_bc_final = internal.latest_final_block;
 
-                    if let Some(num) = String::from_utf8_lossy(num_str).parse::<u64>().ok() {
-                        let (_, _, public_key) = rng_private_public_key_from_address(cmd);
-                        for cmp in roster {
-                            if cmp.public_key == public_key {
-                                cmp.voting_power = num;
-                            }
-                        }
+        // info!("final changed to {:?}", new_bc_final);
+        if let Some(new_final_height_hash) = new_bc_final {
+            let start_hash = if let Some(prev_height_hash) = internal.current_bc_final {
+                prev_height_hash.1
+            } else {
+                new_final_height_hash.1
+            };
+
+            let (new_final_height_hashes, new_final_blocks) = tfl_block_sequence(
+                &call,
+                start_hash,
+                Some(new_final_height_hash),
+                /*include_start_hash*/ true,
+                true,
+            )
+            .await;
+
+            let mut quiet = true;
+            if let (Some(Some(first_block)), Some(Some(last_block))) =
+                (new_final_blocks.first(), new_final_blocks.last())
+            {
+                let a = first_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
+                let b = last_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
+                if a != b {
+                    // Note(Sam), very noisy and not connected to malachite right now.
+                    // println!("Height change: {} => {}:", a, b);
+                    // quiet = false;
+                }
+            }
+            if !quiet {
+                tfl_dump_blocks(&new_final_height_hashes[..], &new_final_blocks[..]);
+            }
+
+            let pos_total_reward: u64 = 6000; // arbitrary scale
+
+            // walk all blocks in newly-finalized sequence; handle rewards & broadcast them
+            for i in 0..new_final_height_hashes.len() {
+                // skip repeated boundary blocks
+                let new_final_height_hash = &new_final_height_hashes[i];
+                if let Some((_, prev_hash)) = internal.current_bc_final {
+                    if prev_hash == new_final_height_hash.1 {
+                        continue;
                     }
                 }
+
+                // Divide the reward between finalizers. Any rounding errors are intended to be
+                // accounted for here by giving those zats to the finalizer with the largest
+                // stake. As a result, this should always *exactly* apportion the entire
+                // reward.
+                // TODO: is there a standardised way of doing this?
+                {
+                    // NOTE: recalculating here means the *compounding* is per PoW block, as well
+                    // as the value.
+                    // It also means that finalizers added in the same PoS will get rewards for PoW
+                    // blocks they couldn't have actually voted on.
+
+                    let finalizers = &mut internal.validators_at_current_height;
+                    let mut total_voting_power = 0;
+                    let mut max_power_finalizer_i: Option<usize> = None;
+
+                    // determine total_voting_power & max_power_finalizer_i
+                    for finalizer_i in 0..finalizers.len() {
+                        let finalizer = &finalizers[finalizer_i];
+                        if finalizer.voting_power == 0 {
+                            continue;
+                        }
+
+                        if max_power_finalizer_i.is_none()
+                            || finalizers[max_power_finalizer_i.unwrap()].voting_power
+                                < finalizer.voting_power
+                        {
+                            max_power_finalizer_i = Some(finalizer_i);
+                        }
+
+                        total_voting_power += finalizer.voting_power;
+                    }
+
+                    // Give share of block reward to all finalizers based on their stake
+                    // (except for max staker).
+                    // We make use of the fact that integer division always rounds down such
+                    // that sum_reward <= the infinite-precision sum.
+                    let mut sum_reward = 0_u64;
+                    for finalizer_i in 0..finalizers.len() {
+                        let finalizer = &mut finalizers[finalizer_i];
+                        if finalizer.voting_power == 0
+                            || finalizer_i
+                                == max_power_finalizer_i
+                                    .expect("there must be a max finalizer if at least 1 is non-0")
+                        {
+                            continue;
+                        }
+
+                        // NOTE: total_voting_power must be non-0 if we have any non-0 roster
+                        // members
+                        // TODO: most numerically stable version of this that won't overflow
+                        let mul: u128 =
+                            (finalizer.voting_power as u128) * (pos_total_reward as u128);
+                        let reward = (mul / (total_voting_power as u128)) as u64;
+                        sum_reward += reward;
+                        finalizer.voting_power += reward;
+                    }
+
+                    // Give remaining block reward (including any accumulated rounding errors)
+                    // to max staker
+                    if let Some(finalizer_i) = max_power_finalizer_i {
+                        let finalizer = &mut finalizers[finalizer_i];
+                        let mul: u128 =
+                            (finalizer.voting_power as u128) * (pos_total_reward as u128);
+                        let reward = (mul / (total_voting_power as u128)) as u64;
+                        let rem_reward = pos_total_reward - sum_reward;
+                        assert!(reward <= rem_reward,
+                            "should be at least the expected share remaining. Any discrepancy should be in this finalizer's favor.\n\
+                            expected reward: {}, remaining reward: {}",
+                            reward, rem_reward);
+
+                        if reward != rem_reward {
+                            info!("Max finalizer given rounding error: expected {}, got {}, bonus: {}",
+                                reward, rem_reward, rem_reward - reward);
+                        }
+
+                        finalizer.voting_power += rem_reward;
+                    }
+                }
+
+                // Modify the stake for members
+                if let Some(new_final_block) = &new_final_blocks[i] {
+                    if update_roster_for_block(&mut internal, new_final_block) {
+                        info!(
+                            "Applied command to roster from PoW height {}: \"{}\"",
+                            new_final_height_hashes[i].0 .0,
+                            new_final_block.header.temp_command_buf.to_str()
+                        );
+                    }
+                } else {
+                    error!(
+                        "failed to get known block at {:?}",
+                        new_final_height_hashes[i]
+                    );
+                    debug_assert!(false, "this shouldn't happen");
+                }
+
+                // We ignore the error because there will be one in the ordinary case
+                // where there are no receivers yet.
+                let _ = internal.final_change_tx.send(*new_final_height_hash);
             }
         }
+        internal.current_bc_final = new_bc_final;
     }
 
-    (true, internal.validators_at_current_height.clone())
+    #[cfg(feature = "malachite")]
+    let mut return_validator_list_because_of_malachite_bug =
+        internal.validators_at_current_height.clone();
+    #[cfg(feature = "malachite")]
+    if return_validator_list_because_of_malachite_bug
+        .iter()
+        .position(|v| v.address.0 == internal.my_public_key)
+        .is_none()
+    {
+        return_validator_list_because_of_malachite_bug.push(MalValidator {
+            address: MalPublicKey2(internal.my_public_key),
+            public_key: internal.my_public_key,
+            voting_power: 0,
+        });
+    }
+
+    #[cfg(feature = "malachite")]
+    return (true, return_validator_list_because_of_malachite_bug);
+
+    tenderloin_roster_from_internal(&internal.validators_at_current_height)
 }
+
+fn tenderloin_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMember> {
+    let mut ret: Vec<SortedRosterMember> = vals
+        .iter()
+        .map(|v| SortedRosterMember {
+            pub_key: tenderloin::PubKeyID(v.public_key.into()),
+            stake: v.voting_power,
+            cumulative_stake: 0,
+        })
+        .collect();
+    ret.sort_by_key(|m: &SortedRosterMember| (m.stake, m.pub_key));
+    ret.reverse();
+
+    let mut cumulative_stake = 0;
+    for m in &mut ret {
+        cumulative_stake += m.stake;
+        m.cumulative_stake = cumulative_stake;
+    }
+    debug_assert!(ret.is_sorted_by(|a, b| a.stake >= b.stake)); // descending
+    ret
+}
+
+#[cfg(feature = "malachite")]
+type RustIsBadAndHasNoIfDefReturnType2 = bool;
+#[cfg(not(feature = "malachite"))]
+type RustIsBadAndHasNoIfDefReturnType2 = tenderloin::TMStatus;
 
 async fn validate_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
-) -> bool {
+) -> RustIsBadAndHasNoIfDefReturnType2 {
     let mut internal = tfl_handle.internal.lock().await;
     validate_bft_block_from_malachite_already_locked(tfl_handle, &mut internal, new_block).await
 }
@@ -577,7 +861,7 @@ async fn validate_bft_block_from_malachite_already_locked(
     tfl_handle: &TFLServiceHandle,
     internal: &mut TFLServiceInternal,
     new_block: &BftBlock,
-) -> bool {
+) -> RustIsBadAndHasNoIfDefReturnType2 {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -589,7 +873,10 @@ async fn validate_bft_block_from_malachite_already_locked(
             new_block.previous_block_fat_ptr.points_at_block_hash(),
             internal.fat_pointer_to_tip.points_at_block_hash(),
         );
+        #[cfg(feature = "malachite")]
         return false;
+        #[cfg(not(feature = "malachite"))]
+        return tenderloin::TMStatus::Fail;
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -601,9 +888,15 @@ async fn validate_bft_block_from_malachite_already_locked(
                 "Didn't have hash available for confirmation: {}",
                 new_final_hash
             );
+            #[cfg(feature = "malachite")]
             return false;
+            #[cfg(not(feature = "malachite"))]
+            return tenderloin::TMStatus::Indeterminate;
         };
-    true
+    #[cfg(feature = "malachite")]
+    return true;
+    #[cfg(not(feature = "malachite"))]
+    return tenderloin::TMStatus::Pass;
 }
 
 fn fat_pointer_to_block_at_height(
@@ -648,6 +941,262 @@ async fn get_historical_bft_block_at_height(
 
 const MAIN_LOOP_SLEEP_INTERVAL: Duration = Duration::from_millis(125);
 const MAIN_LOOP_INFO_DUMP_INTERVAL: Duration = Duration::from_millis(8000);
+pub fn run_tfl_test(internal_handle: TFLServiceHandle) {
+    // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
+    std::panic::set_hook(Box::new(|panic_info| {
+        #[allow(clippy::print_stderr)]
+        {
+            *TEST_FAILED.lock().unwrap() = -1;
+
+            use std::backtrace::{self, *};
+            let bt = Backtrace::force_capture();
+
+            eprintln!("\n\n{panic_info}\n");
+
+            // hacky formatting - BacktraceFmt not working for some reason...
+            let str = format!("{bt}");
+            let splits: Vec<_> = str.split("\n").collect();
+
+            // skip over the internal backtrace unwind steps
+            let mut start_i = 0;
+            let mut i = 0;
+            while i < splits.len() {
+                if splits[i].ends_with("rust_begin_unwind") {
+                    i += 1;
+                    if i < splits.len() && splits[i].trim().starts_with("at ") {
+                        i += 1;
+                    }
+                    start_i = i;
+                }
+                if splits[i].ends_with("core::panicking::panic_fmt") {
+                    i += 1;
+                    if i < splits.len() && splits[i].trim().starts_with("at ") {
+                        i += 1;
+                    }
+                    start_i = i;
+                    break;
+                }
+                i += 1;
+            }
+
+            // print backtrace
+            let mut i = start_i;
+            let n = 80;
+            while i < n {
+                let proc = if let Some(val) = splits.get(i) {
+                    val.trim()
+                } else {
+                    break;
+                };
+                i += 1;
+
+                let file_loc = if let Some(val) = splits.get(i) {
+                    let val = val.trim();
+                    if val.starts_with("at ") {
+                        i += 1;
+                        val
+                    } else {
+                        ""
+                    }
+                } else {
+                    break;
+                };
+
+                eprintln!(
+                    "  {}{}    {}",
+                    if i < 20 { " " } else { "" },
+                    proc,
+                    file_loc
+                );
+            }
+            if i == n {
+                eprintln!("...");
+            }
+
+            eprintln!("\n\nInstruction sequence:");
+            dump_test_instrs();
+
+            #[cfg(not(feature = "viz_gui"))]
+            std::process::abort();
+        }
+    }));
+
+    tokio::task::spawn(test_format::instr_reader(internal_handle));
+}
+
+fn update_roster_for_block(internal: &mut TFLServiceInternal, block: &Block) -> bool {
+    let mut is_cmd = false;
+    let cmd_str = block.header.temp_command_buf.to_str();
+    let cmd = cmd_str.as_bytes();
+    let roster = &mut internal.validators_at_current_height;
+    let validators_keys_to_names = &mut internal.validators_keys_to_names;
+
+    if cmd.len() == 0 {
+        // valid no-op
+    } else if !(cmd.len() >= 4 && cmd[3] == b'|') {
+        warn!(
+            "Roster command invalid: expected initial instruction\nCMD: \"{}\"",
+            cmd_str
+        );
+    } else {
+        let mut val_end = 4;
+        while val_end < cmd.len() && cmd[val_end] != b'|' {
+            val_end += 1;
+        }
+
+        let val_str = &cmd_str[4..val_end];
+        let maybe_val = str::parse::<u64>(val_str.trim());
+        // TODO (if this were anything close to production code): move these to before accepting them
+        if val_end + 1 >= cmd.len() {
+            warn!(
+                "Roster command invalid: expected public address\nCMD: \"{}\"",
+                cmd_str
+            );
+        } else if let Err(err) = maybe_val {
+            warn!(
+                "Roster command invalid: expected u64, received \"{}\" ({})\nCMD: \"{}\"",
+                val_str, err, cmd_str
+            );
+        } else {
+            let val = maybe_val.expect("already checked above");
+
+            let addr0_bgn = val_end + 1;
+
+            let mut addr0_end = addr0_bgn;
+            while addr0_end < cmd.len() && cmd[addr0_end] != b'|' {
+                addr0_end += 1;
+            }
+
+            info!(
+                "Roster: getting public address from {}",
+                &cmd_str[addr0_bgn..addr0_end]
+            );
+            let (_, _, public_key0) =
+                rng_private_public_key_from_address(&cmd[addr0_bgn..addr0_end]);
+            let roster_pos0 = roster.iter().position(|cmp| cmp.public_key == public_key0);
+
+            let (addr1_bgn, public_key1, mut roster_pos1) = if addr0_end + 1 < cmd.len() {
+                let addr1_bgn = addr0_end + 1;
+                info!(
+                    "Roster: getting additional public address from {}",
+                    &cmd_str[addr1_bgn..]
+                );
+                let (_, _, public_key1) = rng_private_public_key_from_address(&cmd[addr1_bgn..]);
+                let roster_pos1 = roster.iter().position(|cmp| cmp.public_key == public_key1);
+                (Some(addr1_bgn), Some(public_key1), roster_pos1)
+            } else {
+                (None, None, None)
+            };
+
+            // TODO: any more complicated & this should be broken up into subcommands
+            match cmd[..3] {
+                [b'A', b'D', b'D'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos0 {
+                        roster[roster_i].voting_power += val;
+                    } else {
+                        roster.push(MalValidator::new(public_key0, val));
+                        validators_keys_to_names
+                            .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                    }
+                }
+
+                [b'S', b'U', b'B'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos0 {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't subtract more from the finalizer than their current value \"{}\"/{}: {} - {}\nCMD: \"{}\"",
+                                &cmd_str[addr0_bgn..addr0_end], MalPublicKey2(public_key0), roster[roster_i].voting_power, val, cmd_str);
+                            // TODO: roster[roster_i].voting_power = 0;
+                        } else {
+                            roster[roster_i].voting_power -= val;
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't subtract from non-present finalizer \"{}\"/{}\nCMD: \"{}\"", &cmd_str[addr0_bgn..addr0_end], MalPublicKey2(public_key0), cmd_str);
+                    }
+                }
+
+                // "clear" to a given amount <= current voting power, probably 0
+                // This exists alongside SUB because it's awkward to predict in advance the exact
+                // voting power after block rewards have been accounted for.
+                [b'C', b'L', b'R'] => {
+                    is_cmd = true;
+                    if let Some(roster_i) = roster_pos0 {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't clear the finalizer to a higher current value \"{}\"/{}: {} => {}\nCMD: \"{}\"",
+                                &cmd_str[addr0_bgn..addr0_end], MalPublicKey2(public_key0), roster[roster_i].voting_power, val, cmd_str);
+                        } else {
+                            roster[roster_i].voting_power = val;
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't clear from non-present finalizer \"{}\"/{}\nCMD: \"{}\"", &cmd_str[addr0_bgn..addr0_end], MalPublicKey2(public_key0), cmd_str);
+                    }
+                }
+
+                [b'M', b'O', b'V'] => {
+                    is_cmd = true;
+                    if let (Some(addr_bgn), Some(pk), Some(roster_i)) =
+                        (addr1_bgn, public_key1, roster_pos1)
+                    {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't subtract more from the finalizer than their current value \"{}\"/{}: {} - {}\nCMD: \"{}\"",
+                                    &cmd_str[addr1_bgn.unwrap_or(0)..], MalPublicKey2(pk), roster[roster_i].voting_power, val, cmd_str);
+                            // TODO: roster[roster_i].voting_power = 0;
+                        } else {
+                            roster[roster_i].voting_power -= val;
+
+                            if let Some(roster_i) = roster_pos0 {
+                                roster[roster_i].voting_power += val;
+                            } else {
+                                roster.push(MalValidator::new(public_key0, val));
+                                validators_keys_to_names
+                                    .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                            }
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't subtract from non-present finalizer \"{}\"\nCMD: \"{}\"", &cmd_str[addr1_bgn.unwrap_or(cmd_str.len())..], cmd_str);
+                    }
+                }
+
+                // "clear" to a given amount <= current voting power, probably 0
+                // This exists alongside SUB because it's awkward to predict in advance the exact
+                // voting power after block rewards have been accounted for.
+                [b'M', b'C', b'L'] => {
+                    is_cmd = true;
+                    if let (Some(addr_bgn), Some(pk), Some(roster_i)) =
+                        (addr1_bgn, public_key1, roster_pos1)
+                    {
+                        if roster[roster_i].voting_power < val {
+                            warn!("Roster command invalid: can't clear the finalizer to a higher current value \"{}\"/{}: {} => {}\nCMD: \"{}\"",
+                                &cmd_str[addr_bgn..], MalPublicKey2(pk), roster[roster_i].voting_power, val, cmd_str);
+                        } else {
+                            let d = roster[roster_i].voting_power - val;
+                            roster[roster_i].voting_power -= d;
+
+                            if let Some(roster_i) = roster_pos0 {
+                                roster[roster_i].voting_power += d;
+                            } else {
+                                roster.push(MalValidator::new(public_key0, d));
+                                validators_keys_to_names
+                                    .insert(public_key0, cmd_str[addr0_bgn..addr0_end].to_string());
+                            }
+                        }
+                    } else {
+                        warn!("Roster command invalid: can't clear from non-present finalizer \"{}\"\nCMD: \"{}\"", &cmd_str[addr1_bgn.unwrap_or(cmd_str.len())..], cmd_str);
+                    }
+                }
+
+                _ => warn!(
+                    "Roster command invalid: unrecognized instruction \"{}\"\nCMD: \"{}\"",
+                    &cmd_str[..3],
+                    cmd_str
+                ),
+            }
+        }
+    }
+
+    is_cmd
+}
 
 async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), String> {
     let call = internal_handle.call.clone();
@@ -664,124 +1213,23 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     }
 
     if *TEST_MODE.lock().unwrap() {
-        // ensure that tests fail on panic/assert(false); otherwise tokio swallows them
-        std::panic::set_hook(Box::new(|panic_info| {
-            #[allow(clippy::print_stderr)]
-            {
-                *TEST_FAILED.lock().unwrap() = -1;
-
-                use std::backtrace::{self, *};
-                let bt = Backtrace::force_capture();
-
-                eprintln!("\n\n{panic_info}\n");
-
-                // hacky formatting - BacktraceFmt not working for some reason...
-                let str = format!("{bt}");
-                let splits: Vec<_> = str.split("\n").collect();
-
-                // skip over the internal backtrace unwind steps
-                let mut start_i = 0;
-                let mut i = 0;
-                while i < splits.len() {
-                    if splits[i].ends_with("rust_begin_unwind") {
-                        i += 1;
-                        if i < splits.len() && splits[i].trim().starts_with("at ") {
-                            i += 1;
-                        }
-                        start_i = i;
-                    }
-                    if splits[i].ends_with("core::panicking::panic_fmt") {
-                        i += 1;
-                        if i < splits.len() && splits[i].trim().starts_with("at ") {
-                            i += 1;
-                        }
-                        start_i = i;
-                        break;
-                    }
-                    i += 1;
-                }
-
-                // print backtrace
-                let mut i = start_i;
-                let n = 80;
-                while i < n {
-                    let proc = if let Some(val) = splits.get(i) {
-                        val.trim()
-                    } else {
-                        break;
-                    };
-                    i += 1;
-
-                    let file_loc = if let Some(val) = splits.get(i) {
-                        let val = val.trim();
-                        if val.starts_with("at ") {
-                            i += 1;
-                            val
-                        } else {
-                            ""
-                        }
-                    } else {
-                        break;
-                    };
-
-                    eprintln!(
-                        "  {}{}    {}",
-                        if i < 20 { " " } else { "" },
-                        proc,
-                        file_loc
-                    );
-                }
-                if i == n {
-                    eprintln!("...");
-                }
-
-                eprintln!("\n\nInstruction sequence:");
-                let failed_instr_idxs_lock = TEST_FAILED_INSTR_IDXS.lock();
-                let failed_instr_idxs = failed_instr_idxs_lock.as_ref().unwrap();
-                if failed_instr_idxs.is_empty() {
-                    eprintln!("no failed instructions recorded. We should have at least 1 failed instruction here");
-                }
-
-                let done_instr_c = *TEST_INSTR_C.lock().unwrap();
-
-                let mut failed_instr_idx_i = 0;
-                let instrs_lock = TEST_INSTRS.lock().unwrap();
-                let instrs: &Vec<test_format::TFInstr> = instrs_lock.as_ref();
-                let bytes_lock = TEST_INSTR_BYTES.lock().unwrap();
-                let bytes = bytes_lock.as_ref();
-                for instr_i in 0..instrs.len() {
-                    let col = if failed_instr_idx_i < failed_instr_idxs.len()
-                        && instr_i == failed_instr_idxs[failed_instr_idx_i]
-                    {
-                        failed_instr_idx_i += 1;
-                        "\x1b[91m F  " // red
-                    } else if instr_i < done_instr_c {
-                        "\x1b[92m P  " // green
-                    } else {
-                        "\x1b[37m    " // grey
-                    };
-                    eprintln!(
-                        "  {}{}\x1b[0;0m",
-                        col,
-                        &test_format::TFInstr::string_from_instr(bytes, &instrs[instr_i])
-                    );
-                }
-
-                #[cfg(not(feature = "viz_gui"))]
-                std::process::abort();
-            }
-        }));
-
-        tokio::task::spawn(test_format::instr_reader(internal_handle.clone()));
+        run_tfl_test(internal_handle.clone());
     }
 
     let public_ip_string = config
         .public_address
-        .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
-
+        .unwrap_or(String::from_str("/ip4/127.0.0.1/tcp/45869").unwrap());
     info!("public IP: {}", public_ip_string);
+
+    let user_name = config
+        .insecure_user_name
+        .unwrap_or(public_ip_string.clone());
+    // .unwrap_or(String::from_str("tester").unwrap());
+    info!("user_name: {}", user_name);
+
     let (mut rng, my_private_key, my_public_key) =
-        rng_private_public_key_from_address(&public_ip_string.as_bytes());
+        rng_private_public_key_from_address(&user_name.as_bytes());
+    internal_handle.internal.lock().await.my_public_key = my_public_key;
 
     let my_signing_provider = MalEd25519Provider::new(my_private_key.clone());
     let ctx = MalContext {};
@@ -796,6 +1244,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
 
     bft_config.logging.log_level = crate::mconfig::LogLevel::Error;
 
+    #[cfg(feature = "malachite")]
     for peer in config.malachite_peers.iter() {
         bft_config
             .consensus
@@ -803,6 +1252,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&peer).unwrap());
     }
+    #[cfg(feature = "malachite")]
     if bft_config.consensus.p2p.persistent_peers.is_empty() {
         bft_config
             .consensus
@@ -810,6 +1260,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             .persistent_peers
             .push(Multiaddr::from_str(&public_ip_string).unwrap());
     }
+    #[cfg(feature = "malachite")]
     if let Some(position) = bft_config
         .consensus
         .p2p
@@ -821,38 +1272,55 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
     }
 
     //bft_config.consensus.p2p.transport = mconfig::TransportProtocol::Quic;
-    if let Some(listen_addr) = config.listen_address {
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&listen_addr).unwrap();
+    #[cfg(feature = "malachite")]
+    if let Some(listen_addr) = &config.listen_address {
+        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(listen_addr).unwrap();
     } else {
-        bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
-            "/ip4/127.0.0.1/tcp/{}",
-            45869 + rand::random::<u32>() % 1000
-        ))
-        .unwrap();
+        {
+            bft_config.consensus.p2p.listen_addr = Multiaddr::from_str(&format!(
+                "/ip4/127.0.0.1/tcp/{}",
+                45869 + rand::random::<u32>() % 1000
+            ))
+            .unwrap();
+        }
     }
+
     bft_config.consensus.p2p.discovery = mconfig::DiscoveryConfig {
         selector: mconfig::Selector::Random,
         bootstrap_protocol: mconfig::BootstrapProtocol::Full,
         num_outbound_peers: 10,
         num_inbound_peers: 30,
+        max_connections_per_peer: 30,
         ephemeral_connection_timeout: Duration::from_secs(10),
         enabled: true,
     };
 
     info!(?bft_config);
 
+    #[cfg(feature = "malachite")]
     let mut malachite_system = None;
+    #[cfg(feature = "malachite")]
     if !*TEST_MODE.lock().unwrap() {
+        let internal = internal_handle.internal.lock().await;
+        let mut return_validator_list_because_of_malachite_bug =
+            internal.validators_at_current_height.clone();
+        if return_validator_list_because_of_malachite_bug
+            .iter()
+            .position(|v| v.address.0 == internal.my_public_key)
+            .is_none()
+        {
+            return_validator_list_because_of_malachite_bug.push(MalValidator {
+                address: MalPublicKey2(internal.my_public_key),
+                public_key: internal.my_public_key,
+                voting_power: 0,
+            });
+        }
+        drop(internal);
         malachite_system = Some(
             start_malachite_with_start_delay(
                 internal_handle.clone(),
                 1,
-                internal_handle
-                    .internal
-                    .lock()
-                    .await
-                    .validators_at_current_height
-                    .clone(),
+                return_validator_list_because_of_malachite_bug,
                 my_private_key,
                 bft_config.clone(),
                 Duration::from_secs(0),
@@ -861,11 +1329,161 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         );
     }
 
+    #[cfg(not(feature = "malachite"))]
+    {
+        use tenderloin::{SecureUdpEndpoint, StaticDHKeyPair};
+
+        use std::net::{Ipv6Addr, SocketAddr};
+
+        /// Parses "IP[:port]" (IPv4 or bracketed IPv6 with port) into (16-byte IPv6, port)
+        fn parse_to_ipv6_bytes(s: &str) -> Result<([u8; 16], u16), std::net::AddrParseError> {
+            let sa: SocketAddr = s.parse()?;
+
+            let (ip6, port) = match sa {
+                SocketAddr::V4(v4) => {
+                    // Map IPv4 to IPv6-mapped ::ffff:a.b.c.d
+                    (v4.ip().to_ipv6_mapped(), v4.port())
+                    // (Alternatively on newer Rust: (v4.ip().to_ipv6_mapped(), v4.port()))
+                }
+                SocketAddr::V6(v6) => (*v6.ip(), v6.port()),
+            };
+
+            Ok((ip6.octets(), port))
+        }
+
+        fn addr_string_to_stuff(addr: &str) -> (StaticDHKeyPair, SecureUdpEndpoint) {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(addr.as_bytes());
+            let seed = hasher.finish();
+
+            let kp = snow::Builder::with_resolver(
+                "Noise_IK_25519_ChaChaPoly_BLAKE2s".parse().unwrap(),
+                Box::new(tenderloin::SnowRngResolver::seed_from_u64(seed)),
+            )
+            .generate_keypair()
+            .unwrap();
+            let static_keypair = tenderloin::StaticDHKeyPair {
+                private: kp.private.try_into().unwrap(),
+                public: kp.public.try_into().unwrap(),
+            };
+            let (ip, port) = parse_to_ipv6_bytes(addr).unwrap();
+            (
+                static_keypair,
+                SecureUdpEndpoint {
+                    public_key: static_keypair.public,
+                    ip_address: ip,
+                    port,
+                },
+            )
+        }
+
+        let mut static_keypair_maybe = None;
+        let mut endpoint_maybe = None;
+        if let Some(listen_addr) = &config.listen_address {
+            let (a, b) = addr_string_to_stuff(&listen_addr);
+            static_keypair_maybe = Some(a);
+            endpoint_maybe = Some(b);
+        };
+
+        let unsorted_roster = internal_handle
+            .internal
+            .lock()
+            .await
+            .validators_at_current_height
+            .clone();
+        let roster = tenderloin_roster_from_internal(&unsorted_roster);
+
+        // Note(Sam): We do not support human names in the start config for now.
+        let evidence = unsorted_roster
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                use tenderloin::EndpointEvidence;
+
+                let (a, b) = addr_string_to_stuff(&config.malachite_peers[i]);
+                EndpointEvidence {
+                    endpoint: b,
+                    root_public_key: m.public_key.into(),
+                }
+            })
+            .collect();
+
+        let tfl_handle1 = internal_handle.clone();
+        let tfl_handle2 = internal_handle.clone();
+        let tfl_handle3 = internal_handle.clone();
+        let tfl_handle4 = internal_handle.clone();
+
+        tokio::spawn(tenderloin::entry_point(
+            my_private_key,
+            static_keypair_maybe,
+            endpoint_maybe,
+            roster,
+            evidence,
+            None,
+            tenderloin::ClosureToProposeNewBlock(Arc::new(move || {
+                let tfl_handle1 = tfl_handle1.clone();
+                Box::pin(async move {
+                    propose_new_bft_block(&tfl_handle1).await.map(|block| {
+                        tenderloin::BlockValue(block.zcash_serialize_to_vec().unwrap())
+                    })
+                })
+            })),
+            tenderloin::ClosureToValidateProposedBlock(Arc::new(move |block| {
+                let tfl_handle2 = tfl_handle2.clone();
+                Box::pin(async move {
+                    use bytes::Buf;
+                    use zebra_chain::serialization::ZcashDeserialize;
+
+                    if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
+                        validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await
+                    } else {
+                        error!("Failed to deserialize Tenderloin payload.");
+                        tenderloin::TMStatus::Fail
+                    }
+                })
+            })),
+            tenderloin::ClosureToPushDecidedBlock(Arc::new(move |block, fat_pointer| {
+                let tfl_handle3 = tfl_handle3.clone();
+                Box::pin(async move {
+                    use bytes::Buf;
+                    use zebra_chain::serialization::ZcashDeserialize;
+
+                    new_decided_bft_block_from_malachite(
+                        &tfl_handle3,
+                        &BftBlock::zcash_deserialize(block.0.reader()).unwrap(),
+                        &fat_pointer.into(),
+                    )
+                    .await
+                })
+            })),
+            tenderloin::ClosureToGetHistoricalBlock(Arc::new(move |height| {
+                Box::pin(async move {
+                    panic!();
+                })
+            })),
+            tenderloin::ClosureToUpdateRosterCmd(Arc::new(move |str| {
+                let tfl_handle = tfl_handle4.clone();
+                Box::pin(async move {
+                    let mut internal = tfl_handle.internal.lock().await;
+                    // ours overrides
+                    if internal.our_set_bft_string.is_some() {
+                        internal.our_set_bft_string.take()
+                    } else {
+                        if let Some(str) = str {
+                            internal.active_bft_string = Some(str)
+                        }
+                        None
+                    }
+                })
+            })),
+        ));
+    }
+
     let mut run_instant = Instant::now();
     let mut last_diagnostic_print = Instant::now();
     let mut current_bc_tip: Option<(BlockHeight, BlockHash)> = None;
-    let mut current_bc_final: Option<(BlockHeight, BlockHash)> = None;
 
+    #[cfg(feature = "malachite")]
     {
         let mut internal = internal_handle.internal.lock().await;
         internal.malachite_watchdog = Instant::now();
@@ -883,37 +1501,41 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         tokio::time::sleep_until(run_instant).await;
         run_instant += MAIN_LOOP_SLEEP_INTERVAL;
 
-        let new_bc_final = {
-            // partial dup of tfl_final_block_hash
-            let internal = internal_handle.internal.lock().await;
-
-            if internal.latest_final_block.is_some() {
-                internal.latest_final_block
-            } else {
-                drop(internal);
-
-                if new_bc_tip != current_bc_tip {
-                    //info!("tip changed to {:?}", new_bc_tip);
-                    tfl_reorg_final_block_height_hash(&call).await
-                } else {
-                    current_bc_final
-                }
+        // We need this to allow the malachite system to restart itself internally.
+        #[cfg(feature = "malachite")]
+        if let Some(ms) = &mut malachite_system {
+            if ms.lock().await.should_terminate {
+                malachite_system = None;
             }
-        };
+        }
 
         // from this point onwards we must race to completion in order to avoid stalling incoming requests
         // NOTE: split to avoid deadlock from non-recursive mutex - can we reasonably change type?
         #[allow(unused_mut)]
         let mut internal = internal_handle.internal.lock().await;
 
+        #[cfg(feature = "malachite")]
         if malachite_system.is_some() && internal.malachite_watchdog.elapsed().as_secs() > 120 {
             error!("Malachite Watchdog triggered, restarting subsystem...");
             let start_delay = Duration::from_secs(rand::rngs::OsRng.next_u64() % 10 + 20);
+            let mut return_validator_list_because_of_malachite_bug =
+                internal.validators_at_current_height.clone();
+            if return_validator_list_because_of_malachite_bug
+                .iter()
+                .position(|v| v.address.0 == internal.my_public_key)
+                .is_none()
+            {
+                return_validator_list_because_of_malachite_bug.push(MalValidator {
+                    address: MalPublicKey2(internal.my_public_key),
+                    public_key: internal.my_public_key,
+                    voting_power: 0,
+                });
+            }
             malachite_system = Some(
                 start_malachite_with_start_delay(
                     internal_handle.clone(),
                     internal.bft_blocks.len() as u64 + 1, // The next block malachite should produce
-                    internal.validators_at_current_height.clone(),
+                    return_validator_list_because_of_malachite_bug,
                     my_private_key,
                     bft_config.clone(),
                     start_delay,
@@ -923,56 +1545,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
             internal.malachite_watchdog = Instant::now() + start_delay;
         }
 
-        if new_bc_final != current_bc_final {
-            // info!("final changed to {:?}", new_bc_final);
-            if let Some(new_final_height_hash) = new_bc_final {
-                let start_hash = if let Some(prev_height_hash) = current_bc_final {
-                    prev_height_hash.1
-                } else {
-                    new_final_height_hash.1
-                };
-
-                let (new_final_blocks, infos) = tfl_block_sequence(
-                    &call,
-                    start_hash,
-                    Some(new_final_height_hash),
-                    /*include_start_hash*/ true,
-                    true,
-                )
-                .await;
-
-                let mut quiet = true;
-                if let (Some(Some(first_block)), Some(Some(last_block))) =
-                    (infos.first(), infos.last())
-                {
-                    let a = first_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
-                    let b = last_block.coinbase_height().unwrap_or(BlockHeight(0)).0;
-                    if a != b {
-                        // Note(Sam), very noisy and not connected to malachite right now.
-                        // println!("Height change: {} => {}:", a, b);
-                        // quiet = false;
-                    }
-                }
-                if !quiet {
-                    tfl_dump_blocks(&new_final_blocks[..], &infos[..]);
-                }
-
-                // walk all blocks in newly-finalized sequence & broadcast them
-                for new_final_block in new_final_blocks {
-                    // skip repeated boundary blocks
-                    if let Some((_, prev_hash)) = current_bc_final {
-                        if prev_hash == new_final_block.1 {
-                            continue;
-                        }
-                    }
-
-                    // We ignore the error because there will be one in the ordinary case
-                    // where there are no receivers yet.
-                    let _ = internal.final_change_tx.send(new_final_block);
-                }
-            }
-        }
-
+        // Check TFL is activated before we do anything that assumes it
         if !internal.tfl_is_activated {
             if let Some((height, _hash)) = new_bc_tip {
                 if height < TFL_ACTIVATION_HEIGHT {
@@ -1004,7 +1577,6 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
         }
 
         current_bc_tip = new_bc_tip;
-        current_bc_final = new_bc_final;
     }
 }
 
@@ -1226,6 +1798,26 @@ async fn tfl_service_incoming_request(
             ))
         }
 
+        TFLServiceRequest::GetCommandBuf => {
+            let mut internal = internal_handle.internal.lock().await;
+            // info!("BFT command string: {:?}", internal.proposed_bft_string);
+            let str = internal.active_bft_string.take().unwrap_or(String::new());
+            internal.our_set_bft_string = None;
+            // let str = internal.proposed_bft_string.clone().unwrap_or(String::new());
+            Ok(TFLServiceResponse::GetCommandBuf(
+                zebra_chain::block::CommandBuf::from_str(&str),
+            ))
+        }
+
+        TFLServiceRequest::SetCommandBuf(cmd) => {
+            let mut internal = internal_handle.internal.lock().await;
+            let cmd_str = cmd.to_str();
+            info!("Forced BFT command string: {:?}", cmd_str);
+            internal.our_set_bft_string = Some(cmd_str.to_string());
+            internal.active_bft_string = internal.our_set_bft_string.clone();
+            Ok(TFLServiceResponse::SetCommandBuf)
+        }
+
         _ => Err(TFLServiceError::NotImplemented),
     }
 }
@@ -1264,7 +1856,8 @@ impl SatSubAffine<i32> for BlockHeight {
     }
 }
 
-// TODO: handle headers as well?
+// TODO: can we change the signature to unwrap the block options? The blocks must exist if the
+// hashes do
 // NOTE: this is currently best-chain-only due to request/response limitations
 // TODO: add more request/response pairs directly in zebra-state's StateService
 /// always returns block hashes. If read_extra_info is set, also returns Blocks, otherwise returns an empty vector.

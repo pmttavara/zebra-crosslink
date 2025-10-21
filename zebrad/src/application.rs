@@ -3,7 +3,7 @@
 //! This is the code that starts `zebrad`, and launches its tasks and services.
 //! See [the crate docs](crate) and [the start docs](crate::commands::start) for more details.
 
-use std::{env, fmt::Write as _, io::Write as _, process, sync::Arc};
+use std::{env, fmt::Write as _, io::Write as _, ops::Deref, process, sync::Arc};
 
 use abscissa_core::{
     application::{self, AppCell},
@@ -15,7 +15,12 @@ use abscissa_core::{
 use semver::{BuildMetadata, Version};
 
 use tokio::sync::watch;
+use zebra_chain::{
+    block::Height,
+    parameters::{testnet, Magic},
+};
 use zebra_network::constants::PORT_IN_USE_ERROR;
+use zebra_rpc::config::mining::ZcashAddress;
 use zebra_state::{
     constants::LOCK_FILE_ERROR, state_database_format_version_in_code,
     state_database_format_version_on_disk,
@@ -209,7 +214,45 @@ impl Application for ZebradApp {
             .unwrap()
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| self.config.read())
+            .unwrap_or_else(|| {
+                // NORMAL OPERATION CROSSLINK CONFIG OVERRIDES
+                let mut c = self.config.read().deref().clone();
+                if c.crosslink.do_not_manipulate_config == false {
+                    c.mining.miner_address = Some(
+                        ZcashAddress::try_from_encoded("t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v")
+                            .unwrap(),
+                    );
+                    c.mining.internal_miner = true;
+                    c.network.network = testnet::Parameters::build()
+                        //.with_network_name("CrosslinkTestnet")
+                        .with_network_magic(Magic([67, 108, 84, 110]))
+                        .with_slow_start_interval(Height(0))
+                        .to_network();
+                    c.network.initial_testnet_peers.clear();
+                    c.network
+                        .initial_testnet_peers
+                        .insert("80.78.31.51:8233".to_owned());
+                    c.network
+                        .initial_testnet_peers
+                        .insert("80.78.31.32:8233".to_owned());
+                    c.mempool.debug_enable_at_height = Some(0);
+                    c.rpc.enable_cookie_auth = false;
+
+                    #[cfg(feature = "malachite")]
+                    {
+                        c.crosslink.malachite_peers = vec![
+                            "/ip4/80.78.31.51/tcp/8234".to_owned(),
+                            "/ip4/80.78.31.32/tcp/8234".to_owned(),
+                        ];
+                    }
+                    #[cfg(not(feature = "malachite"))]
+                    {
+                        c.crosslink.malachite_peers =
+                            vec!["80.78.31.51:8234".to_owned(), "80.78.31.32:8234".to_owned()];
+                    }
+                }
+                Arc::new(c)
+            })
     }
 
     /// Borrow the application state immutably.

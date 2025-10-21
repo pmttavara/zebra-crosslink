@@ -541,6 +541,7 @@ pub struct VizGlobals {
 
     /// validators_at_current_height
     pub validators_at_current_height: Vec<MalValidator>,
+    pub validators_keys_to_names: HashMap<MalPublicKey, String>,
 }
 pub static VIZ_G: std::sync::Mutex<Option<VizGlobals>> = std::sync::Mutex::new(None);
 
@@ -604,14 +605,16 @@ pub async fn service_viz_requests(
         consumed: true,
         bft_pause_button: false,
         validators_at_current_height: Vec::new(),
+        validators_keys_to_names: HashMap::new(),
     });
 
     loop {
         let old_g = VIZ_G.lock().unwrap().as_ref().unwrap().clone();
 
         if old_g.proposed_bft_string.is_some() {
-            tfl_handle.internal.lock().await.proposed_bft_string =
-                old_g.proposed_bft_string.clone();
+            let mut internal = tfl_handle.internal.lock().await;
+            internal.our_set_bft_string = old_g.proposed_bft_string.clone();
+            internal.active_bft_string = old_g.proposed_bft_string.clone();
         }
 
         if !old_g.consumed {
@@ -621,12 +624,11 @@ pub async fn service_viz_requests(
         let mut new_g = old_g.clone();
         new_g.consumed = false;
 
-        new_g.validators_at_current_height = tfl_handle
-            .internal
-            .lock()
-            .await
-            .validators_at_current_height
-            .clone();
+        {
+            let internal = tfl_handle.internal.lock().await;
+            new_g.validators_at_current_height = internal.validators_at_current_height.clone();
+            new_g.validators_keys_to_names = internal.validators_keys_to_names.clone();
+        }
 
         // ALT: do 1 or the other of force/read, not both
         // NOTE: we have to use force blocks, otherwise we miss side-chains
@@ -823,7 +825,7 @@ pub async fn service_viz_requests(
                 bft_err_flags,
                 internal.bft_blocks.clone(),
                 internal.fat_pointer_to_tip.clone(),
-                internal.proposed_bft_string.clone(),
+                internal.active_bft_string.clone(),
             )
         };
 
@@ -1378,21 +1380,21 @@ impl VizCtx {
         if let Some(node_hash) = new_node.hash() {
             match new_node.kind {
                 NodeKind::BC => {
-                    info!(
-                        "inserting PoW node {} at {} with parent {}",
-                        BlockHash(node_hash),
-                        i,
-                        BlockHash(parent_hash.unwrap_or([0; 32]))
-                    );
+                    // info!(
+                    //     "inserting PoW node {} at {} with parent {}",
+                    //     BlockHash(node_hash),
+                    //     i,
+                    //     BlockHash(parent_hash.unwrap_or([0; 32]))
+                    // );
                     self.bc_by_hash.insert(node_hash, node_hdl)
                 }
                 NodeKind::BFT => {
-                    info!(
-                        "inserting PoS node {} at {} with parent {}",
-                        Blake3Hash(node_hash),
-                        i,
-                        Blake3Hash(parent_hash.unwrap_or([0; 32]))
-                    );
+                    // info!(
+                    //     "inserting PoS node {} at {} with parent {}",
+                    //     Blake3Hash(node_hash),
+                    //     i,
+                    //     Blake3Hash(parent_hash.unwrap_or([0; 32]))
+                    // );
                     self.bft_by_hash.insert(node_hash, node_hdl)
                 }
             };
@@ -2067,7 +2069,7 @@ pub async fn viz_main(
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
-    let mut edit_proposed_bft_string = "/ip4/127.0.0.1/udp/45869/quic-v1".to_string();
+    let mut edit_proposed_bft_string = "ADD|12345|/ip4/127.0.0.2/udp/45869/quic-v1".to_string();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
     let mut bft_pause_button = false;
     let mut tray_make_wider = false;
@@ -2598,7 +2600,6 @@ pub async fn viz_main(
                                     _ => Vec::new(),
                                 };
                             },
-                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         ctx.bft_last_added = ctx.push_node(
@@ -2833,6 +2834,7 @@ pub async fn viz_main(
                             solution: zebra_chain::work::equihash::Solution::for_proposal(),
                             fat_pointer_to_bft_block:
                                 zebra_chain::block::FatPointerToBftBlock::null(),
+                            temp_command_buf: zebra_chain::block::CommandBuf::empty(),
                         };
                         let id = NodeId::Hash(header.hash().0);
                         (VizHeader::BlockHeader(header), id, None)
@@ -2845,7 +2847,6 @@ pub async fn viz_main(
                             previous_block_fat_ptr: FatPointerToBftBlock2::null(),
                             finalization_candidate_height: 0,
                             headers: Vec::new(),
-                            temp_roster_edit_command_string: Vec::new(),
                         };
 
                         let id = NodeId::Hash(bft_block.blake3_hash().0);
@@ -3217,6 +3218,7 @@ pub async fn viz_main(
                     match &click_node.header {
                         VizHeader::None => {}
                         VizHeader::BlockHeader(hdr) => {
+                            ui.label(None, &format!("CMD: '{}'", hdr.temp_command_buf.to_str()));
                             let string = format!("PoS fp all: {}", hdr.fat_pointer_to_bft_block);
                             let mut iter = string.chars();
 
@@ -3236,10 +3238,6 @@ pub async fn viz_main(
                             }
                         }
                         VizHeader::BftBlock(bft_block) => {
-                            let cmd = String::from_utf8_lossy(
-                                &bft_block.block.temp_roster_edit_command_string,
-                            );
-                            ui.label(None, &format!("CMD: '{}'", cmd));
                             ui.label(None, "PoW headers:");
                             for i in 0..bft_block.block.headers.len() {
                                 let pow_hdr = &bft_block.block.headers[i];
@@ -3712,50 +3710,80 @@ pub async fn viz_main(
                 }
                 i += 1;
             }
-            let min_y = min_y + i as f32 * (w + y_pad) + 20.0;
-            let bft_sigs_n = g.state.fat_pointer_to_bft_tip.signatures.len();
 
-            let mut i = 0;
+            let bft_sigs = &g.state.fat_pointer_to_bft_tip.signatures;
+            let bft_sigs_n = bft_sigs.len();
+
+            let mut pt = vec2(
+                window::screen_width() - ch_w,
+                min_y + i as f32 * (w + y_pad) + 20.0,
+            );
+
+            draw_text_right_align("Current roster:", pt, font_size * 0.5, WHITE, ch_w * 0.5);
+            pt.y += font_size * 0.5;
+
+            draw_text_right_align(
+                "(Vote Power) (Trnkd PK)",
+                pt,
+                font_size * 0.5,
+                WHITE,
+                ch_w * 0.5,
+            );
+            pt.y += font_size * 0.5;
+
+            for val in &g.validators_at_current_height {
+                let string =
+                    if let Some(user_name) = g.validators_keys_to_names.get(&val.public_key) {
+                        user_name.clone()
+                    } else {
+                        let mut string = format!("{:?}", MalPublicKey2(val.public_key));
+                        string.truncate(16);
+                        string
+                    };
+                draw_text_right_align(
+                    &format!("{} - {}", val.voting_power, &string,),
+                    pt,
+                    font_size * 0.5,
+                    WHITE,
+                    ch_w * 0.5,
+                );
+                pt.y += font_size * 0.5;
+            }
+
+            pt.y += font_size * 0.5;
+
             draw_text_right_align(
                 &format!(
                     "{} signature{} for PoS tip",
                     bft_sigs_n,
                     if bft_sigs_n == 1 { "" } else { "s" }
                 ),
-                vec2(
-                    window::screen_width() - ch_w,
-                    min_y + i as f32 * font_size / 2.0,
-                ),
-                font_size / 2.0,
+                pt,
+                font_size * 0.5,
                 WHITE,
-                ch_w / 2.0,
+                ch_w * 0.5,
             );
-            i += 1;
-            draw_text_right_align(
-                "(Vote Power) (Trnkd PK)",
-                vec2(
-                    window::screen_width() - ch_w,
-                    min_y + i as f32 * font_size / 2.0,
-                ),
-                font_size / 2.0,
-                WHITE,
-                ch_w / 2.0,
-            );
-            i += 1;
-            for val in &g.validators_at_current_height {
-                let mut string = format!("{:?}", MalPublicKey2(val.public_key));
-                string.truncate(16);
+            pt.y += font_size * 0.5;
+
+            for sig in bft_sigs {
+                let string = if let Some(user_name) = g
+                    .validators_keys_to_names
+                    .get(&MalPublicKey::from(sig.public_key))
+                {
+                    user_name.clone()
+                } else {
+                    let mut string = format!("{:?}", MalPublicKey2(sig.public_key.into()));
+                    string.truncate(16);
+                    string
+                };
                 draw_text_right_align(
-                    &format!("{} - {}", val.voting_power, &string,),
-                    vec2(
-                        window::screen_width() - ch_w,
-                        min_y + i as f32 * font_size / 2.0,
-                    ),
-                    font_size / 2.0,
+                    &format!("{}", &string),
+                    pt,
+                    font_size * 0.5,
                     WHITE,
-                    ch_w / 2.0,
+                    ch_w * 0.5,
                 );
-                i += 1;
+                pt.y += font_size * 0.5;
             }
         }
 

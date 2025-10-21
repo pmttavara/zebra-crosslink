@@ -279,7 +279,8 @@ where
 }
 
 /// Generates block templates using `rpc`, and sends them to mining threads using `template_sender`.
-#[instrument(skip(rpc, template_sender))]
+// Note(Sam): Very very noisy.
+//#[instrument(skip(rpc, template_sender))]
 pub async fn generate_block_templates<
     Mempool,
     TFLService,

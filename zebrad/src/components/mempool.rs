@@ -566,10 +566,11 @@ impl Service<Request> for Mempool {
             // Re-verify the transactions that were pending or valid at the previous tip.
             // This saves us the time and data needed to re-download them.
             if let ActiveState::Enabled { tx_downloads, .. } = &mut self.active_state {
-                info!(
-                    transactions = tx_retries.len(),
-                    "re-verifying mempool transactions after a chain fork"
-                );
+                // Note(Sam): This was very loud.
+                // info!(
+                //     transactions = tx_retries.len(),
+                //     "re-verifying mempool transactions after a chain fork"
+                // );
 
                 for tx in tx_retries {
                     // This is just an efficiency optimisation, so we don't care if queueing

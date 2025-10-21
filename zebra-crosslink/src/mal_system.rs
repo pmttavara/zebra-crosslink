@@ -2,6 +2,7 @@ use std::{ops::Deref, panic::AssertUnwindSafe, sync::Weak};
 
 use color_eyre::owo_colors::OwoColorize;
 use futures::FutureExt;
+use malachitebft_app::engine::host::Next;
 use malachitebft_core_types::{NilOrVal, VoteType};
 use tracing_subscriber::fmt::format::PrettyVisitor;
 use zerocopy::IntoBytes;
@@ -77,9 +78,10 @@ pub async fn start_malachite_with_start_delay(
         tokio::time::sleep(start_delay).await;
         let (channels, engine_handle) = malachitebft_app_channel::start_engine(
             ctx,
-            codec,
             bft_node_handle,
             bft_config,
+            codec,
+            codec,
             Some(MalHeight::new(at_height)),
             MalValidatorSet {
                 validators: validators_at_current_height,
@@ -112,13 +114,13 @@ pub async fn start_malachite_with_start_delay(
 async fn malachite_system_terminate_engine(
     mut engine_handle: EngineHandle,
     mut post_pending_block_to_push_to_core_reply: Option<
-        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+        tokio::sync::oneshot::Sender<Next<MalContext>>,
     >,
 ) {
     engine_handle.actor.stop(None);
     if let Some(reply) = post_pending_block_to_push_to_core_reply.take() {
         reply
-            .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+            .send(Next::Start(
                 MalHeight::new(0),
                 MalValidatorSet {
                     validators: Vec::new(),
@@ -126,6 +128,23 @@ async fn malachite_system_terminate_engine(
             ))
             .unwrap();
     }
+}
+
+/// Secure hash of the data we're signing/checking the signature for
+pub fn hash_of_height_round_and_data(
+    height: MalHeight,
+    round: MalRound,
+    data: &[u8],
+) -> Blake3Hash {
+    // TODO: Blake3 key
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(height.as_u64().to_le_bytes().as_slice());
+
+    // Q: is there a reason round is signed? A: it's to provide a -1 for Nil option...
+    // Do we want that represented here? We could force converting to actual type (u32) beforehand.
+    hasher.update(round.as_i64().to_le_bytes().as_slice());
+    hasher.update(data);
+    Blake3Hash(*hasher.finalize().as_bytes())
 }
 
 async fn malachite_system_main_loop(
@@ -141,7 +160,7 @@ async fn malachite_system_main_loop(
 
     let mut pending_block_to_push_to_core: Option<(BftBlock, FatPointerToBftBlock2)> = None;
     let mut post_pending_block_to_push_to_core_reply: Option<
-        tokio::sync::oneshot::Sender<ConsensusMsg<MalContext>>,
+        tokio::sync::oneshot::Sender<Next<MalContext>>,
     > = None;
 
     let mut bft_msg_flags = 0;
@@ -189,7 +208,7 @@ async fn malachite_system_main_loop(
                 post_pending_block_to_push_to_core_reply
                     .take()
                     .unwrap()
-                    .send(malachitebft_app_channel::ConsensusMsg::StartHeight(
+                    .send(Next::Start(
                         MalHeight::new(lock.height),
                         MalValidatorSet {
                             validators: validator_set,
@@ -247,11 +266,12 @@ async fn malachite_system_main_loop(
                     round,
                     proposer,
                     reply_value,
+                    role,
                 } => {
                     assert_eq!(height.as_u64(), lock.height);
                     let round = round.as_u32().unwrap() as u32;
 
-                    info!(%height, %round, %proposer, "Started round");
+                    info!(%height, %round, %proposer, ?role, "Started round");
                     bft_msg_flags |= 1 << BFTMsgFlag::StartedRound as u64;
                     lock.round = round;
 
@@ -263,9 +283,9 @@ async fn malachite_system_main_loop(
                         .flatten();
                     if let Some(proposal) = maybe_prev_seen_block {
                         info!(%height, %round, "Replaying already known proposed value: {}", proposal.value.id());
-                        reply_value.send(Some(proposal.as_ref().clone())).unwrap();
+                        reply_value.send(vec![proposal.as_ref().clone()]).unwrap();
                     } else {
-                        reply_value.send(None).unwrap();
+                        reply_value.send(vec![]).unwrap();
                     }
                 }
                 BFTAppMsg::GetValue {
@@ -308,11 +328,19 @@ async fn malachite_system_main_loop(
                             propose_new_bft_block(&tfl_handle, &my_public_key, lock.height).await
                         {
                             info!("Proposing block with hash: {}", block.blake3_hash());
+
+                            #[cfg(debug_assertions)]
+                            {
+                                let bytes = block.zcash_serialize_to_vec().unwrap();
+                                let block2 = BftBlock::zcash_deserialize(bytes.as_slice()).unwrap();
+                                assert_eq!(block.blake3_hash(), block2.blake3_hash());
+                            }
+
                             let other_type: MalLocallyProposedValue<MalContext> =
                                 MalLocallyProposedValue {
                                     height: height,
                                     round: MalRound::new(round as u32),
-                                    value: MalValue::new_block(block),
+                                    value: MalValue::new_block(&block),
                                 };
                             {
                                 // The POL round is always nil when we propose a newly built value.
@@ -350,12 +378,9 @@ async fn malachite_system_main_loop(
                     // Include metadata about the proposal
                     let data_bytes = proposal.value.value_bytes;
 
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(proposal.height.as_u64().to_le_bytes().as_slice());
-                    hasher.update(proposal.round.as_i64().to_le_bytes().as_slice());
-                    hasher.update(&data_bytes);
-                    let hash: [u8; 32] = hasher.finalize().into();
-                    let signature = my_signing_provider.sign(&hash);
+                    let hash =
+                        hash_of_height_round_and_data(proposal.height, proposal.round, &data_bytes);
+                    let signature = my_signing_provider.sign(&hash.0);
 
                     let streamed_proposal = MalStreamedProposal {
                         height: proposal.height,
@@ -460,9 +485,8 @@ async fn malachite_system_main_loop(
                         validity: MalValidity::Valid,
                     };
                     if value.height.as_u64() != lock.height {
-                        // Omg, we have to reject blocks ahead of the current height.
-                        bft_err_flags |= msg_flag;
-                        value.validity = MalValidity::Invalid;
+                        // TODO(Sam): maybe change how this works
+                        reply.send(None);
                     } else {
                         lock.round = value.round.as_u32().unwrap();
                         while at_this_height_previously_seen_proposals.len()
@@ -472,21 +496,23 @@ async fn malachite_system_main_loop(
                         }
                         at_this_height_previously_seen_proposals[lock.round as usize] =
                             Some(Box::new(value.clone()));
+                        reply.send(Some(value)).unwrap();
                     }
-                    reply.send(value).unwrap();
                 }
                 BFTAppMsg::GetValidatorSet { height, reply } => {
                     bft_msg_flags |= 1 << BFTMsgFlag::GetValidatorSet as u64;
                     if height.as_u64() == lock.height {
                         reply
-                            .send(MalValidatorSet {
+                            .send(Some(MalValidatorSet {
                                 validators:
                                     malachite_wants_to_know_what_the_current_validator_set_is(
                                         &tfl_handle,
                                     )
                                     .await,
-                            })
+                            }))
                             .unwrap();
+                    } else {
+                        reply.send(None);
                     }
                 }
                 BFTAppMsg::Decided {
@@ -501,7 +527,9 @@ async fn malachite_system_main_loop(
                         "Consensus has decided on value"
                     );
                     assert_eq!(lock.height, certificate.height.as_u64());
-                    assert_eq!(lock.round as i64, certificate.round.as_i64());
+                    // assert_eq!(lock.round as i64, certificate.round.as_i64()); // ASSUMPTION INVALIDATED BY UPDATED LIBRARY
+                    assert!(lock.round as i64 >= certificate.round.as_i64());
+                    let cert_round = certificate.round.as_u32().unwrap();
                     bft_msg_flags |= 1 << BFTMsgFlag::Decided as u64;
 
                     let fat_pointer = FatPointerToBftBlock2::from(&certificate);
@@ -510,7 +538,7 @@ async fn malachite_system_main_loop(
                     assert_eq!(certificate.value_id.0, fat_pointer.points_at_block_hash());
 
                     let decided_value = at_this_height_previously_seen_proposals
-                        [lock.round as usize]
+                        [cert_round as usize]
                         .take()
                         .unwrap();
                     assert_eq!(decided_value.value.id(), certificate.value_id);
@@ -603,16 +631,10 @@ async fn malachite_system_main_loop(
                         break;
                     }
 
-                    // signature verification
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(parts.height.as_u64().to_le_bytes().as_slice());
-                    hasher.update(parts.round.as_i64().to_le_bytes().as_slice());
-                    hasher.update(&parts.data_bytes);
-                    let hash: [u8; 32] = hasher.finalize().into();
-
                     // Verify the signature
-                    if my_signing_provider.verify(&hash, &parts.signature, &parts.proposer) == false
-                    {
+                    let hash =
+                        hash_of_height_round_and_data(parts.height, parts.round, &parts.data_bytes);
+                    if !my_signing_provider.verify(&hash.0, &parts.signature, &parts.proposer) {
                         warn!("Invalid signature, ignoring");
                         bft_err_flags |= msg_flag;
                         reply.send(None).unwrap();
@@ -638,7 +660,7 @@ async fn malachite_system_main_loop(
                         round: parts.round,
                         valid_round: parts.pol_round,
                         proposer: MalPublicKey2(parts.proposer),
-                        value: MalValue::new_block(block),
+                        value: MalValue::new_block(&block),
                         validity,
                     };
 
@@ -658,226 +680,106 @@ async fn malachite_system_main_loop(
 
                     reply.send(Some(value)).unwrap();
                 }
+                BFTAppMsg::RestreamProposal {
+                    height,
+                    round,
+                    valid_round,
+                    address,
+                    value_id,
+                } => {
+                    // Here it is important that, if we have previously built a value for this height and round,
+                    // we send back the very same value.
+                    if round.as_u32().is_none() {
+                        warn!("Asked to restream proposal but the round was not a u32.");
+                        break;
+                    }
+                    let maybe_prev_seen_block = at_this_height_previously_seen_proposals
+                        .get(round.as_u32().unwrap() as usize)
+                        .map(|x| x.as_ref().map(|x| x.as_ref().clone()))
+                        .flatten();
+
+                    if maybe_prev_seen_block.is_none() {
+                        warn!("Asked to restream proposal but could not find it.");
+                        break;
+                    }
+                    let proposal = maybe_prev_seen_block.unwrap();
+
+                    if proposal.height != height {
+                        warn!("Asked to restream proposal but the height did not match.");
+                        break;
+                    }
+                    if proposal.round != round {
+                        warn!("Asked to restream proposal but the round did not match.");
+                        break;
+                    }
+                    if proposal.valid_round != valid_round {
+                        warn!("Asked to restream proposal but the valid_round did not match.");
+                        break;
+                    }
+                    if proposal.proposer != address {
+                        warn!("Asked to restream proposal but the proposer address did not match.");
+                        break;
+                    }
+                    if proposal.value.id() != value_id {
+                        warn!("Asked to restream proposal but the value_id did not match.");
+                        break;
+                    }
+
+                    // Include metadata about the proposal
+                    let data_bytes = proposal.value.value_bytes;
+
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(proposal.height.as_u64().to_le_bytes().as_slice());
+                    hasher.update(proposal.round.as_i64().to_le_bytes().as_slice());
+                    hasher.update(&data_bytes);
+                    let hash: [u8; 32] = hasher.finalize().into();
+                    let signature = my_signing_provider.sign(&hash);
+
+                    let streamed_proposal = MalStreamedProposal {
+                        height: height,
+                        round: round,
+                        pol_round: valid_round,
+                        proposer: address.0, // @Zooko: security orange flag: should be hash of key instead; this should only be used for lookup
+                        data_bytes,
+                        signature,
+                    };
+
+                    let stream_id = {
+                        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+                        bytes.extend_from_slice(&height.as_u64().to_be_bytes());
+                        bytes.extend_from_slice(&(round.as_u32().unwrap()).to_be_bytes());
+                        malachitebft_app_channel::app::types::streaming::StreamId::new(bytes.into())
+                    };
+
+                    let mut msgs = vec![
+                        malachitebft_app_channel::app::types::streaming::StreamMessage::new(
+                            stream_id.clone(),
+                            0,
+                            malachitebft_app_channel::app::streaming::StreamContent::Data(
+                                streamed_proposal,
+                            ),
+                        ),
+                        malachitebft_app_channel::app::types::streaming::StreamMessage::new(
+                            stream_id,
+                            1,
+                            malachitebft_app_channel::app::streaming::StreamContent::Fin,
+                        ),
+                    ];
+
+                    for stream_message in msgs {
+                        //info!(%height, %round, "Streaming proposal part: {stream_message:?}");
+                        channels
+                            .network
+                            .send(NetworkMsg::PublishProposalPart(stream_message))
+                            .await
+                            .unwrap();
+                    }
+                }
                 _ => panic!("AppMsg variant not handled: {:?}", app_msg),
             }
             break;
         }
 
         push_new_bft_msg_flags(&tfl_handle, bft_msg_flags, bft_err_flags).await;
-    }
-}
-
-/// A bundle of signed votes for a block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerToBftBlock2 {
-    pub vote_for_block_without_finalizer_public_key: [u8; 76 - 32],
-    pub signatures: Vec<FatPointerSignature2>,
-}
-
-impl std::fmt::Display for FatPointerToBftBlock2 {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{{hash:")?;
-        for b in &self.vote_for_block_without_finalizer_public_key[0..32] {
-            write!(f, "{:02x}", b)?;
-        }
-        write!(f, " ovd:")?;
-        for b in &self.vote_for_block_without_finalizer_public_key[32..] {
-            write!(f, "{:02x}", b)?;
-        }
-        write!(f, " signatures:[")?;
-        for (i, s) in self.signatures.iter().enumerate() {
-            write!(f, "{{pk:")?;
-            for b in s.public_key {
-                write!(f, "{:02x}", b)?;
-            }
-            write!(f, " sig:")?;
-            for b in s.vote_signature {
-                write!(f, "{:02x}", b)?;
-            }
-            write!(f, "}}")?;
-            if i + 1 < self.signatures.len() {
-                write!(f, " ")?;
-            }
-        }
-        write!(f, "]}}")?;
-        Ok(())
-    }
-}
-
-impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
-    fn from(certificate: &MalCommitCertificate<MalContext>) -> FatPointerToBftBlock2 {
-        let vote_template = MalVote {
-            validator_address: MalPublicKey2([0_u8; 32].into()),
-            value: NilOrVal::Val(certificate.value_id), // previous_block_hash
-            height: certificate.height,
-            typ: VoteType::Precommit,
-            round: certificate.round,
-        };
-        let vote_for_block_without_finalizer_public_key: [u8; 76 - 32] =
-            vote_template.to_bytes()[32..].try_into().unwrap();
-
-        FatPointerToBftBlock2 {
-            vote_for_block_without_finalizer_public_key,
-            signatures: certificate
-                .commit_signatures
-                .iter()
-                .map(|commit_signature| {
-                    let public_key: MalPublicKey2 = commit_signature.address;
-                    let signature: [u8; 64] = commit_signature.signature;
-
-                    FatPointerSignature2 {
-                        public_key: public_key.0.into(),
-                        vote_signature: signature,
-                    }
-                })
-                .collect(),
-        }
-    }
-}
-
-impl FatPointerToBftBlock2 {
-    pub fn to_non_two(self) -> zebra_chain::block::FatPointerToBftBlock {
-        zebra_chain::block::FatPointerToBftBlock {
-            vote_for_block_without_finalizer_public_key: self
-                .vote_for_block_without_finalizer_public_key,
-            signatures: self
-                .signatures
-                .into_iter()
-                .map(|two| zebra_chain::block::FatPointerSignature {
-                    public_key: two.public_key,
-                    vote_signature: two.vote_signature,
-                })
-                .collect(),
-        }
-    }
-
-    pub fn null() -> FatPointerToBftBlock2 {
-        FatPointerToBftBlock2 {
-            vote_for_block_without_finalizer_public_key: [0_u8; 76 - 32],
-            signatures: Vec::new(),
-        }
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&self.vote_for_block_without_finalizer_public_key);
-        buf.extend_from_slice(&(self.signatures.len() as u16).to_le_bytes());
-        for s in &self.signatures {
-            buf.extend_from_slice(&s.to_bytes());
-        }
-        buf
-    }
-    #[allow(clippy::reversed_empty_ranges)]
-    pub fn try_from_bytes(bytes: &Vec<u8>) -> Option<FatPointerToBftBlock2> {
-        if bytes.len() < 76 - 32 + 2 {
-            return None;
-        }
-        let vote_for_block_without_finalizer_public_key = bytes[0..76 - 32].try_into().unwrap();
-        let len = u16::from_le_bytes(bytes[76 - 32..2].try_into().unwrap()) as usize;
-
-        if 76 - 32 + 2 + len * (32 + 64) > bytes.len() {
-            return None;
-        }
-        let rem = &bytes[76 - 32 + 2..];
-        let signatures = rem
-            .chunks_exact(32 + 64)
-            .map(|chunk| FatPointerSignature2::from_bytes(chunk.try_into().unwrap()))
-            .collect();
-
-        Some(Self {
-            vote_for_block_without_finalizer_public_key,
-            signatures,
-        })
-    }
-
-    pub fn get_vote_template(&self) -> MalVote {
-        let mut vote_bytes = [0_u8; 76];
-        vote_bytes[32..76].copy_from_slice(&self.vote_for_block_without_finalizer_public_key);
-        MalVote::from_bytes(&vote_bytes)
-    }
-    pub fn inflate(&self) -> Vec<(MalVote, ed25519_zebra::ed25519::SignatureBytes)> {
-        let vote_template = self.get_vote_template();
-        self.signatures
-            .iter()
-            .map(|s| {
-                let mut vote = vote_template.clone();
-                vote.validator_address = MalPublicKey2(MalPublicKey::from(s.public_key));
-                (vote, s.vote_signature)
-            })
-            .collect()
-    }
-    pub fn validate_signatures(&self) -> bool {
-        let mut batch = ed25519_zebra::batch::Verifier::new();
-        for (vote, signature) in self.inflate() {
-            let vk_bytes = ed25519_zebra::VerificationKeyBytes::from(vote.validator_address.0);
-            let sig = ed25519_zebra::Signature::from_bytes(&signature);
-            let msg = vote.to_bytes();
-
-            batch.queue((vk_bytes, sig, &msg));
-        }
-        batch.verify(rand::thread_rng()).is_ok()
-    }
-    pub fn points_at_block_hash(&self) -> Blake3Hash {
-        Blake3Hash(
-            self.vote_for_block_without_finalizer_public_key[0..32]
-                .try_into()
-                .unwrap(),
-        )
-    }
-}
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io;
-
-impl ZcashSerialize for FatPointerToBftBlock2 {
-    fn zcash_serialize<W: io::Write>(&self, mut writer: W) -> Result<(), io::Error> {
-        writer.write_all(&self.vote_for_block_without_finalizer_public_key)?;
-        writer.write_u16::<LittleEndian>(self.signatures.len() as u16)?;
-        for signature in &self.signatures {
-            writer.write_all(&signature.to_bytes())?;
-        }
-        Ok(())
-    }
-}
-
-impl ZcashDeserialize for FatPointerToBftBlock2 {
-    fn zcash_deserialize<R: io::Read>(mut reader: R) -> Result<Self, SerializationError> {
-        let mut vote_for_block_without_finalizer_public_key = [0u8; 76 - 32];
-        reader.read_exact(&mut vote_for_block_without_finalizer_public_key)?;
-
-        let len = reader.read_u16::<LittleEndian>()?;
-        let mut signatures: Vec<FatPointerSignature2> = Vec::with_capacity(len.into());
-        for _ in 0..len {
-            let mut signature_bytes = [0u8; 32 + 64];
-            reader.read_exact(&mut signature_bytes)?;
-            signatures.push(FatPointerSignature2::from_bytes(&signature_bytes));
-        }
-
-        Ok(FatPointerToBftBlock2 {
-            vote_for_block_without_finalizer_public_key,
-            signatures,
-        })
-    }
-}
-
-/// A vote signature for a block
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)] //, serde::Serialize, serde::Deserialize)]
-pub struct FatPointerSignature2 {
-    pub public_key: [u8; 32],
-    pub vote_signature: [u8; 64],
-}
-
-impl FatPointerSignature2 {
-    pub fn to_bytes(&self) -> [u8; 32 + 64] {
-        let mut buf = [0_u8; 32 + 64];
-        buf[0..32].copy_from_slice(&self.public_key);
-        buf[32..32 + 64].copy_from_slice(&self.vote_signature);
-        buf
-    }
-    pub fn from_bytes(bytes: &[u8; 32 + 64]) -> FatPointerSignature2 {
-        Self {
-            public_key: bytes[0..32].try_into().unwrap(),
-            vote_signature: bytes[32..32 + 64].try_into().unwrap(),
-        }
     }
 }

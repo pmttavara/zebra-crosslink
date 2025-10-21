@@ -62,7 +62,8 @@ use zcash_primitives::consensus::Parameters;
 use zebra_chain::{
     amount::{self, Amount, NegativeAllowed, NonNegative},
     block::{
-        self, Block, Commitment, FatPointerToBftBlock, Height, SerializedBlock, TryIntoHeight,
+        self, Block, CommandBuf, Commitment, FatPointerToBftBlock, Height, SerializedBlock,
+        TryIntoHeight,
     },
     chain_sync_status::ChainSyncStatus,
     chain_tip::{ChainTip, NetworkChainTipHeightEstimator},
@@ -279,6 +280,14 @@ pub trait Rpc {
     /// Get the fat pointer to the BFT Chain tip. TODO: Example
     #[method(name = "get_tfl_fat_pointer_to_bft_chain_tip")]
     async fn get_tfl_fat_pointer_to_bft_chain_tip(&self) -> Option<FatPointerToBftBlock>;
+
+    /// Get BFT command buffer
+    #[method(name = "get_tfl_command_buf")]
+    async fn get_tfl_command_buf(&self) -> Option<zebra_chain::block::CommandBuf>;
+
+    /// Get BFT command buffer
+    #[method(name = "set_tfl_command_buf")]
+    async fn set_tfl_command_buf(&self, string: String) -> Option<String>;
 
     /// Placeholder function for updating stakers.
     /// Adds a new staker if the `id` is unique. Modifies an existing staker if the `id` maps to
@@ -1834,6 +1843,41 @@ where
         }
     }
 
+    async fn get_tfl_command_buf(&self) -> Option<zebra_chain::block::CommandBuf> {
+        let ret = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::GetCommandBuf)
+            .await;
+        if let Ok(TFLServiceResponse::GetCommandBuf(buf)) = ret {
+            Some(buf)
+        } else {
+            tracing::error!(?ret, "Bad tfl service return.");
+            None
+        }
+    }
+
+    async fn set_tfl_command_buf(&self, string: String) -> Option<String> {
+        if let Ok(TFLServiceResponse::SetCommandBuf) = self
+            .tfl_service
+            .clone()
+            .ready()
+            .await
+            .unwrap()
+            .call(TFLServiceRequest::SetCommandBuf(CommandBuf::from_str(
+                &string,
+            )))
+            .await
+        {
+            Some(string)
+        } else {
+            None
+        }
+    }
+
     async fn update_tfl_staker(&self, staker: TFLStaker) {
         if let Ok(TFLServiceResponse::UpdateStaker) = self
             .tfl_service
@@ -3159,6 +3203,11 @@ where
             .await
             .expect("get fat pointer should never fail only return a null pointer");
 
+        let temp_roster_edit_command_buf = self.get_tfl_command_buf().await.unwrap_or_else(|| {
+            tracing::error!("Failed to get temp roster command, inserting null bytes instead.");
+            CommandBuf::empty()
+        });
+
         // - After this point, the template only depends on the previously fetched data.
 
         let response = BlockTemplateResponse::new_internal(
@@ -3170,6 +3219,7 @@ where
             submit_old,
             extra_coinbase_data,
             fat_pointer,
+            temp_roster_edit_command_buf,
         );
 
         Ok(response.into())

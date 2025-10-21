@@ -285,6 +285,7 @@ impl StartCmd {
         let (tfl, tfl_service_task_handle) = {
             let state = state.clone();
             zebra_crosslink::service::spawn_new_tfl_service(
+                is_regtest,
                 Arc::new(move |req| {
                     let state = state.clone();
                     Box::pin(async move { state.clone().ready().await.unwrap().call(req).await })

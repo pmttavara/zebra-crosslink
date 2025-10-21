@@ -19,6 +19,44 @@ use super::{merkle, Commitment, CommitmentError, Hash, Height};
 #[cfg(any(test, feature = "proptest-impl"))]
 use proptest_derive::Arbitrary;
 
+#[serde_with::serde_as]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+/// A (temporary) small fixed-size buffer for communicating crosslink dev/test commands
+pub struct CommandBuf {
+    #[serde_as(as = "serde_with::Bytes")]
+    /// Data buffer to contain short command
+    pub data: [u8; 128],
+}
+impl CommandBuf {
+    /// size of the internal buffer
+    pub const SIZE: usize = 128;
+
+    /// Create an empty command buffer
+    pub fn empty() -> Self {
+        CommandBuf { data: [0; 128] }
+    }
+
+    /// get a rust string from the fixed-size buffer
+    pub fn from_str(str: &str) -> Self {
+        let mut buf = Self::empty();
+        let n = std::cmp::min(str.len(), Self::SIZE);
+        buf.data[..n].copy_from_slice(&str.as_bytes()[..n]);
+        buf
+    }
+
+    /// get a rust string from the fixed-size buffer
+    pub fn to_str(&self) -> &str {
+        let mut c = 0;
+        while c < self.data.len() {
+            if self.data[c] == 0 {
+                break;
+            }
+            c += 1;
+        }
+        std::str::from_utf8(&self.data[..c]).expect("init with valid UTF-8")
+    }
+}
+
 /// A block header, containing metadata about a block.
 ///
 /// How are blocks chained together? They are chained together via the
@@ -88,6 +126,9 @@ pub struct Header {
 
     /// Crosslink fat pointer to PoS block.
     pub fat_pointer_to_bft_block: FatPointerToBftBlock,
+
+    /// A command string used during development.
+    pub temp_command_buf: CommandBuf,
 }
 
 /// A bundle of signed votes for a block
@@ -311,8 +352,12 @@ pub struct CountedHeader {
 /// The serialized size of a Zcash block header.
 ///
 /// Includes the equihash input, 32-byte nonce, 3-byte equihash length field, and equihash solution.
-const BLOCK_HEADER_LENGTH: usize =
-    crate::work::equihash::Solution::INPUT_LENGTH + 32 + 3 + crate::work::equihash::SOLUTION_SIZE;
+const BLOCK_HEADER_LENGTH: usize = crate::work::equihash::Solution::INPUT_LENGTH
+    + 32
+    + 3
+    + crate::work::equihash::SOLUTION_SIZE
+    + (76 - 32 + 2)
+    + 128;
 
 /// The minimum size for a serialized CountedHeader.
 ///

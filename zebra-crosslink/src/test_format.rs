@@ -52,6 +52,8 @@ pub struct TFInstr {
     pub val: [u64; 2],
 }
 
+pub const TEST_STAKE_IGNORED: u64 = u64::MAX;
+
 static TF_INSTR_KIND_STRS: [&str; TFInstr::COUNT as usize] = {
     let mut strs = [""; TFInstr::COUNT as usize];
     strs[TFInstr::LOAD_POW as usize] = "LOAD_POW";
@@ -60,8 +62,10 @@ static TF_INSTR_KIND_STRS: [&str; TFInstr::COUNT as usize] = {
     strs[TFInstr::EXPECT_POW_CHAIN_LENGTH as usize] = "EXPECT_POW_CHAIN_LENGTH";
     strs[TFInstr::EXPECT_POS_CHAIN_LENGTH as usize] = "EXPECT_POS_CHAIN_LENGTH";
     strs[TFInstr::EXPECT_POW_BLOCK_FINALITY as usize] = "EXPECT_POW_BLOCK_FINALITY";
+    strs[TFInstr::ROSTER_FORCE_INCLUDE as usize] = "ROSTER_FORCE_INCLUDE";
+    strs[TFInstr::EXPECT_ROSTER_INCLUDES as usize] = "EXPECT_ROSTER_INCLUDES";
 
-    const_assert!(TFInstr::COUNT == 6);
+    const_assert!(TFInstr::COUNT == 8);
     strs
 };
 
@@ -75,8 +79,9 @@ impl TFInstr {
     pub const EXPECT_POW_CHAIN_LENGTH: TFInstrKind = 3;
     pub const EXPECT_POS_CHAIN_LENGTH: TFInstrKind = 4;
     pub const EXPECT_POW_BLOCK_FINALITY: TFInstrKind = 5;
-    // TODO: set roster via PoW
-    pub const COUNT: TFInstrKind = 6;
+    pub const ROSTER_FORCE_INCLUDE: TFInstrKind = 6;
+    pub const EXPECT_ROSTER_INCLUDES: TFInstrKind = 7;
+    pub const COUNT: TFInstrKind = 8;
 
     pub fn str_from_kind(kind: TFInstrKind) -> &'static str {
         let kind = kind as usize;
@@ -113,6 +118,12 @@ impl TFInstr {
             Some(TestInstr::ExpectPoSChainLength(h)) => str += &h.to_string(),
             Some(TestInstr::ExpectPoWBlockFinality(hash, f)) => {
                 str += &format!("{} => {:?}", hash, f)
+            }
+            Some(TestInstr::ExpectRosterIncludes(pub_key, stake)) => {
+                str += &format!("{} => {}", crate::MalPublicKey2(pub_key.into()), stake)
+            }
+            Some(TestInstr::RosterForceInclude(pub_key, stake)) => {
+                str += &format!("{} => {}", crate::MalPublicKey2(pub_key.into()), stake)
             }
             None => {}
         }
@@ -299,6 +310,14 @@ impl TF {
         )
     }
 
+    pub fn push_instr_roster_force_include(&mut self, pub_key: [u8; 32], stake: u64, flags: u32) {
+        self.push_instr_ex(TFInstr::ROSTER_FORCE_INCLUDE, flags, &pub_key, [stake, 0])
+    }
+
+    pub fn push_instr_expect_roster_includes(&mut self, pub_key: [u8; 32], stake: u64, flags: u32) {
+        self.push_instr_ex(TFInstr::EXPECT_ROSTER_INCLUDES, flags, &pub_key, [stake, 0])
+    }
+
     fn is_a_power_of_2(v: usize) -> bool {
         v != 0 && ((v & (v - 1)) == 0)
     }
@@ -392,18 +411,28 @@ impl TF {
 }
 
 // TODO: macro for a stringified condition
-fn test_check(condition: bool, message: &str) {
-    if !condition {
+fn test_check(flags: u32, condition: bool, message: &str) {
+    let should_succeed = (flags & SHOULD_FAIL) == 0;
+    const SUCCESS_STRS: [&str; 2] = ["fail", "succeed"];
+
+    if condition != should_succeed {
         let test_instr_i = *TEST_INSTR_C.lock().unwrap();
         TEST_FAILED_INSTR_IDXS.lock().unwrap().push(test_instr_i);
 
         if *TEST_CHECK_ASSERT.lock().unwrap() {
             panic!(
-                "test check failed (and TEST_CHECK_ASSERT == true), message:\n{}",
+                "test check should {} but actually {}ed (and TEST_CHECK_ASSERT == true), message:\n{}",
+                SUCCESS_STRS[should_succeed as usize],
+                SUCCESS_STRS[!should_succeed as usize],
                 message
             );
         } else {
-            error!("test check failed, message:\n{}", message);
+            error!(
+                "test check should {} but actually {}ed, message:\n{}",
+                SUCCESS_STRS[should_succeed as usize],
+                SUCCESS_STRS[!should_succeed as usize],
+                message
+            );
         }
     }
 }
@@ -411,7 +440,7 @@ fn test_check(condition: bool, message: &str) {
 use crate::*;
 
 pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> {
-    const_assert!(TFInstr::COUNT == 6);
+    const_assert!(TFInstr::COUNT == 8);
     match instr.kind {
         TFInstr::LOAD_POW => {
             let block = Block::zcash_deserialize(instr.data_slice(bytes)).ok()?;
@@ -447,6 +476,15 @@ pub(crate) fn tf_read_instr(bytes: &[u8], instr: &TFInstr) -> Option<TestInstr> 
             finality_from_val(&instr.val),
         )),
 
+        TFInstr::ROSTER_FORCE_INCLUDE => Some(TestInstr::RosterForceInclude(
+            instr.data_slice(bytes).try_into().expect("32-byte array"),
+            instr.val[0],
+        )),
+        TFInstr::EXPECT_ROSTER_INCLUDES => Some(TestInstr::ExpectRosterIncludes(
+            instr.data_slice(bytes).try_into().expect("32-byte array"),
+            instr.val[0],
+        )),
+
         _ => {
             panic!("Unrecognized instruction {}", instr.kind);
             None
@@ -462,6 +500,8 @@ pub(crate) enum TestInstr {
     ExpectPoWChainLength(u32),
     ExpectPoSChainLength(u64),
     ExpectPoWBlockFinality(BlockHash, Option<TFLBlockFinality>),
+    RosterForceInclude([u8; 32], u64),   // public address
+    ExpectRosterIncludes([u8; 32], u64), // public address
 }
 
 pub(crate) async fn handle_instr(
@@ -471,8 +511,6 @@ pub(crate) async fn handle_instr(
     flags: u32,
     instr_i: usize,
 ) {
-    const SUCCESS_STRS: [&str; 2] = ["failed", "succeeded"];
-
     match instr {
         TestInstr::LoadPoW(block) => {
             // let path = format!("../crosslink-test-data/test_pow_block_{}.bin", instr_i);
@@ -480,15 +518,8 @@ pub(crate) async fn handle_instr(
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes));
 
-            let should_succeed = (flags & SHOULD_FAIL) == 0;
-            let pow_force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
-            test_check(
-                pow_force_feed_ok == should_succeed,
-                &format!(
-                    "PoW force feed unexpectedly {}",
-                    SUCCESS_STRS[pow_force_feed_ok as usize]
-                ),
-            );
+            let force_feed_ok = (internal_handle.call.force_feed_pow)(Arc::new(block)).await;
+            test_check(flags, force_feed_ok, "PoW force feed ok");
         }
 
         TestInstr::LoadPoS((block, fat_ptr)) => {
@@ -497,16 +528,9 @@ pub(crate) async fn handle_instr(
             // let mut file = std::fs::File::create(&path).expect("valid file");
             // file.write_all(instr.data_slice(bytes)).expect("write success");
 
-            let should_succeed = (flags & SHOULD_FAIL) == 0;
-            let pos_force_feed_ok =
+            let force_feed_ok =
                 (internal_handle.call.force_feed_pos)(Arc::new(block), fat_ptr).await;
-            test_check(
-                pos_force_feed_ok == should_succeed,
-                &format!(
-                    "PoS force feed unexpectedly {}",
-                    SUCCESS_STRS[pos_force_feed_ok as usize]
-                ),
-            );
+            test_check(flags, force_feed_ok, "PoS force feed ok");
         }
 
         TestInstr::SetParams(_) => {
@@ -523,6 +547,7 @@ pub(crate) async fn handle_instr(
                 let expect = h;
                 let actual = height.0 + 1;
                 test_check(
+                    flags,
                     expect == actual,
                     &format!("PoW chain length: expected {}, actually {}", expect, actual),
                 ); // TODO: maybe assert in test but recoverable error in-GUI
@@ -533,6 +558,7 @@ pub(crate) async fn handle_instr(
             let expect = h as usize;
             let actual = internal_handle.internal.lock().await.bft_blocks.len();
             test_check(
+                flags,
                 expect == actual,
                 &format!("PoS chain length: expected {}, actually {}", expect, actual),
             ); // TODO: maybe assert in test but recoverable error in-GUI
@@ -548,12 +574,46 @@ pub(crate) async fn handle_instr(
             }
             .expect("valid response, even if None");
             test_check(
+                flags,
                 expect == actual,
                 &format!(
                     "PoW block finality at hash={}, height={:?}: expected {:?}, actually {:?}",
                     hash, height, expect, actual
                 ),
             ); // TODO: maybe assert in test but recoverable error in-GUI
+        }
+
+        TestInstr::ExpectRosterIncludes(pub_key, stake) => {
+            let key: MalPublicKey = pub_key.into();
+            let internal = internal_handle.internal.lock().await;
+            let finalizer = internal
+                .validators_at_current_height
+                .iter()
+                .find(|x| x.public_key == key);
+
+            if let Some(finalizer) = finalizer {
+                test_check(
+                    flags,
+                    stake == TEST_STAKE_IGNORED || stake == finalizer.voting_power,
+                    &format!(
+                        "Finalizer stake: expected {}, actually {}",
+                        stake, finalizer.voting_power
+                    ),
+                );
+            } else {
+                test_check(
+                    flags,
+                    false,
+                    &format!("Finalizer found: {:?}", MalPublicKey2(pub_key.into())),
+                );
+            }
+        }
+
+        TestInstr::RosterForceInclude(pub_key, stake) => {
+            let mut internal = internal_handle.internal.lock().await;
+            internal
+                .validators_at_current_height
+                .push(crate::MalValidator::new(pub_key.into(), stake));
         }
     }
 }
@@ -621,6 +681,13 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
 
     read_instrs(internal_handle, &bytes, &tf.instrs).await;
 
+    // make sure tests completed
+    assert_eq!(
+        *TEST_INSTR_C.lock().unwrap(),
+        tf.instrs.len(),
+        "didn't complete test {}",
+        TEST_NAME.lock().unwrap()
+    );
     // make sure the test as a whole actually fails for failed instructions
     assert!(
         TEST_FAILED_INSTR_IDXS.lock().unwrap().is_empty(),
@@ -628,8 +695,8 @@ pub(crate) async fn instr_reader(internal_handle: TFLServiceHandle) {
         TEST_NAME.lock().unwrap()
     );
     println!("Test done, shutting down");
-    #[cfg(feature = "viz_gui")]
-    tokio::time::sleep(Duration::from_secs(120)).await;
+    // #[cfg(feature = "viz_gui")]
+    // tokio::time::sleep(Duration::from_secs(120)).await;
 
     TEST_SHUTDOWN_FN.lock().unwrap()();
 }

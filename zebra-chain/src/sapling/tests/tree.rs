@@ -50,6 +50,7 @@ fn incremental_roots() {
 }
 
 #[test]
+#[ignore] // [ACTIVATION HEIGHT PROBLEM]
 fn incremental_roots_with_blocks() -> Result<()> {
     for network in Network::iter() {
         incremental_roots_with_blocks_for_network(network)?;

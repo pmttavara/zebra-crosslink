@@ -11,6 +11,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use ed25519_zebra::VerificationKeyBytes;
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
@@ -21,8 +22,8 @@ use zebra_chain::transaction::Hash as TxHash;
 use zebra_state::{crosslink::*, Request as StateRequest, Response as StateResponse};
 
 use crate::chain::BftBlock;
-use crate::mal_system::FatPointerToBftBlock2;
-use crate::malctx::MalValidator;
+use crate::malctx::{MalPublicKey2, MalValidator};
+use crate::FatPointerToBftBlock2;
 use crate::{
     rng_private_public_key_from_address, tfl_service_incoming_request, TFLBlockFinality, TFLRoster,
     TFLServiceInternal,
@@ -97,41 +98,57 @@ impl fmt::Debug for TFLServiceCalls {
 ///
 /// [`TFLServiceHandle`] is a shallow handle that can be cloned and passed between threads.
 pub fn spawn_new_tfl_service(
+    is_regtest: bool,
     state_service_call: StateServiceProcedure,
     force_feed_pow_call: ForceFeedPoWBlockProcedure,
     config: crate::config::Config,
 ) -> (TFLServiceHandle, JoinHandle<Result<(), String>>) {
+    let (validators_at_current_height, validators_keys_to_names) = {
+        let mut array = Vec::with_capacity(config.malachite_peers.len());
+        let mut map = std::collections::HashMap::with_capacity(config.malachite_peers.len());
+
+        for peer in config.malachite_peers.iter() {
+            let (_, _, public_key) = rng_private_public_key_from_address(peer.as_bytes());
+            array.push(MalValidator::new(public_key, 1));
+            map.insert(public_key, peer.to_string());
+        }
+
+        if array.is_empty() {
+            let public_ip_string = config
+                .public_address
+                .clone()
+                .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
+            let user_name = config
+                .insecure_user_name
+                .clone()
+                .unwrap_or(public_ip_string);
+            // .unwrap_or(String::from_str("tester").unwrap());
+            info!("user_name: {}", user_name);
+            let (_, _, public_key) = rng_private_public_key_from_address(&user_name.as_bytes());
+            array.push(MalValidator::new(public_key, 1));
+            map.insert(public_key, user_name);
+        }
+
+        (array, map)
+    };
+
     let internal = Arc::new(Mutex::new(TFLServiceInternal {
+        my_public_key: VerificationKeyBytes::from([0u8; 32]),
         latest_final_block: None,
-        tfl_is_activated: false,
+        tfl_is_activated: if is_regtest { true } else { false },
         stakers: Vec::new(),
         final_change_tx: broadcast::channel(16).0,
         bft_msg_flags: 0,
         bft_err_flags: 0,
         bft_blocks: Vec::new(),
         fat_pointer_to_tip: FatPointerToBftBlock2::null(),
-        proposed_bft_string: None,
+        our_set_bft_string: None,
+        active_bft_string: None,
+        #[cfg(feature = "malachite")]
         malachite_watchdog: tokio::time::Instant::now(),
-        validators_at_current_height: {
-            let mut array = Vec::with_capacity(config.malachite_peers.len());
-
-            for peer in config.malachite_peers.iter() {
-                let (_, _, public_key) = rng_private_public_key_from_address(peer.as_bytes());
-                array.push(MalValidator::new(public_key, 1));
-            }
-
-            if array.is_empty() {
-                let public_ip_string = config
-                    .public_address
-                    .clone()
-                    .unwrap_or(String::from_str("/ip4/127.0.0.1/udp/45869/quic-v1").unwrap());
-                let (_, _, public_key) =
-                    rng_private_public_key_from_address(&public_ip_string.as_bytes());
-                array.push(MalValidator::new(public_key, 1));
-            }
-
-            array
-        },
+        validators_at_current_height,
+        validators_keys_to_names,
+        current_bc_final: None,
     }));
 
     let handle_mtx = Arc::new(std::sync::Mutex::new(None));
@@ -140,9 +157,15 @@ pub fn spawn_new_tfl_service(
     let force_feed_pos: ForceFeedPoSBlockProcedure = Arc::new(move |block, fat_pointer| {
         let handle = handle_mtx2.lock().unwrap().clone().unwrap();
         Box::pin(async move {
+            #[cfg(feature = "malachite")]
             let (accepted, _) =
                 crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
                     .await;
+            #[cfg(not(feature = "malachite"))]
+            crate::new_decided_bft_block_from_malachite(&handle, block.as_ref(), &fat_pointer)
+                .await;
+            #[cfg(not(feature = "malachite"))]
+            let accepted = true;
             if accepted {
                 info!("Successfully force-fed BFT block");
                 true
@@ -166,14 +189,10 @@ pub fn spawn_new_tfl_service(
     *handle_mtx.lock().unwrap() = Some(handle1.clone());
 
     let handle2 = handle1.clone();
-    *read_crosslink_procedure_callback.lock().unwrap() =
-        Some(Arc::new(move |req| handle2.clone().call(req)));
-
-    let handle3 = handle1.clone();
 
     (
         handle1,
-        tokio::spawn(async move { crate::tfl_service_main_loop(handle3).await }),
+        tokio::spawn(async move { crate::tfl_service_main_loop(handle2).await }),
     )
 }
 

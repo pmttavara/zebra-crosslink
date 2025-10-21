@@ -343,11 +343,6 @@ impl WriteBlockWorkerTask {
                     if let Some(newly_finalized_blocks) =
                         non_finalized_state.crosslink_finalize(hash)
                     {
-                        info!("finalized {}, which implicitly finalizes:", hash);
-                        for i in 0..newly_finalized_blocks.len() {
-                            info!("  {}: {}", i, newly_finalized_blocks[i].block.hash());
-                        }
-
                         update_latest_chain_channels(
                             &non_finalized_state,
                             chain_tip_sender,
@@ -355,15 +350,15 @@ impl WriteBlockWorkerTask {
                             &mut last_zebra_mined_log_height,
                         );
 
-                        // info!("finalized {}, which implicitly finalizes:", hash);
-                        for block in newly_finalized_blocks {
+                        info!("finalized {}, which implicitly finalizes:", hash);
+                        for i in 0..newly_finalized_blocks.len() {
                             let finalizable_block = non_finalized_state.finalize();
                             match finalized_state.commit_finalized_direct(
                                 finalizable_block,
                                 None,
                                 "commit Crosslink-finalized block",
                             ) {
-                                Ok((hash, _)) => info!("  {}", hash),
+                                Ok((hash, _)) => info!("  {}: {}", i, hash),
                                 Err(err) => {
                                     unreachable!("unexpected finalized block commit error: {}", err)
                                 }
@@ -377,12 +372,12 @@ impl WriteBlockWorkerTask {
                         //     non_finalized_state.finalize();
                         // }
 
-                        rsp_tx.send(Ok(hash));
+                        let _ = rsp_tx.send(Ok(hash));
                     } else if finalized_state.db.contains_hash(hash) {
                         // already de-facto finalized as below reorg height
-                        rsp_tx.send(Ok(hash));
+                        let _ = rsp_tx.send(Ok(hash));
                     } else {
-                        rsp_tx.send(Err("Couldn't find finalized block".into()));
+                        let _ = rsp_tx.send(Err("Couldn't find finalized block".into()));
                     }
 
                     // TODO: we may want to add db data here
