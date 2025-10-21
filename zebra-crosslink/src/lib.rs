@@ -583,14 +583,13 @@ async fn new_decided_bft_block_from_malachite(
         panic!();
     }
 
-    if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await
-        == false
+    #[cfg(feature = "malachite")]
+    if validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await == false
     {
-        #[cfg(feature = "malachite")]
         return (false, return_validator_list_because_of_malachite_bug);
-        #[cfg(not(feature = "malachite"))]
-        panic!();
     }
+    #[cfg(not(feature = "malachite"))]
+    assert_eq!(validate_bft_block_from_malachite_already_locked(&tfl_handle, &mut internal, new_block).await, tenderloin::TMStatus::Pass);
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
     let new_final_height = block_height_from_hash(&call, new_final_hash).await.unwrap();
@@ -836,10 +835,16 @@ fn tenderloin_roster_from_internal(vals: &[MalValidator]) -> Vec<SortedRosterMem
     ret
 }
 
+
+#[cfg(feature = "malachite")]
+type RustIsBadAndHasNoIfDefReturnType2 = bool;
+#[cfg(not(feature = "malachite"))]
+type RustIsBadAndHasNoIfDefReturnType2 = tenderloin::TMStatus;
+
 async fn validate_bft_block_from_malachite(
     tfl_handle: &TFLServiceHandle,
     new_block: &BftBlock,
-) -> bool {
+) -> RustIsBadAndHasNoIfDefReturnType2 {
     let mut internal = tfl_handle.internal.lock().await;
     validate_bft_block_from_malachite_already_locked(tfl_handle, &mut internal, new_block).await
 }
@@ -847,7 +852,7 @@ async fn validate_bft_block_from_malachite_already_locked(
     tfl_handle: &TFLServiceHandle,
     internal: &mut TFLServiceInternal,
     new_block: &BftBlock,
-) -> bool {
+) -> RustIsBadAndHasNoIfDefReturnType2 {
     let call = tfl_handle.call.clone();
     let params = &PROTOTYPE_PARAMETERS;
 
@@ -859,7 +864,10 @@ async fn validate_bft_block_from_malachite_already_locked(
             new_block.previous_block_fat_ptr.points_at_block_hash(),
             internal.fat_pointer_to_tip.points_at_block_hash(),
         );
+        #[cfg(feature = "malachite")]
         return false;
+        #[cfg(not(feature = "malachite"))]
+        return tenderloin::TMStatus::Fail;
     }
 
     let new_final_hash = new_block.headers.first().expect("at least 1 header").hash();
@@ -871,9 +879,15 @@ async fn validate_bft_block_from_malachite_already_locked(
                 "Didn't have hash available for confirmation: {}",
                 new_final_hash
             );
+            #[cfg(feature = "malachite")]
             return false;
+            #[cfg(not(feature = "malachite"))]
+            return tenderloin::TMStatus::Indeterminate;
         };
-    true
+    #[cfg(feature = "malachite")]
+    return true;
+    #[cfg(not(feature = "malachite"))]
+    return tenderloin::TMStatus::Pass;
 }
 
 fn fat_pointer_to_block_at_height(
@@ -1379,9 +1393,7 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                     use zebra_chain::serialization::ZcashDeserialize;
 
                     if let Ok(bft_block) = BftBlock::zcash_deserialize(block.0.reader()) {
-                        if validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await {
-                            tenderloin::TMStatus::Pass
-                        } else { tenderloin::TMStatus::Fail }
+                        validate_bft_block_from_malachite(&tfl_handle2, &bft_block).await
                     } else {
                         error!("Failed to deserialize Tenderloin payload.");
                         tenderloin::TMStatus::Fail 
