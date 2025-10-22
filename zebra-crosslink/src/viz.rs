@@ -1160,6 +1160,9 @@ struct VizConfig {
     pause_incoming_blocks: bool,
     node_load_kind: usize,
     new_node_ratio: f32,
+    node_node_dist: f32,
+    node_edge_dist: f32,
+    work_y_scale: f32,
     scroll_sensitivity: f32,
     audio_on: bool,
     audio_volume: f32,
@@ -1488,12 +1491,12 @@ impl VizCtx {
                     if let Some(parent) = self.get_node(new_node.parent) {
                         (
                             Some(parent.pt),
-                            node_dy_from_work_difficulty(new_node.difficulty, self.bc_work_max),
+                            node_dy_from_work_difficulty(config.work_y_scale, new_node.difficulty, self.bc_work_max),
                         )
                     } else if let Some(child) = self.get_node(child_ref) {
                         (
                             Some(child.pt),
-                            -node_dy_from_work_difficulty(child.difficulty, self.bc_work_max),
+                            -node_dy_from_work_difficulty(config.work_y_scale, child.difficulty, self.bc_work_max),
                         )
                     } else {
                         (None, 0.)
@@ -2001,11 +2004,11 @@ fn checkbox(ui: &mut ui::Ui, id: ui::Id, label: &str, data: &mut bool) {
         .ui(ui, data);
 }
 
-fn node_dy_from_work_difficulty(difficulty: Option<CompactDifficulty>, bc_work_max: u128) -> f32 {
+fn node_dy_from_work_difficulty(work_y_scale: f32, difficulty: Option<CompactDifficulty>, bc_work_max: u128) -> f32 {
     difficulty
         .and_then(|difficulty| difficulty.to_work())
-        .map_or(100., |work| {
-            150. * work.as_u128() as f32 / bc_work_max as f32
+        .map_or(work_y_scale * 100., |work| {
+            work_y_scale * 150. * work.as_u128() as f32 / bc_work_max as f32
         })
 }
 
@@ -2139,6 +2142,9 @@ pub async fn viz_main(
         show_bft_msgs: true,
         pause_incoming_blocks: false,
         new_node_ratio: 0.95,
+        node_node_dist: 75.0,
+        node_edge_dist: 15.0,
+        work_y_scale: 1.0,
         scroll_sensitivity: if cfg!(target_os = "linux") { 8. } else { 1. },
         node_load_kind: 0,
         audio_on: false,
@@ -3052,6 +3058,7 @@ pub async fn viz_main(
 
                     if !y_is_set {
                         let intended_dy = node_dy_from_work_difficulty(
+                            config.work_y_scale,
                             ctx.get_node(node_ref).unwrap().difficulty,
                             ctx.bc_work_max,
                         );
@@ -3105,7 +3112,7 @@ pub async fn viz_main(
                         continue;
                     };
 
-                let target_dist = 75.;
+                let target_dist = config.node_node_dist;
                 if config.do_force_any && dist_sq < (target_dist * target_dist) {
                     // fallback to push coincident nodes apart horizontally
                     let mut dir = b_to_a.normalize_or(vec2(1., 0.));
@@ -3151,7 +3158,7 @@ pub async fn viz_main(
                     let edge = circles_closest_pts(b_circle, parent.circle());
                     let (pt, norm_line) = closest_pt_on_line(edge, a_pt);
                     let line_to_node = a_pt - pt;
-                    let target_dist = 15.;
+                    let target_dist = config.node_edge_dist;
 
                     if pt != edge.0
                         && pt != edge.1
@@ -3612,6 +3619,15 @@ pub async fn viz_main(
                         "Draw component node forces",
                         &mut config.draw_component_forces,
                     );
+
+                    ui.label(None, "Node-node distance");
+                    ui.slider(hash!(), "", 0. ..400., &mut config.node_node_dist);
+
+                    ui.label(None, "Node-edge distance");
+                    ui.slider(hash!(), "", 0. ..100., &mut config.node_edge_dist);
+
+                    ui.label(None, "Work-height scale");
+                    ui.slider(hash!(), "", 0.1..10., &mut config.work_y_scale);
 
                     ui.label(None, "Spawn spring/stable ratio");
                     ui.slider(hash!(), "", 0. ..1., &mut config.new_node_ratio);
