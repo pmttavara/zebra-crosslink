@@ -2114,7 +2114,7 @@ pub async fn viz_main(
     let (mut bc_h_lo_prev, mut bc_h_hi_prev) = (None, None);
     let mut instr_path_str = "blocks.zeccltf".to_string();
     let mut pow_block_nonce_str = "0".to_string();
-    let mut goto_str = String::new();
+    let mut goto_str = "-1".to_string();
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
