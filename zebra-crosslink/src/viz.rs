@@ -3311,31 +3311,40 @@ pub async fn viz_main(
             let circle = node.circle();
 
             {
-                // TODO: check line->screen intersections
                 let _z = ZoneGuard::new("draw links");
+
+                fn overlaps(min_rng: f32, max_rng: f32, a: f32, b: f32) -> bool {
+                    let (bgn, end) = (flt_min(a,b), flt_max(a,b));
+                    flt_max(bgn, min_rng) < flt_min(end, max_rng)
+                }
+
                 if let Some(parent) = ctx.get_node(node.parent) {
-                    let line = draw_arrow_between_circles(circle, parent.circle(), 2., 9., GRAY);
-                    let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
-                    if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
-                };
+                    if overlaps(world_bbox.min.y, world_bbox.max.y, node.pt.y, parent.pt.y) {
+                        let line = draw_arrow_between_circles(circle, parent.circle(), 2., 9., GRAY);
+                        let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
+                        if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
+                    }
+                }
 
                 let link_ref = cross_chain_link_from_node(&ctx, node);
                 if let Some(link) = ctx.get_node(link_ref) {
-                    let alpha = if hover_node_i.is_none() ||
-                        hover_node_i == i_ref ||
-                        hover_node_i == link_ref
-                    {
-                        1.0
-                    } else {
-                        0.5
-                    };
+                    if overlaps(world_bbox.min.y, world_bbox.max.y, node.pt.y, link.pt.y) {
+                        let alpha = if hover_node_i.is_none() ||
+                            hover_node_i == i_ref ||
+                            hover_node_i == link_ref
+                        {
+                            1.0
+                        } else {
+                            0.5
+                        };
 
-                    let col = if node.kind == NodeKind::BFT {
-                        PINK
-                    } else {
-                        ORANGE
-                    };
-                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col.with_alpha(alpha));
+                        let col = if node.kind == NodeKind::BFT {
+                            PINK
+                        } else {
+                            ORANGE
+                        };
+                        draw_arrow_between_circles(circle, link.circle(), 2., 9., col.with_alpha(alpha));
+                    }
                 }
             }
 
