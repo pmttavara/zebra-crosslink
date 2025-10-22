@@ -1157,6 +1157,7 @@ struct VizConfig {
     show_mouse_info: bool,
     show_profiler: bool,
     show_bft_msgs: bool,
+    show_cursor_axis_lines: bool,
     pause_incoming_blocks: bool,
     node_load_kind: usize,
     new_node_ratio: f32,
@@ -2144,6 +2145,7 @@ pub async fn viz_main(
         show_mouse_info: false,
         show_profiler: true,
         show_bft_msgs: true,
+        show_cursor_axis_lines: false,
         pause_incoming_blocks: false,
         new_node_ratio: 0.95,
         node_node_dist: 75.0,
@@ -3534,8 +3536,10 @@ pub async fn viz_main(
         // SCREEN SPACE UI ////////////////////////////////////////
         set_default_camera();
 
-        draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
-        draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
+        if config.show_cursor_axis_lines {
+            draw_horizontal_line(mouse_pt.y, 1., DARKGRAY);
+            draw_vertical_line(mouse_pt.x, 1., DARKGRAY);
+        }
 
         // CONTROL TRAY
         {
@@ -3584,6 +3588,7 @@ pub async fn viz_main(
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
+                    checkbox(ui, hash!(), "Show cursor axis lines", &mut config.show_cursor_axis_lines);
                     checkbox(ui, hash!(), "Show BFT messages", &mut config.show_bft_msgs);
                     if !config.show_bft_msgs {
                         bft_msg_flags = 0; // prevent buildup
