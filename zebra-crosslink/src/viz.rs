@@ -2118,7 +2118,7 @@ pub async fn viz_main(
     let mut node_str = String::new();
     let mut target_bc_str = String::new();
 
-    let mut edit_proposed_bft_string = "ADD|12345|/ip4/127.0.0.2/udp/45869/quic-v1".to_string();
+    let mut edit_proposed_bft_string = "ADD|1234|<your_name>".to_string();
     let mut proposed_bft_string: Option<String> = None; // only for loop... TODO: rearrange
     let mut bft_pause_button = false;
     let mut tray_make_wider = false;
@@ -2401,6 +2401,7 @@ pub async fn viz_main(
         let mouse_l_is_world_down = !mouse_is_over_ui && mouse_l_is_down;
         let mouse_l_is_world_pressed = !mouse_is_over_ui && mouse_l_is_pressed;
         let mouse_l_is_world_released = !mouse_is_over_ui && mouse_l_is_released;
+        let enter_is_pressed = (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
         let mut mouse_was_node_drag = false; // @jank: shouldn't need extra state for this
 
@@ -2609,7 +2610,7 @@ pub async fn viz_main(
                 |ui| {
                     let mut enter_pressed = false;
                     enter_pressed |= ui_editbox(ui, hash!(), text_size, &mut node_str)
-                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+                        && enter_is_pressed;
 
                     ui.same_line(text_size.x + font_size);
 
@@ -2617,7 +2618,7 @@ pub async fn viz_main(
                         .multiline(false)
                         .filter(&|ch| char::is_ascii_digit(&ch))
                         .ui(ui, &mut target_bc_str)
-                        && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+                        && enter_is_pressed;
 
                     if enter_pressed {
                         let id = {
@@ -2695,7 +2696,7 @@ pub async fn viz_main(
                     .multiline(false)
                     .filter(&|ch| char::is_ascii_digit(&ch) || ch == '-')
                     .ui(ui, &mut goto_str)
-                    && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
+                    && enter_is_pressed;
 
                 ui.same_line(controls_txt_size.x + ch_w);
 
@@ -3715,9 +3716,10 @@ pub async fn viz_main(
                         checkbox(ui, hash!(), "BFT Paused", &mut bft_pause_button);
                     }
                     {
-                        ui_editbox(ui, hash!(), vec2(tray_w - 4. * ch_w, font_size), &mut edit_proposed_bft_string);
+                        let enter_pressed = ui_editbox(ui, hash!(), vec2(tray_w - 4. * ch_w, font_size), &mut edit_proposed_bft_string) &&
+                            enter_is_pressed;
 
-                        if ui.button(None, "Submit BFT CMD") {
+                        if ui.button(None, "Submit BFT CMD") || enter_pressed {
                             proposed_bft_string = Some(edit_proposed_bft_string.clone());
                         }
                         checkbox(ui, hash!(), "Wider tray", &mut tray_make_wider);
