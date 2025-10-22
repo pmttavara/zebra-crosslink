@@ -7095,7 +7095,7 @@ dependencies = [
 [[package]]
 name = "tenderlink"
 version = "0.1.0"
-source = "git+https://git.sr.ht/~azmr/stuff?rev=5419f42ea1b22d85b1a15c31625ded37345be9f3#5419f42ea1b22d85b1a15c31625ded37345be9f3"
+source = "git+https://git.sr.ht/~azmr/stuff?rev=0e885095939781e2ce6320ab45097aeb85873449#0e885095939781e2ce6320ab45097aeb85873449"
 dependencies = [
  "blake3",
  "byteorder",

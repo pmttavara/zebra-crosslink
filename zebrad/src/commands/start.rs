@@ -288,7 +288,7 @@ impl StartCmd {
                 is_regtest,
                 Arc::new(move |req| {
                     let state = state.clone();
-                    Box::pin(async move { state.clone().ready().await.unwrap().call(req).await })
+                    Box::pin(async move { state.clone().ready().await?.call(req).await })
                 }),
                 Arc::new(move |block| {
                     let gbt = Arc::clone(&gbt_for_force_feeding_pow);

@@ -123,7 +123,7 @@ package = "informalsystems-malachitebft-sync"
 [dependencies.tenderlink]
 version = "0.1.0"
 git = "https://git.sr.ht/~azmr/stuff"
-rev = "5419f42ea1b22d85b1a15c31625ded37345be9f3"
+rev = "0e885095939781e2ce6320ab45097aeb85873449"
 #path = "/home/sam/dev/stuff"
 package = "tenderlink"
 

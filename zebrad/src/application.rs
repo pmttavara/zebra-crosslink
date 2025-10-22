@@ -237,7 +237,9 @@ impl Application for ZebradApp {
                         .insert("80.78.31.32:8233".to_owned());
                     c.mempool.debug_enable_at_height = Some(0);
                     c.rpc.enable_cookie_auth = false;
-                    c.state.cache_dir.push("zebra_crosslink_workshop_october_cache_delete_me");
+                    c.state
+                        .cache_dir
+                        .push("zebra_crosslink_workshop_october_cache_delete_me");
 
                     #[cfg(feature = "malachite")]
                     {

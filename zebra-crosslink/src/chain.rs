@@ -168,7 +168,8 @@ impl<'a> From<&'a BftBlock> for Blake3Hash {
         #[cfg(feature = "malachite")]
         let mut hash_writer = blake3::Hasher::new();
         #[cfg(not(feature = "malachite"))]
-        let mut hash_writer = if *crate::TEST_MODE.lock().unwrap() { // Note(Sam): Only until we regenerate the test data.
+        let mut hash_writer = if *crate::TEST_MODE.lock().unwrap() {
+            // Note(Sam): Only until we regenerate the test data.
             blake3::Hasher::new()
         } else {
             blake3::Hasher::new_keyed(&tenderlink::HashKeys::default().value_id.0)
