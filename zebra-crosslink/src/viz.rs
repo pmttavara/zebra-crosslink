@@ -3038,12 +3038,10 @@ pub async fn viz_main(
 
             // match heights across links for BFT
             let a_link_ref = tfl_nominee_from_node(&ctx, ctx.get_node(node_ref).unwrap());
-            if a_link_ref != drag_node_ref {
-                if let Some(link) = ctx.node(a_link_ref) {
-                    target_pt.y = link.pt.y - font_size * 3.0 / 3.0;
-                    y_counterpart = a_link_ref;
-                    y_is_set = true;
-                }
+            if let Some(link) = ctx.node(a_link_ref) {
+                target_pt.y = link.pt.y - font_size * 3.0 / 3.0;
+                y_counterpart = a_link_ref;
+                y_is_set = true;
             }
 
             // align x, set parent distance for PoW work/as BFT fallback
