@@ -1233,6 +1233,30 @@ impl VizCtx {
         }
     }
 
+    // TODO: should this include self?
+    // NOTE: (currently) assumes we can see the entire intervening chain
+    fn node_is_parent_of(&self, maybe_parent_ref: NodeRef, mut maybe_child_ref: NodeRef) -> bool {
+        let Some(maybe_parent) = self.get_node(maybe_parent_ref) else {
+            return false;
+        };
+
+        // TODO: 1-back, 4-back, 16-back, 64-back... for O(log(N)) determination
+        loop {
+            let Some(it) = self.get_node(maybe_child_ref) else {
+                break false;
+            };
+            if it.height <= maybe_parent.height {
+                break false;
+            }
+
+            maybe_child_ref = it.parent;
+            if (maybe_child_ref == maybe_parent_ref) {
+                break true;
+            }
+        }
+    }
+
+
     fn push_node(
         &mut self,
         config: &VizConfig,
@@ -3264,6 +3288,8 @@ pub async fn viz_main(
             );
         }
 
+        let hover_node_link_ref = ctx.get_node(hover_node_i).and_then(|node| cross_chain_link_from_node(&ctx, node));
+
         // ALT: EoA
         let (mut bc_h_lo, mut bc_h_hi): (Option<u32>, Option<u32>) = (None, None);
         let z_draw_nodes = begin_zone("draw nodes");
@@ -3278,6 +3304,7 @@ pub async fn viz_main(
             assert!(!node.acc.x.is_nan());
             assert!(!node.acc.y.is_nan());
 
+            let i_ref = ctx.node_ref(i);
             ctx.nodes_bbox.update_union(BBox::from(node.pt));
 
             // NOTE: grows *upwards*
@@ -3291,17 +3318,24 @@ pub async fn viz_main(
                     let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                     if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                 };
-                if let Some(link) = if false {
-                    ctx.get_node(tfl_nominee_from_node(&ctx, node))
-                } else {
-                    ctx.get_node(cross_chain_link_from_node(&ctx, node))
-                } {
+
+                let link_ref = cross_chain_link_from_node(&ctx, node);
+                if let Some(link) = ctx.get_node(link_ref) {
+                    let alpha = if hover_node_i.is_none() ||
+                        hover_node_i == i_ref ||
+                        hover_node_i == link_ref
+                    {
+                        1.0
+                    } else {
+                        0.5
+                    };
+
                     let col = if node.kind == NodeKind::BFT {
                         PINK
                     } else {
                         ORANGE
                     };
-                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col);
+                    draw_arrow_between_circles(circle, link.circle(), 2., 9., col.with_alpha(alpha));
                 }
             }
 
@@ -3338,10 +3372,22 @@ pub async fn viz_main(
                     WHITE
                 }; // TODO: depend on finality
 
-                if is_final {
-                    draw_circle(circle, col);
+                // defocus non-selected chain
+                let alpha = if hover_node_i.is_none() ||
+                    hover_node_i == i_ref ||
+                    hover_node_link_ref == i_ref ||
+                    ctx.node_is_parent_of(hover_node_i, i_ref) ||
+                    ctx.node_is_parent_of(i_ref, hover_node_i)
+                {
+                    1.0
                 } else {
-                    draw_ring(circle, 3., 1., col);
+                    0.5
+                };
+
+                if is_final {
+                    draw_circle(circle, col.with_alpha(alpha));
+                } else {
+                    draw_ring(circle, 3., 1., col.with_alpha(alpha));
                 }
 
                 let circle_text_o = circle.r + 10.;
@@ -3363,7 +3409,7 @@ pub async fn viz_main(
                             &format!("{} - {}", unique_hash_str, node.height),
                             text_pt,
                             font_size,
-                            WHITE,
+                            WHITE.with_alpha(alpha),
                             ch_w,
                         );
                         end_zone(z_get_text_align_1);
@@ -3372,7 +3418,7 @@ pub async fn viz_main(
                             remain_hash_str,
                             text_pt - vec2(text_dims.width, 0.),
                             font_size,
-                            LIGHTGRAY,
+                            LIGHTGRAY.with_alpha(alpha),
                             ch_w,
                         );
                         end_zone(z_get_text_align_2);
@@ -3381,7 +3427,7 @@ pub async fn viz_main(
                             &format!("{} - {}", node.height, hash_str),
                             text_pt,
                             font_size,
-                            WHITE,
+                            WHITE.with_alpha(alpha),
                         );
                     }
                 } else {
@@ -3398,7 +3444,7 @@ pub async fn viz_main(
                         &format!("{} - {}", node.height, node.text),
                         vec2(circle.x + circle_text_o, circle.y),
                         font_size,
-                        WHITE,
+                        WHITE.with_alpha(alpha),
                         vec2(0., 0.5),
                     );
                 }
