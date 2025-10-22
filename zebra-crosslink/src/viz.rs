@@ -1154,6 +1154,7 @@ struct VizConfig {
     show_accel_areas: bool,
     show_bft_ui: bool,
     show_top_info: bool,
+    show_legend: bool,
     show_mouse_info: bool,
     show_profiler: bool,
     show_bft_msgs: bool,
@@ -2142,6 +2143,7 @@ pub async fn viz_main(
         show_accel_areas: false,
         show_bft_ui: false,
         show_top_info: false,
+        show_legend: true,
         show_mouse_info: false,
         show_profiler: true,
         show_bft_msgs: true,
@@ -3586,6 +3588,7 @@ pub async fn viz_main(
                     );
                     checkbox(ui, hash!(), "Show BFT creation UI", &mut config.show_bft_ui);
                     checkbox(ui, hash!(), "Show top info", &mut config.show_top_info);
+                    checkbox(ui, hash!(), "Show legend", &mut config.show_legend);
                     checkbox(ui, hash!(), "Show mouse info", &mut config.show_mouse_info);
                     checkbox(ui, hash!(), "Show profiler", &mut config.show_profiler);
                     checkbox(ui, hash!(), "Show cursor axis lines", &mut config.show_cursor_axis_lines);
@@ -3936,6 +3939,36 @@ pub async fn viz_main(
                 None,
                 WHITE,
             );
+        }
+
+        if config.show_legend {
+            let font_size = 32.;
+            let legend_pt = vec2(
+                window::screen_width() - 19.*ch_w,
+                (controls_wnd_size.y + 3. * font_size),
+            );
+            let gap = 2.*ch_w;
+            draw_text("Legend:", vec2(legend_pt.x-gap, legend_pt.y), font_size, WHITE);
+            draw_multiline_text(
+                &format!("\n\
+                    PoS to PoW link\n\
+                    PoW to PoS link\n\
+                    Non-finalized block\n\
+                    Finalized block\n"),
+                legend_pt,
+                font_size,
+                None,
+                WHITE,
+            );
+            let mut y = legend_pt.y + 0.75*font_size;
+            let x = legend_pt.x - 1.2*gap;
+            draw_arrow(vec2(x, y), vec2(x+gap, y), 2., 9., PINK);
+            y += font_size;
+            draw_arrow(vec2(x, y), vec2(x+gap, y), 2., 9., ORANGE);
+            y += font_size;
+            draw_ring(Circle::new(x+0.5*gap, y, 0.3*font_size), 2., 1., WHITE);
+            y += font_size;
+            draw_circle(Circle::new(x+0.5*gap, y, 0.3*font_size), WHITE);
         }
 
         if dev(config.show_profiler) {
