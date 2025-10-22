@@ -1,57 +1,11 @@
 # `zebra-crosslink`
 
-<!--
-  Note: This is the top-level source repo `README.md` as well as
-  the front of the `zebra-crosslink` book.
-
-  All of the relative path links of the form [anchor text](./relative/path)
-  are relative to the book source directory which is at `./book/src`
-  under the repo dir.
-
-  For example, the [Build and Usage](./user/build-and-usage.md) page's source is at
-  `./book/src/user/build-and-usage.md`.
--->
-
 <!-- Mark to add banner and badges -->
 
 `zebra-crosslink` is [Shielded Labs](https://shieldedlabs.net)'s implementation of *Zcash
-Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/). Refer to the [Rationale, Scope, and Goals](./design/scoping.md) to understand our effort.
+Crosslink*, a hybrid PoW/PoS consensus protocol for [Zcash](https://z.cash/).
 
-## Prototype Codebase
-
-***Status:*** This codebase is an early prototype, and suitable for the adventurous or curious who
-want to explore rough experimental releases.
-
-This [`zebra-crosslink`](https://github.com/ShieldedLabs/zebra-crosslink) codebase is a fork of
-[`zebra`](https://github.com/ZcashFoundation/zebra).
- If you simply want a modern Zcash production-ready mainnet node, please use that upstream node.
-
-This book is entirely focused on this implementation of *Zcash Crosslink*. For general Zebra usage
-or development documentation, please refer to the official [Zebra Book](https://zebra.zfnd.org/),
-keeping in mind changes in this prototype (which we attempt to thoroughly document here). The
-
-<!--
-overarching design of *Zcash Crosslink* in this prototype is based off of the [Crosslink 2 hybrid
-construction for the Trailing Finality
-Layer](https://electric-coin-company.github.io/tfl-book/design/crosslink.html).
--->
-
-### Build and Usage
-
-To try out the software and join the testnet, see [Build and Usage](./user/build-and-usage.md).
-
-### Design and Implementation
-
-See the [Design](./design.md) and [Implementation](./implementation.md) for an understanding of this software that we update throughout development.
-
-## Maintainers
-
-`zebra-crosslink` is maintained by [Shielded Labs](https://shieldedlabs.net), makers of fine Zcash software.
-
-## Contributing
-
-Our github issues are open for feedback. We will accept pull requests after the [prototyping phase
-is done](https://ShieldedLabs.net/roadmap).
+Please refer to [The `zebra-crosslink` Book](https://shieldedlabs.github.io/zebra-crosslink), or you can view all of its source text in the `./book/src` directory in this repository.
 
 ## License
 

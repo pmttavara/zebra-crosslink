@@ -120,12 +120,12 @@ git = "https://github.com/circlefin/malachite.git"
 rev = "8a64f82061690b70e0522b71f32152295ccb0df5"
 package = "informalsystems-malachitebft-sync"
 
-[dependencies.tenderloin]
+[dependencies.tenderlink]
 version = "0.1.0"
 git = "https://git.sr.ht/~azmr/stuff"
-rev = "49f747bb680febb25d203c17e2c259fdac2c4f00"
+rev = "0e885095939781e2ce6320ab45097aeb85873449"
 #path = "/home/sam/dev/stuff"
-package = "tenderloin"
+package = "tenderlink"
 
 [build-dependencies]
 prost-build = "0.13"
