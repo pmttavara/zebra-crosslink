@@ -5,7 +5,7 @@ Welcome to the Milestone 4 Workshops / Demo guide!
 To join the Milestone 4a demo network follow these steps:
 
 1. Join the Zoom link, which is/will be posted [in the Milestone 4a Forum Thread](https://forum.zcashcommunity.com/t/crosslink-workshop-wednesday-oct-22nd-at-5pm-utc/52505).
-2. Download a [`zebra-crosslink` prebuilt binary](https://github.com/ShieldedLabs/zebra-crosslink/releases/latest) for your architecture.
+2. Download a [`zebra-crosslink` prebuilt binary](https://github.com/ShieldedLabs/zebra-crosslink/releases) for your architecture.
   - They are named as `zebra-crosslink-viz-<architecture>` for a binary with the integrated interactive visualizer gui, which we recommend.
   - If the visualizer doesn't run on your system or you prefer a console only node, use the `zebra-crosslink-<architecture>` binary (without the `-viz` infix).
 3. Configure the downloaded binary for your operating system.
