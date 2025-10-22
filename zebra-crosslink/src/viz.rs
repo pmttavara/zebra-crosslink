@@ -1184,6 +1184,9 @@ pub(crate) struct VizCtx {
     nodes_bbox: BBox,
     accel: Accel,
 
+    // ideally bc_tip, but we don't necessarily have it loaded
+    known_bc_tip: NodeRef,
+
     bc_lo: NodeRef,
     bc_hi: NodeRef,
     bc_work_max: u128,
@@ -1557,6 +1560,7 @@ impl VizCtx {
         node_ref
     }
 
+    // NOTE: assumes block past in is on *best-chain*, not just PoW
     fn push_bc_block(
         &mut self,
         config: &VizConfig,
@@ -1568,7 +1572,7 @@ impl VizCtx {
         if self.find_bc_node_by_hash(&height_hash.1).is_none() {
             // NOTE: ignore if we don't have block (header) data; we can add it later if we
             // have all the data then.
-            self.push_node(
+            let node_ref = self.push_node(
                 &config,
                 NodeInit::BC {
                     parent: None,
@@ -1583,11 +1587,24 @@ impl VizCtx {
                 },
                 Some(block.header.previous_block_hash.0),
             );
+
+            let mut needs_update = true;
+            if let Some(known_bc_tip) = self.get_node(self.known_bc_tip) {
+                if height_hash.0.0 < known_bc_tip.height &&
+                    self.node_is_parent_of(node_ref, self.known_bc_tip)
+                {
+                    needs_update = false;
+                }
+            }
+            if needs_update {
+                self.known_bc_tip = node_ref;
+            }
         }
     }
 
     fn clear_nodes(&mut self) {
         self.nodes.clear();
+        self.known_bc_tip = None;
         (self.bc_lo, self.bc_hi) = (None, None);
         self.bc_work_max = 0;
         self.missing_bc_parents.clear();
@@ -1666,6 +1683,7 @@ impl Default for VizCtx {
                 y_to_nodes: HashMap::new(),
             },
 
+            known_bc_tip: None,
             bc_lo: None,
             bc_hi: None,
             bc_work_max: 0,
@@ -3320,7 +3338,18 @@ pub async fn viz_main(
 
                 if let Some(parent) = ctx.get_node(node.parent) {
                     if overlaps(world_bbox.min.y, world_bbox.max.y, node.pt.y, parent.pt.y) {
-                        let line = draw_arrow_between_circles(circle, parent.circle(), 2., 9., GRAY);
+                        let is_on_best_chain = if node.kind == NodeKind::BFT {
+                            true
+                        } else if ctx.known_bc_tip.is_some() {
+                            (ctx.known_bc_tip == i_ref ||
+                             ctx.node_is_parent_of(i_ref, ctx.known_bc_tip))
+                        } else {
+                            // probably shouldn't hit here, but conservatively fall back to finalized...
+                            finalized_pow_blocks.contains(&BlockHash(node.hash().unwrap()))
+                        };
+
+                        let thick = if is_on_best_chain { 3. } else { 1. };
+                        let line = draw_arrow_between_circles(circle, parent.circle(), thick, 9., GRAY);
                         let (pt, _) = closest_pt_on_line(line, world_mouse_pt);
                         if_dev(false, || draw_x(pt, 5., 2., MAGENTA));
                     }
