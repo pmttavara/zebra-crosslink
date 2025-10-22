@@ -1977,6 +1977,10 @@ fn ui_dynamic_window<F: FnOnce(&mut ui::Ui)>(
     root_ui().window(id, vec2(0., 0.), size, f)
 }
 
+fn ui_editbox(ui: &mut ui::Ui, id: ui::Id, size: Vec2, str: &mut String) -> bool {
+    widgets::Editbox::new(id, size).multiline(false).ui(ui, str)
+}
+
 fn hash_from_u64(v: u64) -> [u8; 32] {
     let mut hash = [0u8; 32];
     hash[..8].copy_from_slice(&v.to_le_bytes());
@@ -2604,9 +2608,7 @@ pub async fn viz_main(
                 text_wnd_size,
                 |ui| {
                     let mut enter_pressed = false;
-                    enter_pressed |= widgets::Editbox::new(hash!(), text_size)
-                        .multiline(false)
-                        .ui(ui, &mut node_str)
+                    enter_pressed |= ui_editbox(ui, hash!(), text_size, &mut node_str)
                         && (is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter));
 
                     ui.same_line(text_size.x + font_size);
@@ -3643,9 +3645,7 @@ pub async fn viz_main(
                         ctx.clear_nodes();
                     }
 
-                    widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
-                        .multiline(false)
-                        .ui(ui, &mut instr_path_str);
+                    ui_editbox(ui, hash!(), vec2(tray_w - 4. * ch_w, font_size), &mut instr_path_str);
 
                     let path: PathBuf = instr_path_str.clone().into();
                     const NODE_LOAD_ZEBRA: usize = 0;
@@ -3707,9 +3707,7 @@ pub async fn viz_main(
                     }
 
                     {
-                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
-                            .multiline(false)
-                            .ui(ui, &mut pow_block_nonce_str);
+                        ui_editbox(ui, hash!(), vec2(tray_w - 4. * ch_w, font_size), &mut pow_block_nonce_str);
                         let try_parse: Option<u8> = pow_block_nonce_str.parse().ok();
                         if let Some(byte) = try_parse {
                             *MINER_NONCE_BYTE.lock().unwrap() = byte;
@@ -3717,9 +3715,7 @@ pub async fn viz_main(
                         checkbox(ui, hash!(), "BFT Paused", &mut bft_pause_button);
                     }
                     {
-                        widgets::Editbox::new(hash!(), vec2(tray_w - 4. * ch_w, font_size))
-                            .multiline(false)
-                            .ui(ui, &mut edit_proposed_bft_string);
+                        ui_editbox(ui, hash!(), vec2(tray_w - 4. * ch_w, font_size), &mut edit_proposed_bft_string);
 
                         if ui.button(None, "Submit BFT CMD") {
                             proposed_bft_string = Some(edit_proposed_bft_string.clone());
