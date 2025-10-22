@@ -127,8 +127,8 @@ impl From<&MalCommitCertificate<MalContext>> for FatPointerToBftBlock2 {
     }
 }
 
-impl From<tenderloin::FatPointerToBftBlock3> for FatPointerToBftBlock2 {
-    fn from(fat_pointer: tenderloin::FatPointerToBftBlock3) -> FatPointerToBftBlock2 {
+impl From<tenderlink::FatPointerToBftBlock3> for FatPointerToBftBlock2 {
+    fn from(fat_pointer: tenderlink::FatPointerToBftBlock3) -> FatPointerToBftBlock2 {
         FatPointerToBftBlock2 {
             vote_for_block_without_finalizer_public_key: fat_pointer
                 .vote_for_block_without_finalizer_public_key,

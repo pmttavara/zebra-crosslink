@@ -7093,9 +7093,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "tenderloin"
+name = "tenderlink"
 version = "0.1.0"
-source = "git+https://git.sr.ht/~azmr/stuff?rev=d5f85c4c80851c929a642659497e76a25e1a7800#d5f85c4c80851c929a642659497e76a25e1a7800"
+source = "git+https://git.sr.ht/~azmr/stuff?rev=5419f42ea1b22d85b1a15c31625ded37345be9f3#5419f42ea1b22d85b1a15c31625ded37345be9f3"
 dependencies = [
  "blake3",
  "byteorder",
@@ -9240,7 +9240,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tempfile",
- "tenderloin",
+ "tenderlink",
  "thiserror 2.0.16",
  "tinyvec",
  "tokio",
