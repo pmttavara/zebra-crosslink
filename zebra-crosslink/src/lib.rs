@@ -1408,7 +1408,8 @@ async fn tfl_service_main_loop(internal_handle: TFLServiceHandle) -> Result<(), 
                 hasher.write(string.as_bytes());
                 let seed = hasher.finish();
                 let string = format!("127.0.0.1:{}", seed % 4000);
-                let (a, b) = addr_string_to_stuff(&config.malachite_peers.get(i).unwrap_or_else(|| &string));
+                let (a, b) =
+                    addr_string_to_stuff(&config.malachite_peers.get(i).unwrap_or_else(|| &string));
                 EndpointEvidence {
                     endpoint: b,
                     root_public_key: m.public_key.into(),
